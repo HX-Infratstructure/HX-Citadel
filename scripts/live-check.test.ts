@@ -1,0 +1,178 @@
+// @vitest-environment node
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { EXIT_CODES } from "../cli/commands";
+import { MCP_TOOL_NAMES } from "../lib/mcp/tools";
+import { main } from "./live-check";
+import { type CheckStep, runSteps } from "./live-check/steps";
+
+const ENV = { HX_CITADEL_API: "http://convex.test:3211", HX_CITADEL_APP: "http://app.test:8460" };
+
+type Reply = { status: number; body?: unknown; etag?: string; text?: string };
+
+const ok = (body: unknown, etag?: string): Reply => ({ status: 200, body, etag });
+const refused = (status: number, code: string, message: string): Reply => ({ status, body: { code, message } });
+const story = (key: string, version: number): Reply => ({ status: 201, body: { issue: { key } }, etag: `"${version}"` });
+
+const HAPPY: Reply[] = [
+  { status: 200, text: "<html>sign in</html>" },
+  { status: 405, text: "" },
+  ok({ jsonrpc: "2.0", id: 1, result: { serverInfo: { name: "hx-citadel" } } }),
+  ok({ jsonrpc: "2.0", id: 2, result: { tools: MCP_TOOL_NAMES.map((name) => ({ name })) } }),
+  story("LCK-1", 2),
+  story("LCK-1", 2),
+  refused(409, "idempotency_key_reused", "That Idempotency-Key was used with another body"),
+  refused(412, "stale", "LCK-1 changed since version 1"),
+  story("LCK-1", 3),
+  refused(409, "rule_refused", "live-check already has LCK-1 In Progress; finish it first"),
+  refused(409, "rule_refused", "Can't move LCK-1 to Done: open — no proof link"),
+  story("LCK-1", 5),
+];
+
+function stubFetch(replies: Reply[]) {
+  const queue = [...replies];
+  const fetchMock = vi.fn(async () => {
+    const { status, body, etag, text } = queue.shift() ?? ok({});
+    const payload = text ?? JSON.stringify(body);
+    return new Response(status === 405 ? null : payload, { status, headers: etag ? { ETag: etag } : {} });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+function call(fetchMock: ReturnType<typeof stubFetch>, index: number) {
+  const [url, init] = fetchMock.mock.calls[index] as unknown as [string, RequestInit];
+  const body = typeof init.body === "string" ? JSON.parse(init.body) : undefined;
+  return { url, method: init.method ?? "GET", headers: new Headers(init.headers), body };
+}
+
+async function check(argv: string[], env: Record<string, string | undefined> = ENV) {
+  const out: string[] = [];
+  const err: string[] = [];
+  const code = await main(argv, env, { out: (line) => out.push(line), err: (line) => err.push(line) });
+  return { code, out, err: err.join("\n") };
+}
+
+describe("runSteps", () => {
+  it("reports PASS and FAIL and carries on after a FAIL", async () => {
+    const lines: string[] = [];
+    const steps: CheckStep<null>[] = [
+      { name: "one", run: async () => "fine" },
+      {
+        name: "two",
+        run: async () => {
+          throw new Error("broke");
+        },
+      },
+      { name: "three", run: async () => "also fine" },
+    ];
+    const passed = await runSteps(steps, null, (line) => lines.push(line));
+    expect(passed).toBe(false);
+    expect(lines).toEqual(["PASS one fine", "FAIL two broke", "PASS three also fine"]);
+  });
+});
+
+describe("live-check", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("passes every step against canned answers and exits 0", async () => {
+    stubFetch(HAPPY);
+    const { code, out } = await check(["--team", "LCK"]);
+    expect(out.map((line) => line.split(" ").slice(0, 2).join(" "))).toEqual([
+      "PASS app",
+      "PASS mcp",
+      "PASS agent-create",
+      "PASS replay",
+      "PASS key-reuse",
+      "PASS stale-if-match",
+      "PASS wip-refusal",
+      "PASS done-gate",
+      "PASS tidy-up",
+    ]);
+    expect(code).toBe(EXIT_CODES.ok.code);
+  });
+
+  it("sends each step's request as the brief names it", async () => {
+    const fetchMock = stubFetch(HAPPY);
+    await check(["--team", "LCK"]);
+    expect(call(fetchMock, 0)).toMatchObject({ url: "http://app.test:8460/sign-in", method: "GET" });
+    expect(call(fetchMock, 1)).toMatchObject({ url: "http://app.test:8460/mcp", method: "GET" });
+    const initialize = call(fetchMock, 2);
+    expect(initialize).toMatchObject({ url: "http://app.test:8460/mcp", method: "POST", body: { method: "initialize" } });
+    expect(initialize.headers.get("X-Agent-Id")).toBe("live-check");
+    expect(initialize.headers.get("Accept")).toBe("application/json, text/event-stream");
+    expect(call(fetchMock, 3).body).toMatchObject({ method: "tools/list" });
+
+    const create = call(fetchMock, 4);
+    const replay = call(fetchMock, 5);
+    const reuse = call(fetchMock, 6);
+    expect(create).toMatchObject({ url: "http://convex.test:3211/api/v1/issues", method: "POST", body: { teamKey: "LCK" } });
+    expect(create.headers.get("X-Agent-Id")).toBe("live-check");
+    expect(create.headers.get("Idempotency-Key")).toMatch(/^live-check-.+-create$/);
+    expect(replay.headers.get("Idempotency-Key")).toBe(create.headers.get("Idempotency-Key"));
+    expect(replay.body).toEqual(create.body);
+    expect(reuse.headers.get("Idempotency-Key")).toBe(create.headers.get("Idempotency-Key"));
+    expect(reuse.body).not.toEqual(create.body);
+
+    const stale = call(fetchMock, 7);
+    expect(stale).toMatchObject({ url: "http://convex.test:3211/api/v1/issues/LCK-1", method: "PATCH" });
+    expect(stale.headers.get("If-Match")).toBe('"1"');
+
+    expect(call(fetchMock, 8).body).toMatchObject({ status: "in_progress", assignee: "live-check" });
+    expect(call(fetchMock, 9).body).toMatchObject({ teamKey: "LCK", status: "in_progress", assignee: "live-check" });
+    expect(call(fetchMock, 10).body).toMatchObject({ status: "done" });
+    expect(call(fetchMock, 11)).toMatchObject({ url: "http://convex.test:3211/api/v1/issues/LCK-1", method: "PATCH", body: { status: "canceled" } });
+  });
+
+  it.each([
+    ["app", 1, { status: 200, text: "" }],
+    ["mcp", 3, ok({ jsonrpc: "2.0", id: 2, result: { tools: [] } })],
+    ["mcp", 3, ok({ jsonrpc: "2.0", id: 2, result: { tools: [...MCP_TOOL_NAMES.slice(1), "other_tool"].map((name) => ({ name })) } })],
+    ["agent-create", 4, refused(409, "rule_refused", "nope")],
+    ["replay", 5, story("LCK-2", 2)],
+    ["key-reuse", 6, story("LCK-1", 2)],
+    ["stale-if-match", 7, story("LCK-1", 3)],
+    ["wip-refusal", 9, refused(409, "rule_refused", "live-check already has LCK-9 In Progress; finish it first")],
+    ["done-gate", 10, story("LCK-1", 4)],
+  ])("fails %s when its answer is wrong, and the rest still run", async (name, index, wrong) => {
+    const replies = [...HAPPY];
+    replies[index] = wrong;
+    stubFetch(replies);
+    const { code, out } = await check(["--team", "LCK"]);
+    expect(out.filter((line) => line.startsWith("FAIL")).map((line) => line.split(" ")[1])).toContain(name);
+    expect(out.at(-1)).toMatch(/^(PASS|FAIL) tidy-up/);
+    expect(code).toBe(EXIT_CODES.refused.code);
+  });
+
+  it("tidies up even when an earlier step failed, cancelling every story it created", async () => {
+    const replies = [...HAPPY];
+    replies[9] = story("LCK-2", 1);
+    replies.splice(11, 1, story("LCK-1", 5), story("LCK-2", 2));
+    const fetchMock = stubFetch(replies);
+    const { code, out } = await check(["--team", "LCK"]);
+    expect(out).toContain(out.find((line) => line.startsWith("FAIL wip-refusal")));
+    expect(out.at(-1)).toMatch(/^PASS tidy-up/);
+    const cancels = fetchMock.mock.calls.map((_, index) => call(fetchMock, index)).filter((request) => request.body?.status === "canceled");
+    expect(cancels.map((request) => request.url)).toEqual(["http://convex.test:3211/api/v1/issues/LCK-1", "http://convex.test:3211/api/v1/issues/LCK-2"]);
+    expect(code).toBe(EXIT_CODES.refused.code);
+  });
+
+  it.each([
+    ["no team", [], ENV],
+    ["no base URL", ["--team", "LCK"], { HX_CITADEL_APP: "http://app.test:8460" }],
+  ])("exits 2 with %s and sends nothing", async (_label, argv, env) => {
+    const fetchMock = stubFetch([]);
+    const { code, err } = await check(argv, env);
+    expect(code).toBe(EXIT_CODES.usage.code);
+    expect(err).not.toBe("");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("prints help with the exit codes and sends nothing", async () => {
+    const fetchMock = stubFetch([]);
+    const { code, out } = await check(["--help"]);
+    expect(code).toBe(EXIT_CODES.ok.code);
+    expect(out.join("\n")).toContain("--team KEY");
+    expect(out.join("\n")).toContain(EXIT_CODES.usage.meaning);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

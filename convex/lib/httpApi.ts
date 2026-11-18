@@ -4,6 +4,8 @@ import { ActionCtx, httpAction } from "../_generated/server";
 import { hashRequest, Idempotency, IDEMPOTENCY_HEADER, isValidKey } from "./idempotency";
 
 export type ErrorBody = { code: string; message: string };
+/** The code for a refusal by a business rule (WIP, the Done gate); any unmapped rule `Error`. */
+export const RULE_REFUSED = "rule_refused";
 export type HttpFailure = { status: number; body: ErrorBody };
 
 /** A refusal the HTTP layer raises itself, before any Convex function runs. */
@@ -130,7 +132,7 @@ export function toHttpError(error: unknown): HttpFailure {
   }
   const mapped = ERROR_MAP.find((entry) => entry.pattern.test(error.message));
   if (mapped === undefined) {
-    return { status: 409, body: { code: "rule_refused", message } };
+    return { status: 409, body: { code: RULE_REFUSED, message } };
   }
   return { status: mapped.status, body: { code: mapped.code, message } };
 }

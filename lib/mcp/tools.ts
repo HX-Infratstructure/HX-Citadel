@@ -23,11 +23,23 @@ function writeArgs<T extends WriteOptions>({ idempotencyKey, ifMatch, ...body }:
 }
 
 /** The MCP server for one agent: seven tools, each one REST call. */
+/** Every tool the server registers, by name; the live checker asserts `tools/list` returns exactly these. */
+export const MCP_TOOL = {
+  listIssues: "list_issues",
+  getIssue: "get_issue",
+  createIssue: "create_issue",
+  updateIssue: "update_issue",
+  setProof: "set_proof",
+  addComment: "add_comment",
+  addSubtask: "add_subtask",
+} as const;
+export const MCP_TOOL_NAMES: string[] = Object.values(MCP_TOOL);
+
 export function createCitadelMcpServer(api: CitadelApi): McpServer {
   const server = new McpServer({ name: "hx-citadel", version: "1.0.0" });
 
   server.registerTool(
-    "list_issues",
+    MCP_TOOL.listIssues,
     {
       description: "GET /api/v1/issues: a team's issues, filtered by status or assignee (an agent name or me)",
       inputSchema: { team: z.string().min(1), status: status.optional(), assignee: z.string().optional() },
@@ -36,13 +48,13 @@ export function createCitadelMcpServer(api: CitadelApi): McpServer {
   );
 
   server.registerTool(
-    "get_issue",
+    MCP_TOOL.getIssue,
     { description: "GET /api/v1/issues/{key}: a story with its sub-tasks, or one sub-task", inputSchema: { key } },
     (args) => toolResult(() => api.get(issuePath(args.key)))
   );
 
   server.registerTool(
-    "create_issue",
+    MCP_TOOL.createIssue,
     {
       description: "POST /api/v1/issues: create an issue; a new story gets its testing sub-task .1",
       inputSchema: {
@@ -62,7 +74,7 @@ export function createCitadelMcpServer(api: CitadelApi): McpServer {
   );
 
   server.registerTool(
-    "update_issue",
+    MCP_TOOL.updateIssue,
     {
       description: "PATCH /api/v1/issues/{key}: any subset of status, assignee (a name or null), priority, title and description",
       inputSchema: {
@@ -79,19 +91,19 @@ export function createCitadelMcpServer(api: CitadelApi): McpServer {
   );
 
   server.registerTool(
-    "set_proof",
+    MCP_TOOL.setProof,
     { description: "POST /api/v1/issues/{key}/proof: set the proof link", inputSchema: { ...editShape, key, proofUrl: z.string().min(1) } },
     ({ key: issueKey, ...args }) => toolResult(() => api.write("POST", issuePath(issueKey, "proof"), ...writeArgs(args)))
   );
 
   server.registerTool(
-    "add_comment",
+    MCP_TOOL.addComment,
     { description: "POST /api/v1/issues/{key}/comments: comment on an issue", inputSchema: { ...editShape, key, body: z.string().min(1) } },
     ({ key: issueKey, ...args }) => toolResult(() => api.write("POST", issuePath(issueKey, "comments"), ...writeArgs(args)))
   );
 
   server.registerTool(
-    "add_subtask",
+    MCP_TOOL.addSubtask,
     {
       description: "POST /api/v1/issues/{key}/subtasks: add a sub-task to a story",
       inputSchema: { ...editShape, key, title: z.string().min(1), status: status.optional() },

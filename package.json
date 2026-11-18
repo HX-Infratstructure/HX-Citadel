@@ -12,7 +12,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "seed:demo": "convex run seed:demoData",
-    "citadel": "tsx cli/hx-citadel.ts"
+    "citadel": "tsx cli/hx-citadel.ts",
+    "live-check": "tsx scripts/live-check.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "7.10.0",
