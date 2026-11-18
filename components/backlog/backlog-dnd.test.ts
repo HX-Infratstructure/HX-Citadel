@@ -1,6 +1,6 @@
 import { CollisionDetection } from "@dnd-kit/core";
 import { describe, expect, it } from "vitest";
-import { rankAnnouncements, rankCollision } from "./backlog-dnd";
+import { canDropAt, rankAnnouncements, rankCollision } from "./backlog-dnd";
 
 const stories = [
   { _id: "id-a", title: "Login page" },
@@ -9,7 +9,7 @@ const stories = [
 ];
 
 describe("rankAnnouncements", () => {
-  const announce = rankAnnouncements(stories);
+  const announce = rankAnnouncements(stories, false);
 
   it("names the story and its position on pick-up, never its internal id", () => {
     const text = announce.onDragStart({ active: { id: "id-b" } });
@@ -35,6 +35,31 @@ describe("rankAnnouncements", () => {
     expect(announce.onDragCancel({ active: { id: "id-a" } })).toBe(
       "Ranking cancelled. Login page stays at position 1 of 3."
     );
+  });
+
+  it("says the story stays put when it is dropped after the last loaded story with more to load", () => {
+    const partial = rankAnnouncements(stories, true);
+    expect(partial.onDragEnd({ active: { id: "id-a" }, over: { id: "id-c" } })).toBe(
+      "Login page stays at position 1 of 3. Load more to place a story here."
+    );
+    expect(partial.onDragEnd({ active: { id: "id-a" }, over: { id: "id-b" } })).toBe(
+      "Login page dropped at position 2 of 3."
+    );
+  });
+});
+
+describe("canDropAt", () => {
+  it("refuses a drop after the last loaded story while more are still to load", () => {
+    expect(canDropAt(2, 3, true)).toBe(false);
+  });
+
+  it("allows an interior drop while more are still to load", () => {
+    expect(canDropAt(0, 3, true)).toBe(true);
+    expect(canDropAt(1, 3, true)).toBe(true);
+  });
+
+  it("allows a drop at the end once the whole backlog is loaded", () => {
+    expect(canDropAt(2, 3, false)).toBe(true);
   });
 });
 

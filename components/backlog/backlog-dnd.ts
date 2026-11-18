@@ -4,12 +4,27 @@ type RankedStory = { _id: string; title: string };
 type Dragged = { active: { id: UniqueIdentifier } };
 type DraggedOver = Dragged & { over: { id: UniqueIdentifier } | null };
 
+export const LOAD_MORE_TO_PLACE = "Load more to place a story here.";
+
+/**
+ * Whether a story dropped at index `to` of `loaded` stories can be ranked. While more of
+ * the backlog is still to load, the last loaded story's lower neighbour is unknown, so a
+ * drop there would rank the story below stories not loaded yet.
+ */
+export function canDropAt(to: number, loaded: number, moreToLoad: boolean): boolean {
+  return !moreToLoad || to < loaded - 1;
+}
+
 /** Screen-reader announcements for ranking: story titles and 1-based positions, never internal ids. */
-export function rankAnnouncements(stories: RankedStory[]) {
+export function rankAnnouncements(stories: RankedStory[], moreToLoad: boolean) {
   const title = (id: UniqueIdentifier) =>
     stories.find((story) => story._id === id)?.title ?? "Story";
-  const position = (id: UniqueIdentifier) =>
-    `position ${stories.findIndex((story) => story._id === id) + 1} of ${stories.length}`;
+  const index = (id: UniqueIdentifier) => stories.findIndex((story) => story._id === id);
+  const position = (id: UniqueIdentifier) => `position ${index(id) + 1} of ${stories.length}`;
+  const dropped = (active: UniqueIdentifier, over: UniqueIdentifier) =>
+    canDropAt(index(over), stories.length, moreToLoad)
+      ? `${title(active)} dropped at ${position(over)}.`
+      : `${title(active)} stays at ${position(active)}. ${LOAD_MORE_TO_PLACE}`;
 
   return {
     onDragStart: ({ active }: Dragged) =>
@@ -20,7 +35,7 @@ export function rankAnnouncements(stories: RankedStory[]) {
         : `${title(active.id)} is outside the backlog.`,
     onDragEnd: ({ active, over }: DraggedOver) =>
       over
-        ? `${title(active.id)} dropped at ${position(over.id)}.`
+        ? dropped(active.id, over.id)
         : `${title(active.id)} dropped outside the backlog. Its rank is unchanged.`,
     onDragCancel: ({ active }: Dragged) =>
       `Ranking cancelled. ${title(active.id)} stays at ${position(active.id)}.`,

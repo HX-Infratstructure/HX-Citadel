@@ -4,7 +4,7 @@ import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
-import { LIST_LIMIT } from "./issues";
+import { LIST_LIMIT, PAGE_READ_ROWS } from "./issues";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -300,6 +300,26 @@ describe("issues.listBacklog", () => {
     );
 
     expect(pages.flat().map((issue) => issue._id)).toEqual(listed);
+  });
+
+  test("a page stops after PAGE_READ_ROWS rows, and the cursor reaches an open story ranked below more closed ones", async () => {
+    const { t, teamId, memberId } = await setup();
+    const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+    const openId = await t.run(async (ctx) => {
+      const team = await ctx.db.get(teamId);
+      const story = { orgId: team!.orgId, teamId, kind: "story", priority: "none", creatorId: memberId } as const;
+      for (let i = 0; i < PAGE_READ_ROWS + 1_000; i++) {
+        await ctx.db.insert("issues", { ...story, title: `Shipped ${i}`, status: "done", sortOrder: 10_000 + i });
+      }
+      return await ctx.db.insert("issues", { ...story, title: "Open", status: "todo", sortOrder: 0 });
+    });
+
+    const pages = await backlogPages((cursor) =>
+      asMember.query(api.issues.listBacklog, { teamId, paginationOpts: { numItems: LIST_LIMIT, cursor } })
+    );
+
+    expect(pages[0]).toEqual([]);
+    expect(pages.flat().map((issue) => issue._id)).toEqual([openId]);
   });
 });
 

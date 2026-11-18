@@ -23,6 +23,8 @@ export default function TeamBacklogPage() {
     { initialNumItems: PAGE_SIZE }
   );
 
+  const moreToLoad = status === "CanLoadMore" || status === "LoadingMore";
+
   if (team === null) {
     return (
       <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
@@ -48,14 +50,14 @@ export default function TeamBacklogPage() {
         <span className="text-muted-foreground">Backlog</span>
       </header>
       <ScrollArea className="flex-1">
-        {issues.length === 0 ? (
+        {issues.length === 0 && !moreToLoad ? (
           <p className="py-32 text-center text-sm text-muted-foreground">
             The backlog is empty.
           </p>
         ) : (
-          <BacklogView team={team} issues={issues} />
+          <BacklogView team={team} issues={issues} moreToLoad={moreToLoad} />
         )}
-        {(status === "CanLoadMore" || status === "LoadingMore") && (
+        {moreToLoad && (
           <Button
             variant="ghost"
             size="xs"

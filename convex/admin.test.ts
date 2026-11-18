@@ -195,6 +195,9 @@ async function addIssues(t: TestConvex, teamId: Id<"teams">, count: number) {
   });
 }
 
+/** Attachments sharing one legacy file: a page of issues re-reading every row left would pass Convex's 32,000 reads. */
+const LEGACY_FILE_ROWS = 400;
+
 /** Activity rows on one issue: more than one run deletes, and more than one Convex mutation can write. */
 const HEAVY_ACTIVITY = 20_000;
 
@@ -754,6 +757,36 @@ describe("admin.clearTeamContent", () => {
     }));
     expect(after.file).not.toBeNull();
     expect(after.keptAttachment).not.toBeNull();
+  });
+
+  test("a legacy file 400 attachments share is cleared within the read limit, and goes with its last row", async () => {
+    vi.useFakeTimers();
+    const { t, cleared } = await setupTeams();
+    await addIssues(t, cleared.teamId, LEGACY_FILE_ROWS);
+    const fileId = await t.run(async (ctx) => {
+      const storageId = await ctx.storage.store(new Blob(["legacy"]));
+      const issues = await ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", cleared.teamId)).collect();
+      for (const issue of issues) {
+        await ctx.db.insert("attachments", {
+          orgId: issue.orgId,
+          issueId: issue._id,
+          storageId,
+          fileName: "legacy.txt",
+          fileType: "text/plain",
+          fileSize: 6,
+          uploadedBy: issue.creatorId,
+        });
+      }
+      return storageId;
+    });
+
+    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+    expect(await t.run((ctx) => ctx.db.system.get(fileId))).not.toBeNull();
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
+    expect(await t.run((ctx) => ctx.db.system.get(fileId))).toBeNull();
+    vi.useRealTimers();
   });
 
   test("clears a team larger than one page over the scheduled runs", async () => {

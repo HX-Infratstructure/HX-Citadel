@@ -15,22 +15,37 @@ export function countTables<T extends string>(tables: readonly T[], count: (tabl
 }
 
 /**
- * Rows written before `attachments.create` refused shared files can still share one,
- * so a file is deleted only with the last row that uses it. Each file's read is bounded:
- * a file attached since then has one row.
+ * Rows written before `attachments.create` refused shared files can still share one, so a file is deleted
+ * only with the last row that uses it. A file's rows are read in order up to the first that stays: a file
+ * attached since then costs one read, a legacy file its leaving rows and one more. Returns what it read.
  */
 export async function deleteAttachmentFiles(ctx: MutationCtx, attachments: Doc<"attachments">[]) {
   const leaving = new Set(attachments.map((attachment) => attachment._id));
   const files = new Set(attachments.map((attachment) => attachment.storageId));
+  const read = { rows: 0, bytes: 0 };
   for (const storageId of files) {
-    const users = await ctx.db
-      .query("attachments")
-      .withIndex("by_storage", (q) => q.eq("storageId", storageId))
-      .collect();
-    if (users.every((row) => leaving.has(row._id))) {
+    if (!(await usedByAnotherRow(ctx, storageId, leaving, read))) {
       await ctx.storage.delete(storageId);
     }
   }
+  return read;
+}
+
+/** Whether a row outside `leaving` uses the file, charging each row it reads to `read`. */
+async function usedByAnotherRow(
+  ctx: MutationCtx,
+  storageId: Id<"_storage">,
+  leaving: Set<Id<"attachments">>,
+  read: { rows: number; bytes: number }
+) {
+  for await (const row of ctx.db.query("attachments").withIndex("by_storage", (q) => q.eq("storageId", storageId))) {
+    read.rows += 1;
+    read.bytes += getDocumentSize(row);
+    if (!leaving.has(row._id)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -74,11 +89,11 @@ type Budget = { rows: number; bytes: number; queries: number };
  * - `queries`: each owned-table query, and each attachment's `by_storage` lookup for its file. The
  *   caller makes about 110 more: its page queries, a cycle query per team on a page and six org-only tables.
  * - `bytes`: a row is read once and again by its delete. A run stops on the row that passes the budget,
- *   so it reads at most one more document (1 MiB) twice: 10 MiB. The file lookups read up to 3,000 small
- *   attachment rows; the caller's pages hold the rest.
+ *   so it reads at most one more document (1 MiB) twice: 10 MiB. The file lookups that end an issue's
+ *   reads are charged after them, up to two small rows per attachment read; the caller's pages hold the rest.
  * - `rows`: a run writes at most 4,000 owned rows and a page each of issues, cycles, saved views and
- *   org-only rows, about 5,000 writes; it reads those, one row per file lookup and the caller's pages,
- *   under 14,000 reads.
+ *   org-only rows, about 5,000 writes; it reads those, up to 6,000 rows in file lookups and the caller's
+ *   pages, under 20,000 reads.
  */
 export const CLEANUP_BUDGET: Readonly<Budget> = { rows: 4_000, bytes: 8 * 1024 * 1024, queries: 3_000 };
 
@@ -114,26 +129,18 @@ async function readOwnedRows(ctx: MutationCtx, issue: Doc<"issues">, left: Budge
   return { owned, finished: true };
 }
 
-/** Deletes the rows `readOwnedRows` reads within `left`, and the files only they use. */
+/**
+ * Deletes the rows `readOwnedRows` reads within `left`, and the files only they use, charging the file lookups to `left`.
+ */
 async function deleteOwnedRows(ctx: MutationCtx, issue: Doc<"issues">, left: Budget) {
   const { owned, finished } = await readOwnedRows(ctx, issue, left);
-  await deleteAttachmentFiles(ctx, owned.attachments);
+  const lookups = await deleteAttachmentFiles(ctx, owned.attachments);
+  left.rows -= lookups.rows;
+  left.bytes -= lookups.bytes;
   for (const rows of Object.values(owned)) {
     await deleteRows(ctx, rows);
   }
   return { counts: countTables(ISSUE_OWNED_TABLES, (table) => owned[table].length), finished };
-}
-
-/**
- * Deletes every row that belongs to one issue, and its stored files, in the caller's one mutation.
- * The issue row is the caller's. `issues.remove` stays atomic: no UI or route deletes an issue that
- * owns more rows than one mutation can delete.
- */
-export async function deleteIssueOwnedRows(ctx: MutationCtx, issue: Doc<"issues">) {
-  let finished: boolean;
-  do {
-    ({ finished } = await deleteOwnedRows(ctx, issue, { ...CLEANUP_BUDGET }));
-  } while (!finished);
 }
 
 /**

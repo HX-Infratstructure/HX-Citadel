@@ -1,14 +1,15 @@
 import { PaginationOptions, paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { ObjectType, v } from "convex/values";
 import { invalid, notFound, refuse } from "./lib/refusals";
+import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
-import { MutationCtx, QueryCtx } from "./_generated/server";
+import { internalMutation, MutationCtx, QueryCtx } from "./_generated/server";
 import { PARENT_KIND } from "../lib/issue-key";
 import { isGatedStatus } from "../lib/issue-status";
 import { respaceTie, SORT_GAP } from "../lib/sort-order";
 import { changedFields, fieldText, FieldLogOptions, logActivity, logFieldChanges } from "./lib/activity";
 import { orgAdminMutation, orgMutation, orgQuery } from "./lib/customFunctions";
-import { deleteIssueOwnedRows } from "./lib/issueCleanup";
+import { deleteIssuesWithOwnedRows } from "./lib/issueCleanup";
 import { IssueKeys } from "./lib/issueKeys";
 import { patchIssue } from "./lib/issueVersion";
 import { findMembership } from "./lib/mirror";
@@ -104,15 +105,30 @@ const OPEN_STATUSES = issueStatusValidator.members
   .map((member) => member.value)
   .filter((status) => !CLOSED_STATUSES.has(status));
 
-/** `paginationOpts` with the page held to at most `LIST_LIMIT` items, whatever the client asks for. */
+/** Rows and bytes one page may read, rows its filter drops included: well inside Convex's 32,000 documents and 16 MiB. */
+export const PAGE_READ_ROWS = 8_000;
+const PAGE_READ_BYTES = 8 * 1024 * 1024;
+
+/**
+ * `paginationOpts` with the page held to at most `LIST_LIMIT` items and `PAGE_READ_ROWS` rows or `PAGE_READ_BYTES`
+ * read, whatever the client asks for. A page that runs out of reads first comes back `SplitRequired`: its
+ * `continueCursor` resumes after the last row read, and `usePaginatedQuery` replaces it by its two halves at
+ * `splitCursor`, each a smaller read.
+ */
 export function capPage(paginationOpts: PaginationOptions): PaginationOptions {
-  return { ...paginationOpts, numItems: Math.min(paginationOpts.numItems, LIST_LIMIT) };
+  return {
+    ...paginationOpts,
+    numItems: Math.min(paginationOpts.numItems, LIST_LIMIT),
+    maximumRowsRead: PAGE_READ_ROWS,
+    maximumBytesRead: PAGE_READ_BYTES,
+  };
 }
 
 /**
  * The backlog, one page at a time: open stories with no cycle, highest `sortOrder` (owner's rank) first.
  * It reads the team's rank index in order and filters inside the query, so the first page always starts at the
- * top-ranked story, however old it is. A page reads every row down to its last story, closed ones included.
+ * top-ranked story, however old it is. Closed rows count toward a page's reads, so a page under many of them
+ * can come back short, or empty, with a cursor to the rest.
  */
 export const listBacklog = orgQuery({
   args: { teamId: v.id("teams"), paginationOpts: paginationOptsValidator },
@@ -595,20 +611,16 @@ export const revertChange = orgAdminMutation({
   },
 });
 
-/** Deletes an issue and every row that belongs to it. */
-async function deleteIssueRow(ctx: MutationCtx, issue: Doc<"issues">): Promise<void> {
-  await deleteIssueOwnedRows(ctx, issue);
-  await ctx.db.delete(issue._id);
-}
-
-/** A story's subtasks go with it, the Complete testing one included. */
-async function deleteStorySubtasks(ctx: MutationCtx, story: Doc<"issues">): Promise<void> {
-  if (story.kind !== "story") {
-    return;
-  }
-  const subtasks = await orgChildren(ctx, story.orgId, story._id);
-  for (const subtask of subtasks) {
-    await deleteIssueRow(ctx, subtask);
+/**
+ * One run of deleting an issue and every row that belongs to it, within one `CLEANUP_BUDGET`. A story's
+ * sub-tasks go first, the Complete testing one included. An issue that owns more than one run can delete
+ * schedules the next run, which starts from the rows left, until the issue row goes.
+ */
+async function deleteIssueRun(ctx: MutationCtx, issue: Doc<"issues">): Promise<void> {
+  const subtasks = issue.kind === "story" ? await orgChildren(ctx, issue.orgId, issue._id) : [];
+  const { finished } = await deleteIssuesWithOwnedRows(ctx, [...subtasks, issue]);
+  if (!finished) {
+    await ctx.scheduler.runAfter(0, internal.issues.continueRemove, { orgId: issue.orgId, issueId: issue._id });
   }
 }
 
@@ -640,9 +652,21 @@ export const remove = orgMutation({
     assertNotTestingSubtask(issue, "deleted");
     await assertNoChildren(ctx, issue);
     const parent = issue.parentIssueId ? await orgRow(ctx, ctx.org._id, issue.parentIssueId) : null;
-    await deleteStorySubtasks(ctx, issue);
-    await deleteIssueRow(ctx, issue);
+    await deleteIssueRun(ctx, issue);
     await logChildDeleted(ctx, issue, parent, ctx.user._id);
+    return null;
+  },
+});
+
+/** A scheduled run of `remove`, bound to the issue's id. It stops once the issue row is gone. */
+export const continueRemove = internalMutation({
+  args: { orgId: v.id("organizations"), issueId: v.id("issues") },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const issue = await orgRow(ctx, args.orgId, args.issueId);
+    if (issue !== null) {
+      await deleteIssueRun(ctx, issue);
+    }
     return null;
   },
 });

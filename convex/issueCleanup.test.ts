@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
@@ -13,7 +13,7 @@ const MEMBER_CLERK_ID = "user_member";
 type Kind = "feature" | "story" | "subtask";
 
 async function setup() {
-  const t = convexTest(schema, modules);
+  const t = convexTest({ schema, modules, transactionLimits: true });
   const { orgId, teamId, memberId, labelId } = await t.run(async (ctx) => {
     const memberId = await ctx.db.insert("users", {
       clerkId: MEMBER_CLERK_ID,
@@ -120,8 +120,23 @@ async function setup() {
       return rows.filter((row) => row.type === "child_deleted");
     });
 
+  const addComments = (issueId: Id<"issues">, count: number, body: string) =>
+    t.run(async (ctx) => {
+      for (let i = 0; i < count; i++) {
+        await ctx.db.insert("comments", { orgId, issueId, authorId: memberId, body });
+      }
+    });
+
+  const scheduledRunStates = async () => {
+    const jobs = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
+    return new Set(jobs.map((job) => job.state.kind));
+  };
+
   return {
+    t,
     create,
+    addComments,
+    scheduledRunStates,
     remove,
     addOwnedRows,
     attachFile,
@@ -132,6 +147,12 @@ async function setup() {
     childDeletedRows,
   };
 }
+
+/** About 20 MiB of comments on one issue: more than Convex's 16 MiB a mutation may read. */
+const HEAVY_COMMENTS = 4_000;
+const COMMENT_BYTES = 5 * 1024;
+/** Comments one test transaction writes, well inside the limits. */
+const SEED_BATCH = 1_000;
 
 const NONE = {
   comments: 0,
@@ -221,6 +242,28 @@ describe("issues.remove leaves nothing behind", () => {
     expect(before.relationsAsSource).toBe(1);
     expect(before.relationsAsTarget).toBe(1);
     expect(await storedFile(keptFile)).not.toBeNull();
+  });
+
+  test("an issue that owns more than one mutation can read goes over scheduled runs, each one succeeding", async () => {
+    vi.useFakeTimers();
+    const { t, create, remove, addOwnedRows, addComments, ownedRowCounts, issueDoc, scheduledRunStates } =
+      await setup();
+    const storyId = await create("story");
+    const subtaskId = await create("subtask", storyId);
+    await addOwnedRows(subtaskId);
+    for (let seeded = 0; seeded < HEAVY_COMMENTS; seeded += SEED_BATCH) {
+      await addComments(storyId, SEED_BATCH, "x".repeat(COMMENT_BYTES));
+    }
+
+    await remove(storyId);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await scheduledRunStates()).toEqual(new Set(["success"]));
+    expect(await issueDoc(storyId)).toBeNull();
+    expect(await issueDoc(subtaskId)).toBeNull();
+    expect(await ownedRowCounts(storyId)).toEqual(NONE);
+    expect(await ownedRowCounts(subtaskId)).toEqual(NONE);
+    vi.useRealTimers();
   });
 
   test("the parent's child_deleted row survives deleting a sub-task", async () => {
