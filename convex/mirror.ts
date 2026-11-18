@@ -53,14 +53,10 @@ export const syncCurrent = action({
     const key = requireClerkKey();
 
     const userPath = `/users/${identity.subject}`;
-    const [user, membershipPage] = await Promise.all([
+    const [user, memberships] = await Promise.all([
       fetchClerk<ClerkUserData>(key, userPath),
-      fetchClerk<{ data: ClerkMembership[] }>(
-        key,
-        `${userPath}/organization_memberships?limit=100`
-      ),
+      fetchAllPages<ClerkMembership>(key, `${userPath}/organization_memberships`),
     ]);
-    const memberships = membershipPage.data;
 
     await applyEvent(ctx, "user.updated", userFields(user));
     for (const membership of memberships) {
@@ -96,13 +92,14 @@ export const reconcileAll = internalAction({
   args: {},
   returns: reconcileCountsValidator,
   handler: async (ctx): Promise<ReconcileCounts> => {
+    const readStartedAt = Date.now();
     const clerk = await fetchDirectory(requireClerkKey());
     const before: Snapshot = await ctx.runQuery(internal.mirror.mirrorSnapshot, {});
 
     await upsertDirectory(ctx, clerk);
-    await removeGoneMemberships(ctx, before, clerk);
-    const keptWithContent = await removeGoneOrganizations(ctx, before, clerk);
-    await removeGoneUsers(ctx, clerk);
+    await removeGoneMemberships(ctx, before, clerk, readStartedAt);
+    const keptWithContent = await removeGoneOrganizations(ctx, before, clerk, readStartedAt);
+    await removeGoneUsers(ctx, clerk, readStartedAt);
 
     const after: Snapshot = await ctx.runQuery(internal.mirror.mirrorSnapshot, {});
     const counts = {
@@ -196,30 +193,40 @@ async function upsertDirectory(ctx: ActionCtx, clerk: ClerkDirectory) {
   }
 }
 
-async function removeGoneMemberships(ctx: ActionCtx, before: Snapshot, clerk: ClerkDirectory) {
+async function removeGoneMemberships(
+  ctx: ActionCtx,
+  before: Snapshot,
+  clerk: ClerkDirectory,
+  readStartedAt: number
+) {
   for (const entry of goneEntries(before.members, clerk.memberships)) {
-    await applyEvent(ctx, "organizationMembership.deleted", { id: entry.key });
+    await applyEvent(ctx, "organizationMembership.deleted", { id: entry.key }, readStartedAt);
   }
 }
 
-async function removeGoneOrganizations(ctx: ActionCtx, before: Snapshot, clerk: ClerkDirectory) {
+async function removeGoneOrganizations(
+  ctx: ActionCtx,
+  before: Snapshot,
+  clerk: ClerkDirectory,
+  readStartedAt: number
+) {
   let keptWithContent = 0;
   for (const entry of goneEntries(before.organizations, clerk.organizations)) {
     const clerkOrgId = entry.key;
     if (await ctx.runQuery(internal.admin.orgHasContent, { clerkOrgId })) {
       keptWithContent += 1;
     } else {
-      await ctx.runMutation(internal.admin.deleteOrgMirror, { clerkOrgId });
+      await ctx.runMutation(internal.admin.deleteOrgMirror, { clerkOrgId, readStartedAt });
     }
   }
   return keptWithContent;
 }
 
-async function removeGoneUsers(ctx: ActionCtx, clerk: ClerkDirectory) {
+async function removeGoneUsers(ctx: ActionCtx, clerk: ClerkDirectory, readStartedAt: number) {
   const current: Snapshot = await ctx.runQuery(internal.mirror.mirrorSnapshot, {});
   const unattached = current.users.filter((user) => !user.hasMembership);
   for (const entry of goneEntries(unattached, clerk.users)) {
-    await applyEvent(ctx, "user.deleted", { id: entry.key });
+    await applyEvent(ctx, "user.deleted", { id: entry.key }, readStartedAt);
   }
 }
 
@@ -265,8 +272,13 @@ async function fetchClerk<T>(key: string, path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function applyEvent(ctx: ActionCtx, eventType: string, data: unknown) {
-  await ctx.runMutation(internal.webhooks.handleClerkEvent, { eventType, data });
+async function applyEvent(
+  ctx: ActionCtx,
+  eventType: string,
+  data: unknown,
+  readStartedAt?: number
+) {
+  await ctx.runMutation(internal.webhooks.handleClerkEvent, { eventType, data, readStartedAt });
 }
 
 function userFields(user: ClerkUserData): ClerkUserData {
@@ -293,5 +305,6 @@ function membershipFields(membership: ClerkMembership) {
     role: membership.role,
     organization: { id: membership.organization.id },
     public_user_data: { user_id: membership.public_user_data?.user_id },
+    updated_at: membership.updated_at,
   };
 }

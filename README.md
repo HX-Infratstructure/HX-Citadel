@@ -70,7 +70,7 @@ Clerk is the source of truth for users, the organization, and members. Convex ke
 
 Clerk can't reach the LAN, so its webhooks don't arrive. The route `/clerk-webhook` in `convex/http.ts` exists but gets no traffic. Two other paths keep the mirror current:
 
-- At sign-in, `components/shell/workspace-shell.tsx` calls `mirror:syncCurrent`. It pulls the signed-in person's Clerk records into the mirror.
+- On each workspace page, `components/shell/workspace-shell.tsx` checks that the mirror has three records: the signed-in person, the active organization, and the person's membership in it. The shell calls `mirror:syncCurrent` only when one of them is missing. `mirror:syncCurrent` pulls the person's Clerk records into the mirror. A sign-in does not refresh records that already exist.
 - Every hour, at minute 7 UTC, a cron in `convex/crons.ts` runs `mirror:reconcileAll`. It reconciles everyone, so deletions and role changes made in Clerk reach the mirror.
 
 ## Commands

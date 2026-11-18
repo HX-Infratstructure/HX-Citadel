@@ -34,6 +34,22 @@ export async function findMembership(
     .unique();
 }
 
+/**
+ * Reconcile deletes only rows that already existed when it started reading
+ * Clerk; a row created after that read (syncCurrent on an accepted
+ * invitation) is missing from the directory without being gone from Clerk.
+ */
+export function existedBeforeRead(
+  doc: { _creationTime: number },
+  readStartedAt: number | undefined
+) {
+  return readStartedAt === undefined || doc._creationTime < readStartedAt;
+}
+
+export function isStaleClerkWrite(stored: number | undefined, incoming: number | undefined) {
+  return stored !== undefined && incoming !== undefined && incoming < stored;
+}
+
 export async function getUserByClerkIdOrThrow(
   ctx: Ctx,
   clerkUserId: string,
