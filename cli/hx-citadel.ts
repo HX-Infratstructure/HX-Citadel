@@ -1,4 +1,6 @@
+import { text as readText } from "node:stream/consumers";
 import { parseArgs, type ParseArgsConfig } from "node:util";
+import { HOOK_USAGE, runHook } from "./hook";
 import { type Args, type CommandName, commands, connect, type Env, errorLine, EXIT_CODES, exitCodeFor, type Io, UsageError } from "./commands";
 
 type Options = NonNullable<ParseArgsConfig["options"]>;
@@ -30,6 +32,7 @@ const SPECS: Record<CommandName, Spec> = {
 const USAGE = [
   "Usage: hx-citadel <command> [--agent NAME] [--idempotency-key K] [--no-if-match]",
   ...Object.values(SPECS).map((spec) => `  ${spec.usage}`),
+  ...HOOK_USAGE.map((line) => `  ${line}`),
   "Config: HX_CITADEL_API (or NEXT_PUBLIC_CONVEX_SITE_URL) and --agent or HX_CITADEL_AGENT.",
   "Exit codes:",
   ...Object.values(EXIT_CODES).map(({ code, meaning }) => `  ${code}  ${meaning}`),
@@ -67,6 +70,9 @@ async function dispatch(argv: string[], env: Env, io: Io): Promise<number> {
     io.out(USAGE);
     return EXIT_CODES.ok.code;
   }
+  if (name === "hook") {
+    return runHook(rest, env, io);
+  }
   if (!isCommand(name)) {
     throw new UsageError(name === undefined ? USAGE : `Unknown command ${name}\n${USAGE}`);
   }
@@ -96,5 +102,6 @@ export async function run(argv: string[], env: Env, io: Io): Promise<number> {
 
 // Runs only as the `pnpm citadel` entry, not when a test imports `run`.
 if (process.argv[1]?.endsWith("hx-citadel.ts")) {
-  void run(process.argv.slice(2), process.env, { out: console.log, err: console.error }).then((code) => process.exit(code));
+  const input = () => readText(process.stdin);
+  void run(process.argv.slice(2), process.env, { out: console.log, err: console.error, input }).then((code) => process.exit(code));
 }

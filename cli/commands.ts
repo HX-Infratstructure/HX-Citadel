@@ -3,7 +3,8 @@ import { IDEMPOTENCY_HEADER } from "../convex/lib/idempotency";
 import type { StaleData } from "../convex/lib/issueVersion";
 import { type ApiBody, CitadelApi, CitadelApiError, issuePath, SITE_URL_ENV, type WriteOptions } from "../lib/citadel-api";
 
-export type Io = { out: (line: string) => void; err: (line: string) => void };
+/** Output lines, and stdin for the commands that read it (the pre-push hook). */
+export type Io = { out: (line: string) => void; err: (line: string) => void; input?: () => Promise<string> };
 export type Env = Record<string, string | undefined>;
 export type Args = Record<string, string | undefined>;
 
