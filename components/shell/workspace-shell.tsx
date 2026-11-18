@@ -8,9 +8,14 @@ import { ReactNode, useEffect, useState } from "react";
 import { api } from "@/convex/_generated/api";
 import { CommandProvider } from "@/components/commands/command-provider";
 import { Button } from "@/components/ui/button";
+import {
+  findHxMembership,
+  HX_WORKSPACE_ORG_ID,
+  type HxMembership,
+} from "@/lib/workspace";
 import { AppSidebar } from "./app-sidebar";
 
-function FullScreenLoader({ label }: { label: string }) {
+export function FullScreenLoader({ label }: { label: string }) {
   return (
     <div className="flex h-dvh items-center justify-center gap-2 text-sm text-muted-foreground">
       <Loader2 className="size-4 animate-spin" />
@@ -45,10 +50,66 @@ function SyncFailed({
   );
 }
 
+export type HxWorkspace =
+  | { status: "loading" }
+  | { status: "member"; membership: HxMembership }
+  | { status: "non-member" };
+
+function toHxWorkspace(
+  membership: HxMembership | null,
+  allPagesLoaded: boolean
+): HxWorkspace {
+  if (membership) {
+    return { status: "member", membership };
+  }
+  if (!allPagesLoaded) {
+    return { status: "loading" };
+  }
+  return { status: "non-member" };
+}
+
+/** Loads every Clerk membership page and resolves the HX workspace. */
+export function useHxWorkspace() {
+  const { isLoaded, setActive, userMemberships } = useOrganizationList({
+    userMemberships: { infinite: true },
+  });
+  const { data, isLoading, isFetching, hasNextPage, fetchNext } =
+    userMemberships;
+
+  useEffect(() => {
+    if (hasNextPage && !isFetching) {
+      fetchNext();
+    }
+  }, [hasNextPage, isFetching, fetchNext]);
+
+  const membership = findHxMembership(data ?? [], HX_WORKSPACE_ORG_ID);
+  const allPagesLoaded = isLoaded && !isLoading && !hasNextPage;
+  return { workspace: toHxWorkspace(membership, allPagesLoaded), setActive };
+}
+
+type ShellStep =
+  | { kind: "wait"; target: null }
+  | { kind: "activate"; target: string }
+  | { kind: "redirect"; target: string };
+
+/** The URL slug must be the HX slug; anything else goes back to the workspace. */
+function shellStep(workspace: HxWorkspace, orgSlug: string): ShellStep {
+  if (workspace.status === "loading") {
+    return { kind: "wait", target: null };
+  }
+  if (workspace.status === "non-member") {
+    return { kind: "redirect", target: "/onboarding" };
+  }
+  if (workspace.membership.slug === orgSlug) {
+    return { kind: "activate", target: workspace.membership.orgId };
+  }
+  return { kind: "redirect", target: `/${workspace.membership.slug}` };
+}
+
 /**
  * Authenticated workspace shell.
  *
- * 1. Makes sure the Clerk active org matches the org slug in the URL.
+ * 1. Keeps the URL on the HX workspace slug and makes it the active Clerk org.
  * 2. Pulls the user + org docs from Clerk (mirror.syncCurrent) when they are
  *    missing, and waits for them before rendering, so org-scoped queries
  *    never throw during onboarding.
@@ -61,33 +122,18 @@ export function WorkspaceShell({
   children: ReactNode;
 }) {
   const router = useRouter();
-  const { isLoaded, setActive, userMemberships } = useOrganizationList({
-    userMemberships: { infinite: true },
-  });
-
-  const targetMembership = userMemberships.data?.find(
-    (m) => m.organization.slug === orgSlug
-  );
-  const needsSwitch = isLoaded && targetMembership !== undefined;
+  const { workspace, setActive } = useHxWorkspace();
+  const isLoaded = workspace.status !== "loading";
+  const { kind, target } = shellStep(workspace, orgSlug);
 
   useEffect(() => {
-    if (!isLoaded) {
-      return;
+    if (kind === "activate" && setActive) {
+      void setActive({ organization: target });
     }
-    if (targetMembership) {
-      void setActive({ organization: targetMembership.organization.id });
-    } else if (!userMemberships.isLoading && !userMemberships.hasNextPage) {
-      // The user doesn't belong to an org with this slug.
-      router.replace("/onboarding");
+    if (kind === "redirect") {
+      router.replace(target);
     }
-  }, [
-    isLoaded,
-    targetMembership,
-    userMemberships.isLoading,
-    userMemberships.hasNextPage,
-    setActive,
-    router,
-  ]);
+  }, [kind, target, setActive, router]);
 
   const currentUser = useQuery(api.users.current);
   const currentOrg = useQuery(api.organizations.current);
@@ -127,8 +173,16 @@ export function WorkspaceShell({
     };
   }, [isLoaded, isAuthenticated, needsSync, syncKey, syncCurrent]);
 
-  if (!isLoaded || isAuthLoading || (needsSwitch && currentOrg === undefined)) {
+  if (
+    !isLoaded ||
+    isAuthLoading ||
+    (kind === "activate" && currentOrg === undefined)
+  ) {
     return <FullScreenLoader label="Loading workspace…" />;
+  }
+
+  if (kind === "redirect") {
+    return <FullScreenLoader label="Opening the HX workspace…" />;
   }
 
   if (needsSync && !isAuthLoading && !isAuthenticated) {

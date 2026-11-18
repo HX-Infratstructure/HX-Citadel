@@ -28,6 +28,7 @@ HX-Citadel is the HX team's work tracker for agentic and agile development, with
 - Read the slug with `useParams<{ orgSlug: string }>()`.
 - `components/shell/workspace-shell.tsx` makes sure the user and organization are synced before a workspace page renders.
 - Sign-in, sign-up and onboarding live under `app/sign-in`, `app/sign-up` and `app/onboarding`.
+- There is one workspace, pinned by `NEXT_PUBLIC_HX_WORKSPACE_ORG_ID` (read in `lib/workspace.ts`). Onboarding only routes members into it or explains how to get an invitation.
 
 ## Code standards
 
