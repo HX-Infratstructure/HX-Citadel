@@ -3,7 +3,6 @@ import { notFound, refuse } from "../refusals";
 import { MutationCtx, QueryCtx } from "../../_generated/server";
 import {
   childKindOf,
-  formatIssueKey,
   IssueKind,
   PARENT_KIND,
   PARENT_REQUIRED,
@@ -11,8 +10,9 @@ import {
 } from "../../../lib/issue-key";
 import { GATED_LABELS, isGatedStatus } from "../../../lib/issue-status";
 import { ActivityActor, changedFields, logFieldChanges } from "../activity";
+import { IssueKeys } from "../issueKeys";
 import { patchIssue } from "../issueVersion";
-import { orgChildren, orgRow, requireOrgRow } from "../orgRows";
+import { orgChildren, requireOrgRow } from "../orgRows";
 
 type Placement = {
   teamId: Id<"teams">;
@@ -113,7 +113,7 @@ export async function assertValidParent(
 
 /**
  * The Done gate runs only on status changes, so an In Review or Done parent takes no new
- * child. The team is read only to name the parent in the refusal.
+ * child.
  */
 export async function assertParentOpen(
   ctx: { db: QueryCtx["db"] },
@@ -123,8 +123,7 @@ export async function assertParentOpen(
   if (!isGatedStatus(parent.status)) {
     return;
   }
-  const team = await orgRow(ctx, parent.orgId, parent.teamId);
-  const name = formatIssueKey(team?.key ?? "", parent) ?? parent.title;
+  const name = await new IssueKeys(ctx, parent.orgId).name(parent);
   refuse(
     `${name} is ${GATED_LABELS[parent.status]}; reopen it before adding ${article(childKind)} ${childKind}`
   );

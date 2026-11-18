@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, MutationCtx, QueryCtx } from "./_generated/server";
-import { formatIssueKey, parseIssueKey } from "../lib/issue-key";
+import { parseIssueKey } from "../lib/issue-key";
 import { createComment as createCommentWithRules } from "./comments";
 import {
   createIssue as createIssueWithRules,
@@ -19,6 +19,7 @@ import {
   resolveAgentScope,
 } from "./lib/orgScope";
 import { expireKeys, idempotencyValidator, Idempotency, withIdempotency } from "./lib/idempotency";
+import { IssueKeys } from "./lib/issueKeys";
 import { assertIfMatch, issueVersion } from "./lib/issueVersion";
 import {
   askDecision as askDecisionWithRules,
@@ -26,7 +27,7 @@ import {
   listedDecisionValidator,
   listIssueDecisions,
 } from "./lib/decisions";
-import { inOrg, orgChildren, orgRow } from "./lib/orgRows";
+import { inOrg, orgChildren } from "./lib/orgRows";
 import { invalid, notFound } from "./lib/refusals";
 import { findTeamByKey } from "./lib/teams";
 import {
@@ -58,10 +59,10 @@ async function agentWrite<T>(
 }
 
 /** The issue JSON agents see. A story's sub-task counter is server bookkeeping, so it stays out. */
-function withKey(issue: Doc<"issues">, teamKey: string, parentNumber?: number) {
+async function withKey(keys: IssueKeys, issue: Doc<"issues">) {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { nextSubNumber, ...fields } = issue;
-  return { ...fields, key: formatIssueKey(teamKey, issue, parentNumber), version: issueVersion(issue) };
+  return { ...fields, key: await keys.key(issue), version: issueVersion(issue) };
 }
 
 async function subtasksOf(ctx: Db, orgId: Id<"organizations">, issueId: Id<"issues">): Promise<Doc<"issues">[]> {
@@ -69,7 +70,7 @@ async function subtasksOf(ctx: Db, orgId: Id<"organizations">, issueId: Id<"issu
   return subtasks.sort((a, b) => (a.subNumber ?? 0) - (b.subNumber ?? 0));
 }
 
-type FoundIssue = { issue: Doc<"issues">; team: Doc<"teams">; parentNumber?: number };
+type FoundIssue = { issue: Doc<"issues">; team: Doc<"teams"> };
 
 /** A story by KEY-12 or a sub-task by KEY-12.3, inside the workspace. */
 async function findIssueByKey(ctx: Db, orgId: Id<"organizations">, key: string): Promise<FoundIssue> {
@@ -92,7 +93,7 @@ async function findIssueByKey(ctx: Db, orgId: Id<"organizations">, key: string):
   if (subtask === undefined) {
     notFound(`Issue ${key} not found`);
   }
-  return { issue: subtask, team, parentNumber: story.number };
+  return { issue: subtask, team };
 }
 
 /** The issue a write names, by key, checked against If-Match before any write. */
@@ -138,7 +139,7 @@ export const createIssue = internalMutation({
         assigneeId,
       });
       const issue = await getOrgIssue(ctx, scope.org._id, issueId);
-      return { issue: withKey(issue, team.key, parent?.issue.number) };
+      return { issue: await withKey(new IssueKeys(ctx, scope.org._id), issue) };
     }),
 });
 
@@ -147,11 +148,12 @@ export const getIssue = internalQuery({
   returns: v.object({ issue: keyedIssue, subtasks: v.array(keyedIssue) }),
   handler: async (ctx, { agentName, key }) => {
     const org = await resolveAgentReadScope(ctx, agentName);
-    const { issue, team, parentNumber } = await findIssueByKey(ctx, org._id, key);
+    const { issue } = await findIssueByKey(ctx, org._id, key);
     const subtasks = await subtasksOf(ctx, org._id, issue._id);
+    const keys = new IssueKeys(ctx, org._id);
     return {
-      issue: withKey(issue, team.key, parentNumber),
-      subtasks: subtasks.map((subtask) => withKey(subtask, team.key, issue.number)),
+      issue: await withKey(keys, issue),
+      subtasks: await Promise.all(subtasks.map((subtask) => withKey(keys, subtask))),
     };
   },
 });
@@ -159,7 +161,7 @@ export const getIssue = internalQuery({
 /** The issue a write names, by key, checked against If-Match before any write and re-read after it. */
 async function resolveKeyedWrite(ctx: MutationCtx, scope: OrgScope, key: string, ifMatch: number | undefined) {
   const found = await findWriteTarget(ctx, scope.org._id, key, ifMatch);
-  const reread = async () => withKey(await getOrgIssue(ctx, scope.org._id, found.issue._id), found.team.key, found.parentNumber);
+  const reread = async () => withKey(new IssueKeys(ctx, scope.org._id), await getOrgIssue(ctx, scope.org._id, found.issue._id));
   return { issueId: found.issue._id, reread };
 }
 
@@ -258,21 +260,14 @@ export const listIssues = internalQuery({
       )
       .paginate({ numItems: LIST_LIMIT, cursor: cursor ?? null })
       .catch((error: unknown) => pageFailure(error, cursor));
-    const parents = new Map<Id<"issues">, Promise<Doc<"issues"> | null>>();
-    const parentOf = (parentId: Id<"issues">) => {
-      if (!parents.has(parentId)) {
-        parents.set(parentId, orgRow(ctx, org._id, parentId));
-      }
-      return parents.get(parentId)!;
-    };
+    const keys = new IssueKeys(ctx, org._id);
     const issues = await Promise.all(
       page.page.map(async (issue) => {
-        const parent = issue.parentIssueId === undefined ? null : await parentOf(issue.parentIssueId);
         const user = issue.assigneeId === undefined ? null : await ctx.db.get(issue.assigneeId);
         return {
-          ...withKey(issue, team.key, parent?.number),
+          ...(await withKey(keys, issue)),
           assignee: user?.name ?? null,
-          parentKey: parent === null ? null : formatIssueKey(team.key, parent),
+          parentKey: await keys.parentKey(issue),
         };
       })
     );

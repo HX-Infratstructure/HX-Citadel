@@ -1,11 +1,11 @@
 import { v } from "convex/values";
 import { notFound, refuse } from "./lib/refusals";
-import { formatIssueKey } from "../lib/issue-key";
 import { Doc, Id } from "./_generated/dataModel";
-import { MutationCtx, QueryCtx } from "./_generated/server";
+import { MutationCtx } from "./_generated/server";
 import { getOrgIssue } from "./issues";
 import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { IssueKeys } from "./lib/issueKeys";
 import { patchIssue } from "./lib/issueVersion";
 import { orgChildren, orgRow } from "./lib/orgRows";
 import {
@@ -64,40 +64,15 @@ type IssueSummary = {
   assigneeId?: Id<"users">;
 };
 
-type TeamCache = Map<Id<"teams">, Doc<"teams"> | null>;
-
-async function parentStoryNumber(
-  ctx: { db: QueryCtx["db"] },
-  issue: Doc<"issues">
-): Promise<number | undefined> {
-  if (issue.kind !== "subtask" || !issue.parentIssueId) {
-    return undefined;
-  }
-  return (await orgRow(ctx, issue.orgId, issue.parentIssueId))?.number;
-}
-
 /** Order siblings by their own sequence: story number or subtask number. */
 function siblingOrder(issue: Doc<"issues">): number {
   return issue.number ?? issue.subNumber ?? 0;
 }
 
-async function summarizeIssue(
-  ctx: { db: QueryCtx["db"] },
-  issue: Doc<"issues">,
-  teamCache: TeamCache
-): Promise<IssueSummary> {
-  if (!teamCache.has(issue.teamId)) {
-    teamCache.set(issue.teamId, await orgRow(ctx, issue.orgId, issue.teamId));
-  }
-  const team = teamCache.get(issue.teamId) ?? null;
-  const key = formatIssueKey(
-    team?.key ?? "?",
-    issue,
-    await parentStoryNumber(ctx, issue)
-  );
+async function summarizeIssue(keys: IssueKeys, issue: Doc<"issues">): Promise<IssueSummary> {
   return {
     _id: issue._id,
-    identifier: key ?? issue.title,
+    identifier: await keys.name(issue),
     kind: issue.kind,
     type: issue.type,
     title: issue.title,
@@ -105,14 +80,6 @@ async function summarizeIssue(
     priority: issue.priority,
     assigneeId: issue.assigneeId,
   };
-}
-
-async function issueIdentifier(
-  ctx: { db: QueryCtx["db"] },
-  issue: Doc<"issues">,
-  teamCache: TeamCache
-): Promise<string> {
-  return (await summarizeIssue(ctx, issue, teamCache)).identifier;
 }
 
 type StoredRelationType = Doc<"issueRelations">["type"];
@@ -137,7 +104,7 @@ export const listForIssue = orgQuery({
   ),
   handler: async (ctx, args) => {
     await getOrgIssue(ctx, ctx.org._id, args.issueId);
-    const teamCache: TeamCache = new Map();
+    const keys = new IssueKeys(ctx, ctx.org._id);
 
     const outgoing = await ctx.db
       .query("issueRelations")
@@ -157,7 +124,7 @@ export const listForIssue = orgQuery({
       result.push({
         relationId: relation._id,
         type: relation.type as DisplayRelationType,
-        issue: await summarizeIssue(ctx, other, teamCache),
+        issue: await summarizeIssue(keys, other),
       });
     }
     for (const relation of incoming) {
@@ -168,7 +135,7 @@ export const listForIssue = orgQuery({
       result.push({
         relationId: relation._id,
         type: INVERSE[relation.type],
-        issue: await summarizeIssue(ctx, other, teamCache),
+        issue: await summarizeIssue(keys, other),
       });
     }
     return result;
@@ -221,9 +188,9 @@ export const create = orgMutation({
       type,
     });
 
-    const teamCache: TeamCache = new Map();
-    const fromIdentifier = await issueIdentifier(ctx, fromIssue, teamCache);
-    const toIdentifier = await issueIdentifier(ctx, toIssue, teamCache);
+    const keys = new IssueKeys(ctx, ctx.org._id);
+    const fromIdentifier = await keys.name(fromIssue);
+    const toIdentifier = await keys.name(toIssue);
     await logActivity(ctx, {
       orgId: ctx.org._id,
       issueId: fromIssue._id,
@@ -263,9 +230,9 @@ export const remove = orgMutation({
 
     await ctx.db.delete(relation._id);
 
-    const teamCache: TeamCache = new Map();
-    const fromIdentifier = await issueIdentifier(ctx, fromIssue, teamCache);
-    const toIdentifier = await issueIdentifier(ctx, toIssue, teamCache);
+    const keys = new IssueKeys(ctx, ctx.org._id);
+    const fromIdentifier = await keys.name(fromIssue);
+    const toIdentifier = await keys.name(toIssue);
     await logActivity(ctx, {
       orgId: ctx.org._id,
       issueId: fromIssue._id,
@@ -295,17 +262,17 @@ export const hierarchy = orgQuery({
   }),
   handler: async (ctx, args) => {
     const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
-    const teamCache: TeamCache = new Map();
+    const keys = new IssueKeys(ctx, ctx.org._id);
 
     const parentIssue = issue.parentIssueId ? await orgRow(ctx, ctx.org._id, issue.parentIssueId) : null;
-    const parent = parentIssue ? await summarizeIssue(ctx, parentIssue, teamCache) : null;
+    const parent = parentIssue ? await summarizeIssue(keys, parentIssue) : null;
 
     const children = await orgChildren(ctx, ctx.org._id, issue._id);
     children.sort((a, b) => siblingOrder(a) - siblingOrder(b));
 
     const subIssues = [];
     for (const child of children) {
-      subIssues.push(await summarizeIssue(ctx, child, teamCache));
+      subIssues.push(await summarizeIssue(keys, child));
     }
     return { parent, subIssues };
   },
@@ -335,7 +302,7 @@ export const setParent = orgMutation({
       return null;
     }
     assertNotTestingSubtask(issue, "moved");
-    const teamCache: TeamCache = new Map();
+    const keys = new IssueKeys(ctx, ctx.org._id);
 
     let newParent: Doc<"issues"> | null = null;
     let newParentIdentifier: string | undefined;
@@ -358,7 +325,7 @@ export const setParent = orgMutation({
         const ancestor: Doc<"issues"> | null = await orgRow(ctx, ctx.org._id, ancestorId);
         ancestorId = ancestor?.parentIssueId;
       }
-      newParentIdentifier = await issueIdentifier(ctx, parent, teamCache);
+      newParentIdentifier = await keys.name(parent);
       projectId = parent.projectId;
     }
     const placement = await assertValidParent(ctx, ctx.org._id, issue.kind, {
@@ -371,7 +338,7 @@ export const setParent = orgMutation({
     }
 
     const oldParent = issue.parentIssueId ? await orgRow(ctx, ctx.org._id, issue.parentIssueId) : null;
-    const oldParentIdentifier = oldParent ? await issueIdentifier(ctx, oldParent, teamCache) : undefined;
+    const oldParentIdentifier = oldParent ? await keys.name(oldParent) : undefined;
 
     await retireSubNumber(ctx, issue, oldParent);
     const moved = {
@@ -422,13 +389,13 @@ export const searchIssues = orgQuery({
           .order("desc")
           .take(15);
 
-    const teamCache: TeamCache = new Map();
+    const keys = new IssueKeys(ctx, ctx.org._id);
     const result = [];
     for (const issue of matches) {
       if (issue._id === args.excludeIssueId) {
         continue;
       }
-      result.push(await summarizeIssue(ctx, issue, teamCache));
+      result.push(await summarizeIssue(keys, issue));
     }
     return result;
   },

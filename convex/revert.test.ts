@@ -121,6 +121,24 @@ describe("owner revert from the activity log", () => {
     expect((await s.issue(storyId)).priority).toBe("high");
   });
 
+  test("a sub-task's field that changed since is refused, naming the sub-task by its key", async () => {
+    const s = await setup();
+    const storyId = await s.story("Story");
+    const subtaskId = await s.asMember.mutation(api.issues.create, {
+      teamId: s.teamId,
+      kind: "subtask",
+      parentIssueId: storyId,
+      title: "Write API",
+    });
+    await s.asMember.mutation(api.issues.update, { issueId: subtaskId, priority: "low" });
+    const earlier = await s.lastChange(subtaskId, "priority_changed");
+    await s.asMember.mutation(api.issues.update, { issueId: subtaskId, priority: "high" });
+
+    await expect(s.revert(earlier)).rejects.toThrow(
+      /ENG-1\.2 priority has changed since; revert the latest change instead/
+    );
+  });
+
   test("a field that returned to the same value since is refused", async () => {
     const s = await setup();
     const storyId = await s.story("Story");

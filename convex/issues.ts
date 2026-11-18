@@ -2,12 +2,13 @@ import { ObjectType, v } from "convex/values";
 import { notFound, refuse } from "./lib/refusals";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
-import { formatIssueKey, PARENT_KIND } from "../lib/issue-key";
+import { PARENT_KIND } from "../lib/issue-key";
 import { isGatedStatus } from "../lib/issue-status";
 import { respaceTie, SORT_GAP } from "../lib/sort-order";
 import { changedFields, fieldText, FieldLogOptions, logActivity, logFieldChanges } from "./lib/activity";
 import { orgAdminMutation, orgMutation, orgQuery } from "./lib/customFunctions";
 import { deleteIssueOwnedRows } from "./lib/issueCleanup";
+import { IssueKeys } from "./lib/issueKeys";
 import { FIRST_VERSION, patchIssue } from "./lib/issueVersion";
 import { findMembership } from "./lib/mirror";
 import { inOrg, orgChildren, orgRow, requireOrgRow } from "./lib/orgRows";
@@ -553,9 +554,8 @@ export const revertChange = orgAdminMutation({
       refuse("Only status, assignee, priority and title changes can be reverted");
     }
     if (refusal === "changed_since") {
-      const team = await orgRow(ctx, issue.orgId, issue.teamId);
-      const key = team ? formatIssueKey(team.key, issue) : null;
-      refuse(`${key ?? issue.title} ${change.field} has changed since; revert the latest change instead`);
+      const name = await new IssueKeys(ctx, issue.orgId).name(issue);
+      refuse(`${name} ${change.field} has changed since; revert the latest change instead`);
     }
     const toArgs = REVERT_ARGS[change.field!];
     await updateIssue(
@@ -585,17 +585,6 @@ async function deleteStorySubtasks(ctx: MutationCtx, story: Doc<"issues">): Prom
   }
 }
 
-/** "KEY-12.2 Write API" for keyed levels, the title alone for epics and features. */
-async function keyedTitle(
-  ctx: MutationCtx,
-  issue: Doc<"issues">,
-  parent: Doc<"issues"> | null
-): Promise<string> {
-  const team = await orgRow(ctx, issue.orgId, issue.teamId);
-  const key = team ? formatIssueKey(team.key, issue, parent?.number) : null;
-  return key ? `${key} ${issue.title}` : issue.title;
-}
-
 /** A deleted issue's rows go with it, so the deletion is logged on the surviving parent. */
 async function logChildDeleted(
   ctx: MutationCtx,
@@ -612,7 +601,7 @@ async function logChildDeleted(
     actorId,
     type: "child_deleted",
     field: "child",
-    oldValue: await keyedTitle(ctx, child, parent),
+    oldValue: await new IssueKeys(ctx, child.orgId).label(child),
   });
 }
 

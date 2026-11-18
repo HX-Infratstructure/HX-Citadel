@@ -2,10 +2,10 @@ import { Infer, v } from "convex/values";
 import { invalid, refuse } from "./refusals";
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
-import { formatIssueKey } from "../../lib/issue-key";
 import { getOrgIssue, LIST_LIMIT } from "../issues";
 import { decisionAnswerValidator, decisionFields, decisionViaValidator } from "../schema";
 import { logActivity } from "./activity";
+import { IssueKeys } from "./issueKeys";
 import { inOrg, orgRow, requireOrgRow } from "./orgRows";
 import { OrgScope } from "./orgScope";
 
@@ -88,12 +88,6 @@ function answerSummary({ choice, text }: Answer): string {
   return [choice, start].filter((part) => part !== undefined).join(": ");
 }
 
-async function displayKey(ctx: Db, issue: Doc<"issues">): Promise<string> {
-  const team = await orgRow(ctx, issue.orgId, issue.teamId);
-  const parent = issue.parentIssueId === undefined ? null : await orgRow(ctx, issue.orgId, issue.parentIssueId);
-  return formatIssueKey(team?.key ?? "", issue, parent?.number) ?? issue.title;
-}
-
 /** Decisions sit on stories, where the board shows the flag; a sub-task's refusal names its story. */
 async function assertStory(ctx: Db, issue: Doc<"issues">): Promise<void> {
   if (issue.kind === "story") {
@@ -101,7 +95,7 @@ async function assertStory(ctx: Db, issue: Doc<"issues">): Promise<void> {
   }
   const parent = issue.parentIssueId === undefined ? null : await orgRow(ctx, issue.orgId, issue.parentIssueId);
   if (issue.kind === "subtask" && parent !== null) {
-    refuse(`Decisions are asked on stories: ask on ${await displayKey(ctx, parent)}`);
+    refuse(`Decisions are asked on stories: ask on ${await new IssueKeys(ctx, issue.orgId).name(parent)}`);
   }
   refuse("Decisions are asked on stories");
 }
@@ -120,7 +114,7 @@ export async function askDecision(ctx: MutationCtx, scope: OrgScope, ask: Decisi
   const fields = parseAsk(ask);
   const waiting = await openDecision(ctx, issue);
   if (waiting !== null) {
-    refuse(`${await displayKey(ctx, issue)} is already waiting on the owner: ${waiting.question}`);
+    refuse(`${await new IssueKeys(ctx, issue.orgId).name(issue)} is already waiting on the owner: ${waiting.question}`);
   }
   const decisionId = await ctx.db.insert("decisions", {
     ...fields,

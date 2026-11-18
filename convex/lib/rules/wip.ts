@@ -1,8 +1,8 @@
-import { formatIssueKey, IssueKind } from "../../../lib/issue-key";
+import { IssueKind } from "../../../lib/issue-key";
 import { refuse } from "../refusals";
 import { Doc, Id } from "../../_generated/dataModel";
 import { MutationCtx } from "../../_generated/server";
-import { orgRow } from "../orgRows";
+import { IssueKeys } from "../issueKeys";
 
 export type WipCandidate = {
   orgId: Id<"organizations">;
@@ -39,8 +39,7 @@ async function refusal(
   holder: Doc<"issues">
 ): Promise<string> {
   const assignee = await ctx.db.get(assigneeId);
-  const team = await orgRow(ctx, holder.orgId, holder.teamId);
-  const key = formatIssueKey(team?.key ?? "", holder) ?? holder.title;
+  const key = await new IssueKeys(ctx, holder.orgId).name(holder);
   const name = assignee?.name ?? "This person";
   return `${name} already has ${key} In Progress; move it to In Review or Done first`;
 }
