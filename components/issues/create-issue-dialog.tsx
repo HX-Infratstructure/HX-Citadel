@@ -67,9 +67,7 @@ export function CreateIssueDialog({
   const session = useRef(0);
 
   useEffect(() => {
-    if (open) {
-      session.current += 1;
-    }
+    session.current += 1;
   }, [open]);
 
   // Fall back to the default/first team without needing an effect.
@@ -102,15 +100,15 @@ export function CreateIssueDialog({
         ...levelFields(level),
       });
       toast.success("Issue created");
-      if (submittedIn !== session.current) {
-        return;
-      }
-      onOpenChange(false);
       setTitle("");
       setDescription("");
       setStatus("todo");
       setPriority("none");
       setLevel(DEFAULT_LEVEL);
+      if (submittedIn !== session.current) {
+        return;
+      }
+      onOpenChange(false);
       if (params.orgSlug) {
         router.push(`/${params.orgSlug}/issue/${issueId}`);
       }
