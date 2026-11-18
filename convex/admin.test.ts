@@ -204,6 +204,12 @@ async function cancelScheduledRuns(t: TestConvex) {
   });
 }
 
+/** How each scheduled run ended; a run that threw is `failed`. */
+async function scheduledRunStates(t: TestConvex) {
+  const jobs = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
+  return new Set(jobs.map((job) => job.state.kind));
+}
+
 describe("admin.clearOrgContent", () => {
   test("deletes one organization's content and keeps its mirror and the other organization", async () => {
     const { t, cleared } = await setup();
@@ -266,6 +272,24 @@ describe("admin.clearOrgContent", () => {
       expect(contentAfter[table], table).toEqual(contentBefore[table].filter((doc) => !isCleared(doc)));
     }
     expect(await t.run((ctx) => ctx.db.system.get(cleared.storageId))).toBeNull();
+    vi.useRealTimers();
+  });
+
+  test("a queued run leaves the workspace once its mirror is created again under the same Clerk id", async () => {
+    vi.useFakeTimers();
+    const { t } = await setup();
+    const teamId = await t.run(async (ctx) => (await ctx.db.query("teams").first())!._id);
+    await addIssues(t, teamId, PAGE_SIZE);
+    await t.mutation(internal.admin.clearOrgContent, { clerkOrgId: CLEARED_ORG });
+    await t.mutation(internal.admin.clearOrgContent, { clerkOrgId: CLEARED_ORG });
+    await t.mutation(internal.admin.deleteOrgMirror, { clerkOrgId: CLEARED_ORG });
+    await t.run((ctx) => seedOrg(ctx, CLEARED_ORG));
+    const before = await snapshot(t, [...CONTENT_TABLES, ...MIRROR_TABLES]);
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await snapshot(t, [...CONTENT_TABLES, ...MIRROR_TABLES])).toEqual(before);
+    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
     vi.useRealTimers();
   });
 });
@@ -418,6 +442,69 @@ function belongsToTeam(teamId: Id<"teams">, teamIssueIds: Set<string>) {
     teamIssueIds.has(String(doc.relatedIssueId));
 }
 
+/** Convex's per-transaction read limit, which one read of every saved view can pass. */
+const TRANSACTION_READ_BYTES = 16 * 1024 * 1024;
+/** Near the 4096 characters `views.create` accepts. */
+const LARGE_FILTER_CHARS = 4000;
+/** Rows one test transaction writes or reads, well inside the limits. */
+const TEST_BATCH = 1000;
+
+/** Saved-view filters as `serializeSavedView` writes them; `labelChars` pads the label filter. */
+function savedView(teamId: Id<"teams">, labelChars = 0) {
+  return JSON.stringify({
+    v: 1,
+    teamId,
+    display: "board",
+    filters: { statuses: ["todo"], priorities: [], assignees: [], labels: ["x".repeat(labelChars)] },
+  });
+}
+
+/** Inserts `count` saved views; every third opens the cleared team, the rest the kept one. Returns the third. */
+async function insertViews(
+  t: TestConvex,
+  teams: { cleared: Id<"teams">; kept: Id<"teams"> },
+  count: number,
+  labelChars: number
+) {
+  const opensCleared = new Set<Id<"views">>();
+  for (let start = 0; start < count; start += TEST_BATCH) {
+    await t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(teams.kept))!;
+      const creatorId = (await ctx.db.query("users").first())!._id;
+      for (let index = start; index < Math.min(start + TEST_BATCH, count); index++) {
+        const teamId = index % 3 === 0 ? teams.cleared : teams.kept;
+        const filters = savedView(teamId, labelChars);
+        const viewId = await ctx.db.insert("views", { orgId, creatorId, name: `View ${index}`, filters, shared: true });
+        if (teamId === teams.cleared) {
+          opensCleared.add(viewId);
+        }
+      }
+    });
+  }
+  return opensCleared;
+}
+
+/** Every saved view's id, read in pages so no test transaction passes the read limit. */
+async function allViewIds(t: TestConvex) {
+  const ids: Id<"views">[] = [];
+  let cursor: string | null = null;
+  for (let isDone = false; !isDone; ) {
+    const page = await t.run((ctx) => ctx.db.query("views").paginate({ cursor, numItems: TEST_BATCH }));
+    ids.push(...page.page.map((view) => view._id));
+    cursor = page.continueCursor;
+    isDone = page.isDone;
+  }
+  return ids;
+}
+
+/** Queues a scheduled run for the cleared team, then a second clear deletes the team before that run. */
+async function queueRunThenClearTeam(t: TestConvex, teamId: Id<"teams">) {
+  await addIssues(t, teamId, PAGE_SIZE);
+  await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+  await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+  expect(await t.run((ctx) => ctx.db.get(teamId))).toBeNull();
+}
+
 describe("admin.clearTeamContent", () => {
   test("deletes one team's content and the team, and keeps the other team, org rows and the mirror", async () => {
     const { t, cleared, kept } = await setupTeams();
@@ -530,6 +617,74 @@ describe("admin.clearTeamContent", () => {
     vi.useRealTimers();
   });
 
+  test("a queued run for a team that is already gone stops without error", async () => {
+    vi.useFakeTimers();
+    const { t, cleared } = await setupTeams();
+    await queueRunThenClearTeam(t, cleared.teamId);
+    const before = await snapshot(t, CONTENT_TABLES);
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
+    expect(await snapshot(t, CONTENT_TABLES)).toEqual(before);
+    vi.useRealTimers();
+  });
+
+  test("a queued run leaves a new team created with the cleared team's key", async () => {
+    vi.useFakeTimers();
+    const { t, cleared, kept } = await setupTeams();
+    await queueRunThenClearTeam(t, cleared.teamId);
+    const newTeamId = await t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(kept.teamId))!;
+      const teamId = await ctx.db.insert("teams", { orgId, name: CLEARED_TEAM, key: CLEARED_TEAM, nextIssueNumber: 1 });
+      const creatorId = (await ctx.db.query("users").first())!._id;
+      await ctx.db.insert("views", { orgId, creatorId, name: "New board", filters: savedView(teamId), shared: true });
+      return teamId;
+    });
+    await addIssues(t, newTeamId, 3);
+    const before = await snapshot(t, CONTENT_TABLES);
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await snapshot(t, CONTENT_TABLES)).toEqual(before);
+    vi.useRealTimers();
+  });
+
+  test("checks every saved view a page per run, deletes those that open the team and keeps the rest", async () => {
+    vi.useFakeTimers();
+    const { t, cleared, kept } = await setupTeams();
+    const teams = { cleared: cleared.teamId, kept: kept.teamId };
+    const viewCount = Math.ceil(TRANSACTION_READ_BYTES / LARGE_FILTER_CHARS) + PAGE_SIZE;
+    const opensCleared = await insertViews(t, teams, viewCount, LARGE_FILTER_CHARS);
+    const idsBefore = await allViewIds(t);
+
+    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await allViewIds(t)).toEqual(idsBefore.filter((id) => !opensCleared.has(id)));
+    expect(await t.run((ctx) => ctx.db.get(cleared.teamId))).toBeNull();
+    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
+    vi.useRealTimers();
+  });
+
+  test("a rerun after a scheduled run failed in the saved-view scan finishes the clear", async () => {
+    vi.useFakeTimers();
+    const { t, cleared, kept } = await setupTeams();
+    const opensCleared = await insertViews(t, { cleared: cleared.teamId, kept: kept.teamId }, PAGE_SIZE * 2 + 10, 0);
+    const idsBefore = await allViewIds(t);
+    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+    await cancelScheduledRuns(t);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await t.run((ctx) => ctx.db.get(cleared.teamId))).not.toBeNull();
+
+    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await allViewIds(t)).toEqual(idsBefore.filter((id) => !opensCleared.has(id)));
+    expect(await t.run((ctx) => ctx.db.get(cleared.teamId))).toBeNull();
+    vi.useRealTimers();
+  });
+
   test("leaves another workspace's rows that point at a cleared issue", async () => {
     const { t, cleared } = await setupTeams();
     const foreign = await t.run(async (ctx) => {
@@ -563,8 +718,6 @@ describe("admin.clearTeamContent", () => {
 
   test("deletes the saved views that open the cleared team and keeps the others", async () => {
     const { t, cleared, kept } = await setupTeams();
-    const savedView = (teamId: Id<"teams">) =>
-      JSON.stringify({ v: 1, teamId, display: "board", filters: { statuses: ["todo"] } });
     const viewIds = await t.run(async (ctx) => {
       const keptStory = (await ctx.db.get(kept.storyId))!;
       const view = (name: string, filters: string) =>

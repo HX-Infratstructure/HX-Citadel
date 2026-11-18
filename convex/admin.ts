@@ -6,7 +6,7 @@ import { countTables, deleteIssuesWithOwnedRows, deleteRows, ISSUE_OWNED_TABLES 
 import { patchIssue } from "./lib/issueVersion";
 import { existedBeforeRead, getOrgByClerkIdOrThrow } from "./lib/mirror";
 import { subCounter } from "./lib/rules/levels";
-import { inOrg } from "./lib/orgRows";
+import { inOrg, orgRow } from "./lib/orgRows";
 import { findTeamByKey } from "./lib/teams";
 
 /**
@@ -56,9 +56,6 @@ const CONTENT_TABLES = [...TEAM_TABLES, "labels", "projects", "idempotencyKeys"]
 type TeamCounts = Record<(typeof TEAM_TABLES)[number], number>;
 type ContentCounts = Record<(typeof CONTENT_TABLES)[number], number>;
 
-/** What one run deleted, and whether rows are left for the next run. */
-type ClearRun<Counts> = { counts: Counts; done: boolean };
-
 function countFields<T extends string>(tables: readonly T[]) {
   return Object.fromEntries(tables.map((table) => [table, v.number()])) as Record<T, ReturnType<typeof v.number>>;
 }
@@ -103,39 +100,65 @@ async function deleteTeam(ctx: MutationCtx, orgId: OrgId, team: Doc<"teams">) {
 }
 
 /**
- * Saved views whose filters open this team's board (`SavedViewPayload` in
- * components/views/filters.ts). `views.create` and `views.update` store only valid JSON.
+ * One page of the workspace's saved views from `cursor`, and those on it whose filters open this
+ * team's board (`SavedViewPayload` in components/views/filters.ts). `views.create` and
+ * `views.update` store only valid JSON.
  */
-async function viewsOpeningTeam(ctx: MutationCtx, orgId: OrgId, teamId: Id<"teams">) {
-  const views = await ctx.db
+async function viewsOpeningTeam(ctx: MutationCtx, team: Doc<"teams">, cursor: string | null) {
+  const { page, isDone, continueCursor } = await ctx.db
     .query("views")
-    .withIndex("by_org", (q) => q.eq("orgId", orgId))
-    .collect();
-  return views.filter((view) => (JSON.parse(view.filters) as { teamId?: unknown } | null)?.teamId === teamId);
+    .withIndex("by_org", (q) => q.eq("orgId", team.orgId))
+    .paginate({ cursor, numItems: PAGE_SIZE });
+  const views = page.filter((view) => (JSON.parse(view.filters) as { teamId?: unknown } | null)?.teamId === team._id);
+  return { views, isDone, continueCursor };
 }
 
-/** A page of the team's issues; when it is the last, the team's views and the team go too. */
-async function clearTeamPage(ctx: MutationCtx, orgId: OrgId, team: Doc<"teams">): Promise<ClearRun<TeamCounts>> {
+/** The next run of a team clear, bound to the team's id so a team created again with its key is never touched. */
+async function scheduleTeamPage(ctx: MutationCtx, team: Doc<"teams">, viewsCursor: string | null) {
+  await ctx.scheduler.runAfter(0, internal.admin.continueTeamClear, {
+    orgId: team.orgId,
+    teamId: team._id,
+    viewsCursor,
+  });
+}
+
+/**
+ * One run of a team clear: a page of the team's issues; once they are gone, a page of the workspace's
+ * saved views from `viewsCursor`; once every view is read, the team's cycles and the team. Every run
+ * starts with the issues, so the run that deletes the team has seen it hold none.
+ */
+async function clearTeamPage(ctx: MutationCtx, team: Doc<"teams">, viewsCursor: string | null): Promise<TeamCounts> {
   const issues = await inOrg(
     ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", team._id)),
-    orgId
+    team.orgId
   ).take(PAGE_SIZE);
   const issueCounts = await deleteIssuesWithOwnedRows(ctx, issues);
   if (issues.length === PAGE_SIZE) {
-    return { counts: { ...issueCounts, cycles: 0, views: 0, teams: 0 }, done: false };
+    await scheduleTeamPage(ctx, team, viewsCursor);
+    return { ...issueCounts, cycles: 0, views: 0, teams: 0 };
   }
-  const views = await viewsOpeningTeam(ctx, orgId, team._id);
-  await deleteRows(ctx, views);
-  const cycles = await deleteTeam(ctx, orgId, team);
-  return { counts: { ...issueCounts, cycles, views: views.length, teams: 1 }, done: true };
+  const scan = await viewsOpeningTeam(ctx, team, viewsCursor);
+  await deleteRows(ctx, scan.views);
+  if (!scan.isDone) {
+    await scheduleTeamPage(ctx, team, scan.continueCursor);
+    return { ...issueCounts, cycles: 0, views: scan.views.length, teams: 0 };
+  }
+  const cycles = await deleteTeam(ctx, team.orgId, team);
+  return { ...issueCounts, cycles, views: scan.views.length, teams: 1 };
+}
+
+/** The next run of a workspace clear, bound to the workspace's id rather than its Clerk id. */
+async function scheduleOrgPage(ctx: MutationCtx, orgId: OrgId) {
+  await ctx.scheduler.runAfter(0, internal.admin.continueOrgClear, { orgId });
 }
 
 /** A page of the workspace's issues; when it is the last, a page of its teams and of each org-only table. */
-async function clearOrgPage(ctx: MutationCtx, orgId: OrgId): Promise<ClearRun<ContentCounts>> {
+async function clearOrgPage(ctx: MutationCtx, orgId: OrgId): Promise<ContentCounts> {
   const issues = await ORG_ROWS.issues(ctx, orgId, PAGE_SIZE);
   const issueCounts = await deleteIssuesWithOwnedRows(ctx, issues);
   if (issues.length === PAGE_SIZE) {
-    return { counts: sumCounts([issueCounts]), done: false };
+    await scheduleOrgPage(ctx, orgId);
+    return sumCounts([issueCounts]);
   }
   const teams = await ORG_ROWS.teams(ctx, orgId, PAGE_SIZE);
   let cycles = 0;
@@ -147,10 +170,10 @@ async function clearOrgPage(ctx: MutationCtx, orgId: OrgId): Promise<ClearRun<Co
     await deleteRows(ctx, rows);
   }
   const orgOnlyCounts = countTables(ORG_ONLY_TABLES, (table) => pages[ORG_ONLY_TABLES.indexOf(table)].length);
-  return {
-    counts: sumCounts([issueCounts, { cycles, teams: teams.length }, orgOnlyCounts]),
-    done: [teams, ...pages].every((rows) => rows.length < PAGE_SIZE),
-  };
+  if ([teams, ...pages].some((rows) => rows.length === PAGE_SIZE)) {
+    await scheduleOrgPage(ctx, orgId);
+  }
+  return sumCounts([issueCounts, { cycles, teams: teams.length }, orgOnlyCounts]);
 }
 
 export const orgHasContent = internalQuery({
@@ -171,26 +194,46 @@ export const clearOrgContent = internalMutation({
   returns: clearedCountsValidator,
   handler: async (ctx, args): Promise<ContentCounts> => {
     const org = await getOrgByClerkId(ctx, args.clerkOrgId);
-    const run = await clearOrgPage(ctx, org._id);
-    if (!run.done) {
-      await ctx.scheduler.runAfter(0, internal.admin.clearOrgContent, args);
-    }
-    return run.counts;
+    return await clearOrgPage(ctx, org._id);
   },
 });
 
-/** Pages like `clearOrgContent`; the last run deletes the team's cycles, its saved views and the team. */
+/** A scheduled run of `clearOrgContent`. It stops once the workspace's mirror is gone. */
+export const continueOrgClear = internalMutation({
+  args: { orgId: v.id("organizations") },
+  returns: clearedCountsValidator,
+  handler: async (ctx, args): Promise<ContentCounts> => {
+    if ((await ctx.db.get(args.orgId)) === null) {
+      return sumCounts([]);
+    }
+    return await clearOrgPage(ctx, args.orgId);
+  },
+});
+
+/**
+ * Pages like `clearOrgContent`; the last runs delete the team's saved views, its cycles and the team.
+ * A rerun starts from the rows that are left and reads the saved views from the start.
+ */
 export const clearTeamContent = internalMutation({
   args: { clerkOrgId: v.string(), teamKey: v.string() },
   returns: clearedTeamCountsValidator,
   handler: async (ctx, args): Promise<TeamCounts> => {
     const org = await getOrgByClerkId(ctx, args.clerkOrgId);
     const team = await findTeamByKey(ctx, org._id, args.teamKey);
-    const run = await clearTeamPage(ctx, org._id, team);
-    if (!run.done) {
-      await ctx.scheduler.runAfter(0, internal.admin.clearTeamContent, args);
+    return await clearTeamPage(ctx, team, null);
+  },
+});
+
+/** A scheduled run of `clearTeamContent`. It stops once the team it started on is gone. */
+export const continueTeamClear = internalMutation({
+  args: { orgId: v.id("organizations"), teamId: v.id("teams"), viewsCursor: v.union(v.string(), v.null()) },
+  returns: clearedTeamCountsValidator,
+  handler: async (ctx, args): Promise<TeamCounts> => {
+    const team = await orgRow(ctx, args.orgId, args.teamId);
+    if (team === null) {
+      return countTables(TEAM_TABLES, () => 0);
     }
-    return run.counts;
+    return await clearTeamPage(ctx, team, args.viewsCursor);
   },
 });
 
