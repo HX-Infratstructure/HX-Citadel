@@ -130,6 +130,8 @@ export default defineSchema({
     testing: v.optional(v.boolean()),
     /** Absolute http(s) proof link, Complete testing sub-task only */
     proofUrl: v.optional(v.string()),
+    /** Bumped by one on every patch (`patchIssue`); absent reads as 1 */
+    version: v.optional(v.number()),
   })
     .index("by_org", ["orgId"])
     .index("by_team", ["teamId"])

@@ -5,6 +5,7 @@ import { QueryCtx } from "./_generated/server";
 import { getOrgIssue } from "./issues";
 import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { patchIssue } from "./lib/issueVersion";
 import {
   assertParentOpen,
   assertValidParent,
@@ -395,7 +396,7 @@ export const setParent = orgMutation({
       ...(await renumberedSubtask(ctx, issue.kind, args.parentIssueId)),
     };
     const actor = { orgId: ctx.org._id, actorId: ctx.user._id };
-    await ctx.db.patch(issue._id, moved);
+    await patchIssue(ctx, issue._id, moved);
     await logFieldChanges(ctx, actor, issue._id, changedFields(issue, moved));
     await cascadeProject(ctx, issue._id, placement.projectId, actor);
 

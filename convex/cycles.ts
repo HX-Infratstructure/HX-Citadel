@@ -4,6 +4,7 @@ import { QueryCtx } from "./_generated/server";
 import { issueShape } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { patchIssue } from "./lib/issueVersion";
 import { progressShape } from "./projects";
 
 export const cycleShape = {
@@ -278,7 +279,7 @@ export const remove = orgMutation({
       if (issue.orgId !== ctx.org._id) {
         continue;
       }
-      await ctx.db.patch(issue._id, { cycleId: undefined });
+      await patchIssue(ctx, issue._id, { cycleId: undefined });
       await logActivity(ctx, {
         orgId: ctx.org._id,
         issueId: issue._id,

@@ -3,6 +3,7 @@ import { MutationCtx, QueryCtx } from "../../_generated/server";
 import { childKindOf, formatIssueKey, IssueKind, PARENT_KIND, PARENT_REQUIRED } from "../../../lib/issue-key";
 import { GATED_LABELS, isGatedStatus } from "../../../lib/issue-status";
 import { ActivityActor, changedFields, logFieldChanges } from "../activity";
+import { patchIssue } from "../issueVersion";
 
 type Placement = {
   teamId: Id<"teams">;
@@ -176,7 +177,7 @@ export async function cascadeProject(
   for (const descendant of await descendants(ctx, rootId)) {
     const changes = changedFields(descendant, { projectId });
     if (changes.length > 0) {
-      await ctx.db.patch(descendant._id, { projectId });
+      await patchIssue(ctx, descendant._id, { projectId });
       await logFieldChanges(ctx, actor, descendant._id, changes);
     }
   }

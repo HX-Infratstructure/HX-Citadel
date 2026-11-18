@@ -5,6 +5,7 @@ import { formatIssueKey } from "../lib/issue-key";
 import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { deleteIssueOwnedRows } from "./lib/issueCleanup";
+import { FIRST_VERSION, patchIssue } from "./lib/issueVersion";
 import { OrgScope } from "./lib/orgScope";
 import {
   assertDoneGate,
@@ -55,6 +56,7 @@ export const issueShape = {
   sortOrder: v.number(),
   testing: v.optional(v.boolean()),
   proofUrl: v.optional(v.string()),
+  version: v.optional(v.number()),
 };
 
 /** Verify an issue belongs to the caller's org before any read/write. */
@@ -244,6 +246,7 @@ export async function createIssue(
     estimate: args.estimate,
     dueDate: args.dueDate,
     sortOrder,
+    version: FIRST_VERSION,
   });
   const created = await ctx.db.get(issueId);
   if (created?.kind === "story") {
@@ -327,7 +330,7 @@ export async function updateIssue(ctx: MutationCtx, scope: OrgScope, args: Updat
 
   await assertWipFreeAfterUpdate(ctx, issue, updates);
   await assertDoneGateAfterUpdate(ctx, issue, updates);
-  await ctx.db.patch(issue._id, updates);
+  await patchIssue(ctx, issue._id, updates);
   await logFieldChanges(ctx, actor, issue._id, changedFields(issue, updates));
 }
 
@@ -433,7 +436,7 @@ export async function setIssueProof(
   if (proofUrl !== "") {
     assertProofUrl(proofUrl);
   }
-  await ctx.db.patch(issue._id, { proofUrl: proofUrl || undefined });
+  await patchIssue(ctx, issue._id, { proofUrl: proofUrl || undefined });
   await logProofChange(ctx, issue, proofUrl, scope.actorId);
 }
 

@@ -25,6 +25,7 @@ import type * as lib_auth from "../lib/auth.js";
 import type * as lib_customFunctions from "../lib/customFunctions.js";
 import type * as lib_httpApi from "../lib/httpApi.js";
 import type * as lib_issueCleanup from "../lib/issueCleanup.js";
+import type * as lib_issueVersion from "../lib/issueVersion.js";
 import type * as lib_mirror from "../lib/mirror.js";
 import type * as lib_orgScope from "../lib/orgScope.js";
 import type * as lib_rules_doneGate from "../lib/rules/doneGate.js";
@@ -66,6 +67,7 @@ declare const fullApi: ApiFromModules<{
   "lib/customFunctions": typeof lib_customFunctions;
   "lib/httpApi": typeof lib_httpApi;
   "lib/issueCleanup": typeof lib_issueCleanup;
+  "lib/issueVersion": typeof lib_issueVersion;
   "lib/mirror": typeof lib_mirror;
   "lib/orgScope": typeof lib_orgScope;
   "lib/rules/doneGate": typeof lib_rules_doneGate;

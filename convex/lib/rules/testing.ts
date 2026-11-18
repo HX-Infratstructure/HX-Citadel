@@ -1,6 +1,7 @@
 import { Doc, Id } from "../../_generated/dataModel";
 import { MutationCtx } from "../../_generated/server";
 import { logActivity } from "../activity";
+import { FIRST_VERSION } from "../issueVersion";
 import { nextSubNumber } from "./levels";
 
 export const TESTING_SUBTASK_TITLE = "Complete testing";
@@ -28,6 +29,7 @@ export async function createTestingSubtask(
     projectId: story.projectId,
     parentIssueId: story._id,
     sortOrder: story.sortOrder,
+    version: FIRST_VERSION,
   });
   await logActivity(ctx, {
     orgId: story.orgId,

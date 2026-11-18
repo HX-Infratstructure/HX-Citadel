@@ -4,6 +4,7 @@ import { isGatedStatus } from "../lib/issue-status";
 import { DAY_MS, SPRINT_DAYS, sprintEnd } from "../lib/sprint";
 import { Doc, Id } from "./_generated/dataModel";
 import { logActivity } from "./lib/activity";
+import { FIRST_VERSION, patchIssue } from "./lib/issueVersion";
 import { internalMutation } from "./_generated/server";
 import { storyType } from "./issues";
 import { getMembershipOrThrow, getOrgByClerkIdOrThrow, getUserByClerkIdOrThrow } from "./lib/mirror";
@@ -350,7 +351,7 @@ export const demoData = internalMutation({
         issueCount++;
         if (isGatedStatus(story.status)) {
           const proofUrl = `https://example.com/proof/${formatIssueKey(team.key, story)}`;
-          await ctx.db.patch(testingId, { status: "done", proofUrl });
+          await patchIssue(ctx, testingId, { status: "done", proofUrl });
         }
         for (const subtask of subtasks) {
           const subtaskId = await ctx.db.insert("issues", {
@@ -366,6 +367,7 @@ export const demoData = internalMutation({
             projectId: story.projectId,
             parentIssueId: story._id,
             sortOrder: story.sortOrder,
+            version: FIRST_VERSION,
           });
           issueCount++;
           await logSeededState(subtaskId, subtask.status);
@@ -395,6 +397,7 @@ export const demoData = internalMutation({
           estimate: spec.estimate,
           dueDate: spec.dueInDays !== undefined ? now + spec.dueInDays * DAY_MS : undefined,
           sortOrder: position * 1024,
+          version: FIRST_VERSION,
         });
         issueCount++;
 

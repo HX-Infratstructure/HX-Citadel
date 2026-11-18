@@ -4,6 +4,7 @@ import { QueryCtx } from "./_generated/server";
 import { issueShape } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { patchIssue } from "./lib/issueVersion";
 import { assertNoEpics } from "./lib/rules/levels";
 import { projectStatusValidator } from "./schema";
 
@@ -260,7 +261,7 @@ export const remove = orgMutation({
       if (issue.orgId !== ctx.org._id) {
         continue;
       }
-      await ctx.db.patch(issue._id, { projectId: undefined });
+      await patchIssue(ctx, issue._id, { projectId: undefined });
       await logActivity(ctx, {
         orgId: ctx.org._id,
         issueId: issue._id,

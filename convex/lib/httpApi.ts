@@ -1,3 +1,4 @@
+import { ConvexError } from "convex/values";
 import { errorMessage } from "../../lib/error-message";
 import { ActionCtx, httpAction } from "../_generated/server";
 
@@ -33,6 +34,26 @@ export function json(status: number, body: unknown): Response {
   });
 }
 
+/** A JSON body for one issue, with its version as the ETag. */
+export function issueJson(status: number, body: { issue: { version: number } }): Response {
+  const response = json(status, body);
+  response.headers.set("ETag", `"${body.issue.version}"`);
+  return response;
+}
+
+/** `If-Match: "N"` (or `N`) as the version number the client last read; absent means no check. */
+export function readIfMatch(request: Request): number | undefined {
+  const header = request.headers.get("If-Match");
+  if (header === null) {
+    return undefined;
+  }
+  const version = Number(header.trim().replace(/^"(.*)"$/, "$1"));
+  if (!Number.isInteger(version) || version < 1) {
+    throw new HttpError(400, "validation", `If-Match must be an issue version such as "2", not ${header}`);
+  }
+  return version;
+}
+
 export async function readJsonObject(request: Request): Promise<Record<string, unknown>> {
   const body: unknown = await request.json().catch(() => null);
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -65,10 +86,30 @@ const ERROR_MAP: { pattern: RegExp; status: number; code: string }[] = [
   { pattern: /not found/i, status: 404, code: "not_found" },
 ];
 
+/** Typed `ConvexError` codes the shared write logic throws, by HTTP status. */
+const TYPED_ERRORS: Record<string, number> = { stale: 412 };
+
+function typedFailure(error: unknown): HttpFailure | null {
+  if (!(error instanceof ConvexError)) {
+    return null;
+  }
+  const data: unknown = error.data;
+  if (typeof data !== "object" || data === null || !("code" in data) || !("message" in data)) {
+    return null;
+  }
+  const { code, message } = data as ErrorBody;
+  const status = TYPED_ERRORS[code];
+  return status === undefined ? null : { status, body: { code, message } };
+}
+
 /** Any thrown error as a status and a JSON `{code, message}`; an unmapped rule `Error` is a 409 refusal. */
 export function toHttpError(error: unknown): HttpFailure {
   if (error instanceof HttpError) {
     return { status: error.status, body: { code: error.code, message: error.message } };
+  }
+  const typed = typedFailure(error);
+  if (typed !== null) {
+    return typed;
   }
   const message = errorMessage(error, "Request failed");
   if (!(error instanceof Error)) {
