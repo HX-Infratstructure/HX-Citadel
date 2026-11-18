@@ -11,6 +11,7 @@ const modules = import.meta.glob("./**/*.*s");
 
 const CLEARED_ORG = "org_cleared";
 const KEPT_ORG = "org_kept";
+const LONE_ORG = "org_lone";
 
 const CONTENT_TABLES = [
   "issueLabels",
@@ -44,7 +45,7 @@ const SEEDED_COUNTS = {
 
 const ZERO_COUNTS = Object.fromEntries(CONTENT_TABLES.map((table) => [table, 0]));
 
-async function seedOrg(ctx: MutationCtx & { storage: StorageActionWriter }, clerkOrgId: string) {
+async function seedMirror(ctx: MutationCtx, clerkOrgId: string) {
   const userId = await ctx.db.insert("users", {
     clerkId: `user_${clerkOrgId}`,
     name: "Owner",
@@ -62,6 +63,11 @@ async function seedOrg(ctx: MutationCtx & { storage: StorageActionWriter }, cler
     role: "admin",
     clerkMembershipId: `mem_${clerkOrgId}`,
   });
+  return { orgId, userId };
+}
+
+async function seedOrg(ctx: MutationCtx & { storage: StorageActionWriter }, clerkOrgId: string) {
+  const { orgId, userId } = await seedMirror(ctx, clerkOrgId);
   const teamId = await ctx.db.insert("teams", {
     orgId,
     name: "Engineering",
@@ -191,15 +197,49 @@ describe("admin.clearOrgContent", () => {
   });
 });
 
-describe("admin.deleteOrgMirror", () => {
-  test("refuses while the organization still has content", async () => {
-    const { t } = await setup();
-    const mirrorBefore = await snapshot(t, MIRROR_TABLES);
+async function setupMirrorWith(
+  insertRow: (ctx: MutationCtx, orgId: Id<"organizations">) => Promise<unknown>
+) {
+  const t = convexTest(schema, modules);
+  await t.run(async (ctx) => {
+    const { orgId } = await seedMirror(ctx, LONE_ORG);
+    await insertRow(ctx, orgId);
+  });
+  return t;
+}
 
-    await expect(
-      t.mutation(internal.admin.deleteOrgMirror, { clerkOrgId: CLEARED_ORG })
-    ).rejects.toThrow("still has teams or issues");
-    expect(await snapshot(t, MIRROR_TABLES)).toEqual(mirrorBefore);
+async function expectMirrorRefused(t: TestConvex, clerkOrgId: string, message: string) {
+  const mirrorBefore = await snapshot(t, MIRROR_TABLES);
+
+  await expect(t.mutation(internal.admin.deleteOrgMirror, { clerkOrgId })).rejects.toThrow(message);
+  expect(await snapshot(t, MIRROR_TABLES)).toEqual(mirrorBefore);
+}
+
+describe("admin.deleteOrgMirror", () => {
+  test("refuses while the organization still has content and names every table", async () => {
+    const { t } = await setup();
+
+    await expectMirrorRefused(
+      t,
+      CLEARED_ORG,
+      `Organization ${CLEARED_ORG} still has rows in ${CONTENT_TABLES.join(", ")}.`
+    );
+  });
+
+  test("refuses an organization that has only a project", async () => {
+    const t = await setupMirrorWith((ctx, orgId) =>
+      ctx.db.insert("projects", { orgId, name: "Solo", status: "planned" })
+    );
+
+    await expectMirrorRefused(t, LONE_ORG, `Organization ${LONE_ORG} still has rows in projects.`);
+  });
+
+  test("refuses an organization that has only a label", async () => {
+    const t = await setupMirrorWith((ctx, orgId) =>
+      ctx.db.insert("labels", { orgId, name: "Solo", color: "#000000" })
+    );
+
+    await expectMirrorRefused(t, LONE_ORG, `Organization ${LONE_ORG} still has rows in labels.`);
   });
 
   test("removes the organization and member rows after clearOrgContent and keeps users", async () => {

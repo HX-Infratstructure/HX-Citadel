@@ -8,7 +8,7 @@ import { internalMutation, MutationCtx } from "./_generated/server";
  * is a separate step that refuses while workspace content would be orphaned.
  */
 
-const clearedCountsValidator = v.object({
+const contentCountFields = {
   issueLabels: v.number(),
   issueRelations: v.number(),
   comments: v.number(),
@@ -20,7 +20,13 @@ const clearedCountsValidator = v.object({
   views: v.number(),
   projects: v.number(),
   teams: v.number(),
-});
+};
+
+type ContentTable = keyof typeof contentCountFields;
+type OrgContent = { [T in ContentTable]: Doc<T>[] };
+
+const CONTENT_TABLES = Object.keys(contentCountFields) as ContentTable[];
+const clearedCountsValidator = v.object(contentCountFields);
 
 const deletedMirrorValidator = v.object({
   organizations: v.number(),
@@ -47,17 +53,24 @@ async function deleteRows(ctx: MutationCtx, rows: { _id: Id<TableNames> }[]) {
   for (const row of rows) {
     await ctx.db.delete(row._id);
   }
-  return rows.length;
 }
 
-async function deleteAttachments(ctx: MutationCtx, attachments: Doc<"attachments">[]) {
+async function deleteAttachmentFiles(ctx: MutationCtx, attachments: Doc<"attachments">[]) {
   for (const attachment of attachments) {
     await ctx.storage.delete(attachment.storageId);
   }
-  return await deleteRows(ctx, attachments);
 }
 
-async function loadOrgContent(ctx: MutationCtx, orgId: Id<"organizations">) {
+function countRows(content: OrgContent) {
+  const counts = CONTENT_TABLES.map((table) => [table, content[table].length]);
+  return Object.fromEntries(counts) as Record<ContentTable, number>;
+}
+
+function tablesWithRows(content: OrgContent) {
+  return CONTENT_TABLES.filter((table) => content[table].length > 0);
+}
+
+async function loadOrgContent(ctx: MutationCtx, orgId: Id<"organizations">): Promise<OrgContent> {
   const issues = await ctx.db
     .query("issues")
     .withIndex("by_org", (q) => q.eq("orgId", orgId))
@@ -105,17 +118,10 @@ async function loadOrgContent(ctx: MutationCtx, orgId: Id<"organizations">) {
 }
 
 async function assertNoContent(ctx: MutationCtx, org: Doc<"organizations">) {
-  const team = await ctx.db
-    .query("teams")
-    .withIndex("by_org", (q) => q.eq("orgId", org._id))
-    .first();
-  const issue = await ctx.db
-    .query("issues")
-    .withIndex("by_org", (q) => q.eq("orgId", org._id))
-    .first();
-  if (team || issue) {
+  const remaining = tablesWithRows(await loadOrgContent(ctx, org._id));
+  if (remaining.length > 0) {
     throw new Error(
-      `Organization ${org.clerkOrgId} still has teams or issues. Run admin:clearOrgContent first.`
+      `Organization ${org.clerkOrgId} still has rows in ${remaining.join(", ")}. Run admin:clearOrgContent first.`
     );
   }
 }
@@ -126,19 +132,11 @@ export const clearOrgContent = internalMutation({
   handler: async (ctx, args) => {
     const org = await getOrgByClerkId(ctx, args.clerkOrgId);
     const content = await loadOrgContent(ctx, org._id);
-    return {
-      issueLabels: await deleteRows(ctx, content.issueLabels),
-      issueRelations: await deleteRows(ctx, content.issueRelations),
-      comments: await deleteRows(ctx, content.comments),
-      activity: await deleteRows(ctx, content.activity),
-      attachments: await deleteAttachments(ctx, content.attachments),
-      issues: await deleteRows(ctx, content.issues),
-      cycles: await deleteRows(ctx, content.cycles),
-      labels: await deleteRows(ctx, content.labels),
-      views: await deleteRows(ctx, content.views),
-      projects: await deleteRows(ctx, content.projects),
-      teams: await deleteRows(ctx, content.teams),
-    };
+    await deleteAttachmentFiles(ctx, content.attachments);
+    for (const table of CONTENT_TABLES) {
+      await deleteRows(ctx, content[table]);
+    }
+    return countRows(content);
   },
 });
 
@@ -152,8 +150,8 @@ export const deleteOrgMirror = internalMutation({
       .query("members")
       .withIndex("by_org", (q) => q.eq("orgId", org._id))
       .collect();
-    const deletedMembers = await deleteRows(ctx, members);
+    await deleteRows(ctx, members);
     await ctx.db.delete(org._id);
-    return { organizations: 1, members: deletedMembers };
+    return { organizations: 1, members: members.length };
   },
 });
