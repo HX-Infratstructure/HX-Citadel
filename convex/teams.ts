@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { isValidTeamKey, TEAM_KEY_RULE } from "../lib/issue-key";
+import { isValidTeamKey, normalizeTeamKey, TEAM_KEY_RULE } from "../lib/issue-key";
 import { orgAdminMutation, orgQuery } from "./lib/customFunctions";
 
 const teamShape = {
@@ -43,7 +43,7 @@ export const create = orgAdminMutation({
   },
   returns: v.id("teams"),
   handler: async (ctx, args) => {
-    const key = args.key.toUpperCase().trim();
+    const key = normalizeTeamKey(args.key);
     if (!isValidTeamKey(key)) {
       throw new Error(TEAM_KEY_RULE);
     }

@@ -105,6 +105,13 @@ describe("REST /api/v1/issues", () => {
     expect(await response.json()).toEqual({ code: "rule_refused", message: WIP_REFUSAL });
   });
 
+  test("POST finds the team by a lower-case, padded key", async () => {
+    const t = await setup();
+    const response = await post(t, { teamKey: " eng ", title: "Lower case" }, "cc1");
+    expect(response.status).toBe(201);
+    expect((await response.json()).issue).toMatchObject({ key: "ENG-1", title: "Lower case" });
+  });
+
   test("an unknown team is 404 not_found and a bad body is 400 validation", async () => {
     const t = await setup();
     expect((await post(t, { teamKey: "NOPE", title: "x" }, "cc1")).status).toBe(404);

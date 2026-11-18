@@ -48,11 +48,48 @@ async function loadIssueOwnedRows(ctx: MutationCtx, issueId: Id<"issues">) {
   };
 }
 
+type IssueOwnedRows = Awaited<ReturnType<typeof loadIssueOwnedRows>>;
+type IssueOwnedTable = keyof IssueOwnedRows;
+export type IssueOwnedCounts = Record<IssueOwnedTable, number>;
+
+const NO_OWNED_ROWS: IssueOwnedCounts = {
+  comments: 0,
+  activity: 0,
+  attachments: 0,
+  issueLabels: 0,
+  issueRelations: 0,
+};
+const ISSUE_OWNED_TABLES = Object.keys(NO_OWNED_ROWS) as IssueOwnedTable[];
+
+function countRows(owned: IssueOwnedRows): IssueOwnedCounts {
+  const entries = ISSUE_OWNED_TABLES.map((table) => [table, owned[table].length]);
+  return Object.fromEntries(entries) as IssueOwnedCounts;
+}
+
+function addCounts(total: IssueOwnedCounts, counts: IssueOwnedCounts): IssueOwnedCounts {
+  const entries = ISSUE_OWNED_TABLES.map((table) => [table, total[table] + counts[table]]);
+  return Object.fromEntries(entries) as IssueOwnedCounts;
+}
+
 /** Deletes every row that belongs to one issue, and its stored files. The issue row is the caller's. */
-export async function deleteIssueOwnedRows(ctx: MutationCtx, issueId: Id<"issues">): Promise<void> {
+export async function deleteIssueOwnedRows(ctx: MutationCtx, issueId: Id<"issues">): Promise<IssueOwnedCounts> {
   const owned = await loadIssueOwnedRows(ctx, issueId);
   await deleteAttachmentFiles(ctx, owned.attachments);
   for (const rows of Object.values(owned)) {
     await deleteRows(ctx, rows);
   }
+  return countRows(owned);
+}
+
+/**
+ * Deletes the issues with the rows each owns. One issue at a time, so a
+ * relation between two of them is read and deleted once.
+ */
+export async function deleteIssuesWithOwnedRows(ctx: MutationCtx, issues: Doc<"issues">[]) {
+  let total = NO_OWNED_ROWS;
+  for (const issue of issues) {
+    total = addCounts(total, await deleteIssueOwnedRows(ctx, issue._id));
+  }
+  await deleteRows(ctx, issues);
+  return { ...total, issues: issues.length };
 }

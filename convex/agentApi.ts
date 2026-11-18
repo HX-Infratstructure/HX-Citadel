@@ -20,6 +20,7 @@ import {
 } from "./lib/orgScope";
 import { expireKeys, idempotencyValidator, Idempotency, withIdempotency } from "./lib/idempotency";
 import { assertIfMatch, issueVersion } from "./lib/issueVersion";
+import { findTeamByKey } from "./lib/teams";
 import {
   issueKindValidator,
   issuePriorityValidator,
@@ -50,17 +51,6 @@ async function agentWrite<T>(
 
 function withKey(issue: Doc<"issues">, teamKey: string, parentNumber?: number) {
   return { ...issue, key: formatIssueKey(teamKey, issue, parentNumber), version: issueVersion(issue) };
-}
-
-async function findTeamByKey(ctx: Db, orgId: Id<"organizations">, teamKey: string): Promise<Doc<"teams">> {
-  const team = await ctx.db
-    .query("teams")
-    .withIndex("by_org_and_key", (q) => q.eq("orgId", orgId).eq("key", teamKey))
-    .unique();
-  if (team === null) {
-    throw new Error(`Team ${teamKey} not found`);
-  }
-  return team;
 }
 
 async function subtasksOf(ctx: Db, issueId: Id<"issues">): Promise<Doc<"issues">[]> {

@@ -1,8 +1,9 @@
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, MutationCtx, QueryCtx } from "./_generated/server";
-import { deleteAttachmentFiles, deleteRows } from "./lib/issueCleanup";
+import { deleteAttachmentFiles, deleteIssuesWithOwnedRows, deleteRows } from "./lib/issueCleanup";
 import { getOrgByClerkIdOrThrow } from "./lib/mirror";
+import { findTeamByKey } from "./lib/teams";
 
 /**
  * Operator-only cleanup, run with `npx convex run admin:<name>`. Never public:
@@ -10,13 +11,17 @@ import { getOrgByClerkIdOrThrow } from "./lib/mirror";
  * is a separate step that refuses while workspace content would be orphaned.
  */
 
-const contentCountFields = {
+const issueContentCountFields = {
   issueLabels: v.number(),
   issueRelations: v.number(),
   comments: v.number(),
   activity: v.number(),
   attachments: v.number(),
   issues: v.number(),
+};
+
+const contentCountFields = {
+  ...issueContentCountFields,
   cycles: v.number(),
   labels: v.number(),
   views: v.number(),
@@ -24,6 +29,13 @@ const contentCountFields = {
   teams: v.number(),
   idempotencyKeys: v.number(),
 };
+
+/** Labels, views, projects and idempotency keys are org-scoped, so a team clear leaves them. */
+const clearedTeamCountsValidator = v.object({
+  ...issueContentCountFields,
+  cycles: v.number(),
+  teams: v.number(),
+});
 
 type ContentTable = keyof typeof contentCountFields;
 type OrgContent = { [T in ContentTable]: Doc<T>[] };
@@ -134,6 +146,27 @@ export const clearOrgContent = internalMutation({
       await deleteRows(ctx, content[table]);
     }
     return countRows(content);
+  },
+});
+
+export const clearTeamContent = internalMutation({
+  args: { clerkOrgId: v.string(), teamKey: v.string() },
+  returns: clearedTeamCountsValidator,
+  handler: async (ctx, args) => {
+    const org = await getOrgByClerkId(ctx, args.clerkOrgId);
+    const team = await findTeamByKey(ctx, org._id, args.teamKey);
+    const issues = await ctx.db
+      .query("issues")
+      .withIndex("by_team", (q) => q.eq("teamId", team._id))
+      .collect();
+    const cycles = await ctx.db
+      .query("cycles")
+      .withIndex("by_team", (q) => q.eq("teamId", team._id))
+      .collect();
+    const issueCounts = await deleteIssuesWithOwnedRows(ctx, issues);
+    await deleteRows(ctx, cycles);
+    await ctx.db.delete(team._id);
+    return { ...issueCounts, cycles: cycles.length, teams: 1 };
   },
 });
 

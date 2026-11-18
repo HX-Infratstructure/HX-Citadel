@@ -270,3 +270,167 @@ describe("admin.deleteOrgMirror", () => {
     );
   });
 });
+
+const TEAM_ORG = "org_teams";
+const CLEARED_TEAM = "ENG";
+const KEPT_TEAM = "OPS";
+
+async function seedTeam(
+  ctx: MutationCtx & { storage: StorageActionWriter },
+  orgId: Id<"organizations">,
+  userId: Id<"users">,
+  key: string
+) {
+  const teamId = await ctx.db.insert("teams", { orgId, name: key, key, nextIssueNumber: 3 });
+  const cycleId = await ctx.db.insert("cycles", { orgId, teamId, number: 1, startDate: 0, endDate: 1 });
+  const issueFields = { orgId, teamId, status: "todo", priority: "none", creatorId: userId, cycleId } as const;
+  const storyId = await ctx.db.insert("issues", {
+    ...issueFields,
+    kind: "story",
+    number: 1,
+    title: `${key} story`,
+    sortOrder: 1,
+  });
+  const subtaskId = await ctx.db.insert("issues", {
+    ...issueFields,
+    kind: "subtask",
+    subNumber: 1,
+    title: `${key} sub-task`,
+    parentIssueId: storyId,
+    sortOrder: 2,
+  });
+  for (const issueId of [storyId, subtaskId]) {
+    await ctx.db.insert("activity", { orgId, issueId, actorId: userId, type: "created" });
+  }
+  await ctx.db.insert("comments", { orgId, issueId: storyId, authorId: userId, body: key });
+  await ctx.db.insert("issueRelations", { issueId: storyId, relatedIssueId: subtaskId, type: "blocks" });
+  const storageId = await ctx.storage.store(new Blob([key]));
+  await ctx.db.insert("attachments", {
+    orgId,
+    issueId: storyId,
+    storageId,
+    fileName: `${key}.txt`,
+    fileType: "text/plain",
+    fileSize: 3,
+    uploadedBy: userId,
+  });
+  return { teamId, storyId, storageId };
+}
+
+async function setupTeams() {
+  const t = convexTest(schema, modules);
+  const seeded = await t.run(async (ctx) => {
+    const { orgId, userId } = await seedMirror(ctx, TEAM_ORG);
+    const cleared = await seedTeam(ctx, orgId, userId, CLEARED_TEAM);
+    const kept = await seedTeam(ctx, orgId, userId, KEPT_TEAM);
+    const labelId = await ctx.db.insert("labels", { orgId, name: "Bug", color: "#ff0000" });
+    await ctx.db.insert("issueLabels", { issueId: cleared.storyId, labelId });
+    await ctx.db.insert("issueLabels", { issueId: kept.storyId, labelId });
+    await ctx.db.insert("issueRelations", {
+      issueId: cleared.storyId,
+      relatedIssueId: kept.storyId,
+      type: "blocks",
+    });
+    await ctx.db.insert("projects", { orgId, name: "Shared", status: "planned" });
+    await ctx.db.insert("views", { orgId, creatorId: userId, name: "Mine", filters: "{}", shared: true });
+    await ctx.db.insert("idempotencyKeys", {
+      orgId,
+      agentId: userId,
+      key: "k-1",
+      requestHash: "hash",
+      body: { done: true },
+      createdAt: 1,
+    });
+    return { cleared, kept };
+  });
+  return { t, ...seeded };
+}
+
+function belongsToTeam(teamId: Id<"teams">, teamIssueIds: Set<string>) {
+  return (doc: Record<string, unknown>) =>
+    doc._id === teamId ||
+    doc.teamId === teamId ||
+    teamIssueIds.has(String(doc.issueId)) ||
+    teamIssueIds.has(String(doc.relatedIssueId));
+}
+
+describe("admin.clearTeamContent", () => {
+  test("deletes one team's content and the team, and keeps the other team, org rows and the mirror", async () => {
+    const { t, cleared, kept } = await setupTeams();
+    const contentBefore = await snapshot(t, CONTENT_TABLES);
+    const mirrorBefore = await snapshot(t, MIRROR_TABLES);
+    const clearedIssueIds = new Set(
+      contentBefore.issues.filter((issue) => issue.teamId === cleared.teamId).map((issue) => issue._id)
+    );
+    const isCleared = belongsToTeam(cleared.teamId, clearedIssueIds);
+
+    const counts = await t.mutation(internal.admin.clearTeamContent, {
+      clerkOrgId: TEAM_ORG,
+      teamKey: CLEARED_TEAM,
+    });
+
+    expect(counts).toEqual({
+      issueLabels: 1,
+      issueRelations: 2,
+      comments: 1,
+      activity: 2,
+      attachments: 1,
+      issues: 2,
+      cycles: 1,
+      teams: 1,
+    });
+    const contentAfter = await snapshot(t, CONTENT_TABLES);
+    for (const table of CONTENT_TABLES) {
+      expect(contentAfter[table], table).toEqual(contentBefore[table].filter((doc) => !isCleared(doc)));
+    }
+    expect(contentAfter.issues.map((issue) => issue.title)).toEqual(["OPS story", "OPS sub-task"]);
+    expect(contentAfter.issueRelations).toHaveLength(1);
+    expect(await snapshot(t, MIRROR_TABLES)).toEqual(mirrorBefore);
+    const files = await t.run(async (ctx) => ({
+      cleared: await ctx.db.system.get(cleared.storageId),
+      kept: await ctx.db.system.get(kept.storageId),
+    }));
+    expect(files.cleared).toBeNull();
+    expect(files.kept).not.toBeNull();
+  });
+
+  test("finds the team by a lower-case, padded key", async () => {
+    const { t, cleared, kept } = await setupTeams();
+
+    const counts = await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: " eng " });
+
+    expect(counts).toMatchObject({ issues: 2, teams: 1 });
+    const teams = await t.run(async (ctx) => ({
+      cleared: await ctx.db.get(cleared.teamId),
+      kept: await ctx.db.get(kept.teamId),
+    }));
+    expect(teams.cleared).toBeNull();
+    expect(teams.kept).not.toBeNull();
+  });
+
+  test("refuses an unknown lower-case team with the upper-case key", async () => {
+    const { t } = await setupTeams();
+
+    await expect(
+      t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: "nope" })
+    ).rejects.toThrow("Team NOPE not found");
+  });
+
+  test("refuses an unknown team and changes nothing", async () => {
+    const { t } = await setupTeams();
+    const before = await snapshot(t, [...CONTENT_TABLES, ...MIRROR_TABLES]);
+
+    await expect(
+      t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: "NOPE" })
+    ).rejects.toThrow("Team NOPE not found");
+    expect(await snapshot(t, [...CONTENT_TABLES, ...MIRROR_TABLES])).toEqual(before);
+  });
+
+  test("refuses an unknown organization", async () => {
+    const { t } = await setupTeams();
+
+    await expect(
+      t.mutation(internal.admin.clearTeamContent, { clerkOrgId: "org_missing", teamKey: CLEARED_TEAM })
+    ).rejects.toThrow("Organization org_missing not found");
+  });
+});

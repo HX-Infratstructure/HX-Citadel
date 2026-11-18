@@ -104,6 +104,11 @@ export function isValidTeamKey(key: string): boolean {
   return TEAM_KEY.test(key);
 }
 
+/** The stored form of a typed team key: trimmed and upper-case, so "eng" names ENG. */
+export function normalizeTeamKey(key: string): string {
+  return key.trim().toUpperCase();
+}
+
 /** A valid team key from a team name's word initials, or "" when the name has no letter to start one. */
 export function suggestTeamKey(name: string): string {
   return name
