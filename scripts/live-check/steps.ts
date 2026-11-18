@@ -162,7 +162,7 @@ export const STEPS: CheckStep<LiveCheck>[] = [
     name: "stale-if-match",
     run: async (check) => {
       const first = firstStory(check);
-      const options = { idempotencyKey: idempotencyKey(check, "stale"), ifMatch: first.version - 1 };
+      const options = { idempotencyKey: idempotencyKey(check, "stale"), ifMatch: first.version + 1 };
       return refusal(check, () => check.api.write("PATCH", issuePath(first.key), { priority: LOW }, options), STALE);
     },
   },

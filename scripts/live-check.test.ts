@@ -18,11 +18,11 @@ const HAPPY: Reply[] = [
   { status: 405, text: "" },
   ok({ jsonrpc: "2.0", id: 1, result: { serverInfo: { name: "hx-citadel" } } }),
   ok({ jsonrpc: "2.0", id: 2, result: { tools: MCP_TOOL_NAMES.map((name) => ({ name })) } }),
-  story("LCK-1", 2),
-  story("LCK-1", 2),
+  story("LCK-1", 1),
+  story("LCK-1", 1),
   refused(409, "idempotency_key_reused", "That Idempotency-Key was used with another body"),
-  refused(412, "stale", "LCK-1 changed since version 1"),
-  story("LCK-1", 3),
+  refused(412, "stale", "LCK-1 is at version 1, not 2"),
+  story("LCK-1", 2),
   refused(409, "rule_refused", "live-check already has LCK-1 In Progress; finish it first"),
   refused(409, "rule_refused", "Can't move LCK-1 to Done: open — no proof link"),
   story("LCK-1", 5),
@@ -115,7 +115,7 @@ describe("live-check", () => {
 
     const stale = call(fetchMock, 7);
     expect(stale).toMatchObject({ url: "http://convex.test:3211/api/v1/issues/LCK-1", method: "PATCH" });
-    expect(stale.headers.get("If-Match")).toBe('"1"');
+    expect(stale.headers.get("If-Match")).toBe('"2"');
 
     expect(call(fetchMock, 8).body).toMatchObject({ status: "in_progress", assignee: "live-check" });
     expect(call(fetchMock, 9).body).toMatchObject({ teamKey: "LCK", status: "in_progress", assignee: "live-check" });
@@ -129,7 +129,7 @@ describe("live-check", () => {
     ["mcp", 3, ok({ jsonrpc: "2.0", id: 2, result: { tools: [...MCP_TOOL_NAMES.slice(1), "other_tool"].map((name) => ({ name })) } })],
     ["agent-create", 4, refused(409, "rule_refused", "nope")],
     ["replay", 5, story("LCK-2", 2)],
-    ["key-reuse", 6, story("LCK-1", 2)],
+    ["key-reuse", 6, story("LCK-1", 1)],
     ["stale-if-match", 7, story("LCK-1", 3)],
     ["wip-refusal", 9, refused(409, "rule_refused", "live-check already has LCK-9 In Progress; finish it first")],
     ["done-gate", 10, story("LCK-1", 4)],
