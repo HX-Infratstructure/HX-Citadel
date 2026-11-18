@@ -692,6 +692,34 @@ async function queueRunThenClearTeam(t: TestConvex, teamId: Id<"teams">) {
   expect(await t.run((ctx) => ctx.db.get(teamId))).toBeNull();
 }
 
+/** A legacy attachment's file name, near Convex's 1 MiB document limit. */
+const LARGE_FILE_NAME_CHARS = 900 * 1024;
+/** Files the cleared story shares with a large row in the kept team: one run looking them all up reads past the limit. */
+const SHARED_LARGE_FILES = Math.ceil(TRANSACTION_READ_BYTES / LARGE_FILE_NAME_CHARS) + 2;
+
+/**
+ * Stores `count` files, each attached to `largeIssueId` with a large file name and then to each of
+ * `sharedWith` with a short one, as legacy rows were. One transaction per file, so no test write passes
+ * the limit. Returns the files.
+ */
+async function addLargeFiles(t: TestConvex, largeIssueId: Id<"issues">, count: number, sharedWith: Id<"issues">[]) {
+  const files: Id<"_storage">[] = [];
+  for (let index = 0; index < count; index++) {
+    const storageId = await t.run(async (ctx) => {
+      const { orgId, creatorId } = (await ctx.db.get(largeIssueId))!;
+      const storageId = await ctx.storage.store(new Blob([`large ${index}`]));
+      const row = { orgId, storageId, fileType: "text/plain", fileSize: 6, uploadedBy: creatorId };
+      await ctx.db.insert("attachments", { ...row, issueId: largeIssueId, fileName: "n".repeat(LARGE_FILE_NAME_CHARS) });
+      for (const issueId of sharedWith) {
+        await ctx.db.insert("attachments", { ...row, issueId, fileName: `${index}.txt` });
+      }
+      return storageId;
+    });
+    files.push(storageId);
+  }
+  return files;
+}
+
 describe("admin.clearTeamContent", () => {
   test("deletes one team's content and the team, and keeps the other team, org rows and the mirror", async () => {
     const { t, cleared, kept } = await setupTeams();
@@ -931,6 +959,61 @@ describe("admin.clearTeamContent", () => {
     });
     expect(left).toEqual({ team: null, files: [], attachments: [] });
     expect(await teamIssues()).toEqual([]);
+    vi.useRealTimers();
+  }, 60_000);
+
+  test("clears a team whose files share large rows in the other team over the scheduled runs, every row with its file", async () => {
+    vi.useFakeTimers();
+    const { t, cleared, kept } = await setupTeams();
+    const shared = await addLargeFiles(t, kept.storyId, SHARED_LARGE_FILES, [cleared.storyId]);
+    const leavingOnly = [cleared.storageId, ...(await addFiles(t, cleared.storyId, FILES_PER_ISSUE))];
+    const storedOf = (files: Id<"_storage">[]) =>
+      t.run(async (ctx) => {
+        const stored = await Promise.all(files.map((file) => ctx.db.system.get(file)));
+        return files.filter((_, index) => stored[index] !== null);
+      });
+    const leftOnStory = () =>
+      t.run((ctx) => ctx.db.query("attachments").withIndex("by_issue", (q) => q.eq("issueId", cleared.storyId)).collect());
+
+    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+
+    const leftAfterOneRun = await leftOnStory();
+    expect(leftAfterOneRun.length).toBeGreaterThan(0);
+    const filesLeft = leftAfterOneRun.map((attachment) => attachment.storageId);
+    expect(await storedOf(filesLeft)).toEqual(filesLeft);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
+    expect(await leftOnStory()).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.get(cleared.teamId))).toBeNull();
+    expect(await storedOf(leavingOnly)).toEqual([]);
+    expect(await storedOf(shared)).toEqual(shared);
+    for (const file of shared) {
+      const owner = await t.run(async (ctx) => {
+        const rows = await ctx.db.query("attachments").withIndex("by_storage", (q) => q.eq("storageId", file)).collect();
+        return rows.map((row) => row.issueId);
+      });
+      expect(owner).toEqual([kept.storyId]);
+    }
+    vi.useRealTimers();
+  }, 60_000);
+
+  test("clears an issue whose own large attachments spend a run's budget, a file a run at least", async () => {
+    vi.useFakeTimers();
+    const { t, cleared } = await setupTeams();
+    const files = await addLargeFiles(t, cleared.storyId, Math.ceil(CLEANUP_BUDGET.bytes / LARGE_FILE_NAME_CHARS), []);
+
+    const counts = await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+    expect(counts.attachments).toBeGreaterThan(0);
+    expect(counts.attachments).toBeLessThan(files.length);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
+    const left = await t.run(async (ctx) => ({
+      story: await ctx.db.get(cleared.storyId),
+      files: (await Promise.all(files.map((file) => ctx.db.system.get(file)))).filter((file) => file !== null),
+    }));
+    expect(left).toEqual({ story: null, files: [] });
     vi.useRealTimers();
   }, 60_000);
 

@@ -236,8 +236,8 @@ describe("a story's sub-task counter", () => {
   });
 
   test("its highest sub-task being deleted never hands that key out again", async () => {
-    const { asMember, storyId, leavingId, nextSubtask, version } = await storyWithLeaving();
-    await asMember.mutation(api.issues.remove, { issueId: leavingId });
+    const { t, storyId, leavingId, nextSubtask, version } = await storyWithLeaving();
+    await t.run((ctx) => ctx.db.delete(leavingId));
     expect(await nextSubtask()).toBe(3);
     expect(await version(storyId)).toBe(1);
   });
@@ -264,7 +264,7 @@ describe("a story's sub-task counter", () => {
     const { t, asMember, teamId, storyId, nextSubtask, version } = await storyWithoutCounter([1, 3]);
     const fourthId = await asMember.mutation(api.issues.create, { teamId, title: "Fourth", kind: "subtask", parentIssueId: storyId });
     expect(await t.run(async (ctx) => (await ctx.db.get(fourthId))?.subNumber)).toBe(4);
-    await asMember.mutation(api.issues.remove, { issueId: fourthId });
+    await t.run((ctx) => ctx.db.delete(fourthId));
     expect(await nextSubtask()).toBe(5);
     expect(await version(storyId)).toBe(1);
   });
@@ -274,24 +274,6 @@ describe("a story's sub-task counter", () => {
     expect(await nextSubtask()).toBe(1);
     expect(await nextSubtask()).toBe(2);
     expect(await version(storyId)).toBe(1);
-  });
-});
-
-describe("a sub-task leaving its story", () => {
-  test("a parent reference into another workspace leaves that workspace's story counter untouched", async () => {
-    const { t, asMember, storyId, teamId } = await asMemberSetup();
-    const leavingId = await asMember.mutation(api.issues.create, { teamId, title: "Leaving", kind: "subtask", parentIssueId: storyId });
-    const foreignId = await t.run(async (ctx) => {
-      const orgId = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
-      const otherTeamId = await ctx.db.insert("teams", { orgId, name: "Other", key: "OTH", nextIssueNumber: 2 });
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { _id, _creationTime, ...story } = (await ctx.db.get(storyId))!;
-      const id = await ctx.db.insert("issues", { ...story, orgId, teamId: otherTeamId, nextSubNumber: 2 });
-      await ctx.db.patch(leavingId, { parentIssueId: id, subNumber: 7 });
-      return id;
-    });
-    await asMember.mutation(api.issues.remove, { issueId: leavingId });
-    expect(await t.run(async (ctx) => (await ctx.db.get(foreignId))?.nextSubNumber)).toBe(2);
   });
 });
 

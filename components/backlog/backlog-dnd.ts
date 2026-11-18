@@ -1,6 +1,8 @@
 import { closestCenter, CollisionDetection, pointerWithin, UniqueIdentifier } from "@dnd-kit/core";
 
 type RankedStory = { _id: string; title: string };
+type RankedIssue = { _id: string; sortOrder: number };
+type IssueUpdate = { issueId: string; sortOrder?: number; cycleId?: string | null };
 type Dragged = { active: { id: UniqueIdentifier } };
 type DraggedOver = Dragged & { over: { id: UniqueIdentifier } | null };
 
@@ -48,3 +50,34 @@ export function rankAnnouncements(stories: RankedStory[], moreToLoad: boolean) {
  */
 export const rankCollision: CollisionDetection = (args) =>
   args.pointerCoordinates && pointerWithin(args).length === 0 ? [] : closestCenter(args);
+
+/**
+ * The page that holds `sortOrder`. Loaded pages are consecutive rank ranges, so it is the page
+ * with the highest lowest rank at or below `sortOrder`, or the bottom page when none is.
+ */
+function pageHolding(pages: RankedIssue[][], sortOrder: number): number {
+  const lowest = pages.map((page) => page.at(-1)?.sortOrder);
+  const ranks = lowest.filter((rank) => rank !== undefined);
+  const below = ranks.filter((rank) => rank <= sortOrder);
+  return lowest.indexOf(below.length > 0 ? Math.max(...below) : Math.min(...ranks));
+}
+
+/**
+ * The loaded backlog pages after an update: a planned story leaves the backlog, and a
+ * reranked story moves to the page that holds its new rank, in rank order.
+ */
+export function backlogAfterUpdate<T extends RankedIssue>(pages: T[][], update: IssueUpdate): T[][] {
+  const without = pages.map((page) => page.filter((issue) => issue._id !== update.issueId));
+  if (update.cycleId) {
+    return without;
+  }
+  const { sortOrder } = update;
+  const story = pages.flat().find((issue) => issue._id === update.issueId);
+  if (sortOrder === undefined || story === undefined) {
+    return pages;
+  }
+  const target = pageHolding(pages, sortOrder);
+  return without.map((page, index) =>
+    index === target ? [...page, { ...story, sortOrder }].sort((a, b) => b.sortOrder - a.sortOrder) : page
+  );
+}

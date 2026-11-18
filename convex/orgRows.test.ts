@@ -4,6 +4,7 @@ import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
 import { Id, TableNames } from "./_generated/dataModel";
+import { deleteIssuesWithOwnedRows } from "./lib/issueCleanup";
 import { MAX_CHILDREN } from "./lib/orgRows";
 import schema from "./schema";
 
@@ -92,10 +93,10 @@ describe("rows from another workspace that point at our story", () => {
     expect(asked.decision).toMatchObject({ question: "Ours?", status: "open" });
   });
 
-  test("removing the story deletes our rows and leaves the foreign rows", async () => {
+  test("deleting the story with its owned rows deletes our rows and leaves the foreign rows", async () => {
     const { t, admin, storyId, rows } = await setup();
     await comment(admin, storyId);
-    await admin.mutation(api.issues.remove, { issueId: storyId });
+    await t.run(async (ctx) => await deleteIssuesWithOwnedRows(ctx, [(await ctx.db.get(storyId))!]));
 
     const left = await t.run(async (ctx) => ({
       comments: await ctx.db.query("comments").collect(),
@@ -317,7 +318,6 @@ const READS_OF_CHILDREN: { name: string; call: (s: Setup) => Promise<unknown> }[
       return await s.admin.mutation(api.issues.update, { issueId: s.storyId, projectId });
     },
   },
-  { name: "the delete", call: (s) => s.admin.mutation(api.issues.remove, { issueId: s.storyId }) },
 ];
 
 describe("an issue's children", () => {

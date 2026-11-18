@@ -1,6 +1,6 @@
 import { CollisionDetection } from "@dnd-kit/core";
 import { describe, expect, it } from "vitest";
-import { canDropAt, rankAnnouncements, rankCollision } from "./backlog-dnd";
+import { backlogAfterUpdate, canDropAt, rankAnnouncements, rankCollision } from "./backlog-dnd";
 
 const stories = [
   { _id: "id-a", title: "Login page" },
@@ -90,5 +90,49 @@ describe("rankCollision", () => {
 
   it("finds the nearest row for a keyboard move, which has no pointer", () => {
     expect(rankCollision(collisionArgs(null))[0]?.id).toBe("id-a");
+  });
+});
+
+const issue = (_id: string, sortOrder: number) => ({ _id, sortOrder });
+const ids = (pages: { _id: string }[][]) => pages.map((page) => page.map((story) => story._id));
+const twoPages = () => [
+  [issue("A", 30), issue("B", 20)],
+  [issue("C", 10), issue("D", 0)],
+];
+
+describe("backlogAfterUpdate", () => {
+  it("shows a story ranked above the first loaded page at the top, not below that page", () => {
+    const pages = backlogAfterUpdate(twoPages(), { issueId: "C", sortOrder: 40 });
+    expect(pages.flat().map((story) => story._id)).toEqual(["C", "A", "B", "D"]);
+    expect(ids(pages)).toEqual([["C", "A", "B"], ["D"]]);
+  });
+
+  it("reranks a story within its own page as before", () => {
+    expect(ids(backlogAfterUpdate(twoPages(), { issueId: "B", sortOrder: 40 }))).toEqual([
+      ["B", "A"],
+      ["C", "D"],
+    ]);
+    expect(ids(backlogAfterUpdate(twoPages(), { issueId: "D", sortOrder: 15 }))).toEqual([
+      ["A", "B"],
+      ["D", "C"],
+    ]);
+  });
+
+  it("moves a story into the last loaded page when its rank falls there", () => {
+    const pages = backlogAfterUpdate(twoPages(), { issueId: "A", sortOrder: 5 });
+    expect(ids(pages)).toEqual([["B"], ["C", "A", "D"]]);
+    expect(pages[1][1]).toEqual({ _id: "A", sortOrder: 5 });
+  });
+
+  it("reranks within a single loaded page", () => {
+    const single = [[issue("A", 30), issue("B", 20), issue("C", 10)]];
+    expect(ids(backlogAfterUpdate(single, { issueId: "C", sortOrder: 40 }))).toEqual([["C", "A", "B"]]);
+  });
+
+  it("removes a planned story from the backlog", () => {
+    expect(ids(backlogAfterUpdate(twoPages(), { issueId: "C", cycleId: "cycle-1" }))).toEqual([
+      ["A", "B"],
+      ["D"],
+    ]);
   });
 });

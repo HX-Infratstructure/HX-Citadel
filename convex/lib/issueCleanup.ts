@@ -16,32 +16,45 @@ export function countTables<T extends string>(tables: readonly T[], count: (tabl
 
 /**
  * Rows written before `attachments.create` refused shared files can still share one, so a file is deleted
- * only with the last row that uses it. A file's rows are read in order up to the first that stays: a file
- * attached since then costs one read, a legacy file its leaving rows and one more. Returns what it read.
+ * only with the last row that uses it. Looks up the files in turn, each within `left`, and returns the rows
+ * whose files it looked up; the rest keep their files for a later run. The first file is always looked up,
+ * so a run whose rows spent `left` still deletes one.
  */
-export async function deleteAttachmentFiles(ctx: MutationCtx, attachments: Doc<"attachments">[]) {
+export async function deleteAttachmentFiles(
+  ctx: MutationCtx,
+  attachments: Doc<"attachments">[],
+  left: Budget = { ...CLEANUP_BUDGET }
+) {
   const leaving = new Set(attachments.map((attachment) => attachment._id));
-  const files = new Set(attachments.map((attachment) => attachment.storageId));
-  const read = { rows: 0, bytes: 0 };
-  for (const storageId of files) {
-    if (!(await usedByAnotherRow(ctx, storageId, leaving, read))) {
+  const checked = new Set<Id<"_storage">>();
+  for (const storageId of new Set(attachments.map((attachment) => attachment.storageId))) {
+    if (checked.size > 0 && spent(left)) {
+      break;
+    }
+    checked.add(storageId);
+    if (!(await usedByAnotherRow(ctx, storageId, leaving, left))) {
       await ctx.storage.delete(storageId);
     }
   }
-  return read;
+  return attachments.filter((attachment) => checked.has(attachment.storageId));
 }
 
-/** Whether a row outside `leaving` uses the file, charging each row it reads to `read`. */
+/**
+ * Whether a row outside `leaving` uses the file, reading its rows in order up to the first that stays.
+ * Charges `left` its query, each row and the bytes of that first row: `readOwnedRows` charged the bytes of
+ * the leaving rows when it read them.
+ */
 async function usedByAnotherRow(
   ctx: MutationCtx,
   storageId: Id<"_storage">,
   leaving: Set<Id<"attachments">>,
-  read: { rows: number; bytes: number }
+  left: Budget
 ) {
+  left.queries -= 1;
   for await (const row of ctx.db.query("attachments").withIndex("by_storage", (q) => q.eq("storageId", storageId))) {
-    read.rows += 1;
-    read.bytes += getDocumentSize(row);
+    left.rows -= 1;
     if (!leaving.has(row._id)) {
+      left.bytes -= getDocumentSize(row);
       return true;
     }
   }
@@ -86,16 +99,17 @@ type Budget = { rows: number; bytes: number; queries: number };
 /**
  * What one admin run's cleanup may read. Convex fails a mutation whole, changing nothing, past 4,096
  * queries, 16 MiB or 32,000 documents read, or 16,000 written; the rest is the caller's.
- * - `queries`: each owned-table query, and each attachment's `by_storage` lookup for its file. The
- *   caller makes about 110 more: its page queries, a cycle query per team on a page and six org-only tables.
- * - `bytes`: a row is read once and again by its delete. A run stops on the row that passes the budget,
- *   so it reads at most one more document (1 MiB) twice: 10 MiB. The file lookups that end an issue's
- *   reads are charged after them, up to two small rows per attachment read; the caller's pages hold the rest.
- * - `rows`: a run writes at most 4,000 owned rows and a page each of issues, cycles, saved views and
- *   org-only rows, about 5,000 writes; it reads those, up to 6,000 rows in file lookups and the caller's
- *   pages, under 20,000 reads.
+ * - `queries`: each owned-table query, and each file's `by_storage` lookup. The caller makes about 110
+ *   more: its page queries, a cycle query per team on a page and six org-only tables.
+ * - `bytes`: a row is read once and again by its delete, and an attachment once more by its file's
+ *   lookup. A lookup also reads the first row that stays, up to one document (1 MiB), and charges it
+ *   then. A run stops on the read that passes the budget, and an issue's first file is looked up even
+ *   past it, so a run reads at most four documents (4 MiB) more. The caller's pages hold the rest.
+ * - `rows`: a run writes at most `rows` owned rows and a page each of issues, cycles, saved views and
+ *   org-only rows, well under 16,000 writes. It reads those, its file lookups' rows, which count in
+ *   `rows`, and the caller's pages: under 20,000 reads.
  */
-export const CLEANUP_BUDGET: Readonly<Budget> = { rows: 4_000, bytes: 8 * 1024 * 1024, queries: 3_000 };
+export const CLEANUP_BUDGET: Readonly<Budget> = { rows: 4_000, bytes: 6 * 1024 * 1024, queries: 3_000 };
 
 function spent(left: Budget) {
   return left.rows <= 0 || left.bytes <= 0 || left.queries <= 0;
@@ -103,8 +117,8 @@ function spent(left: Budget) {
 
 /**
  * Reads the rows one issue owns, table by table, charging each query and row to `left`, and stops on the
- * row that spends any part of it. An attachment also charges the `by_storage` lookup for its file:
- * `deleteAttachmentFiles` makes at most one per row. `finished` says every table was read whole.
+ * row that spends any part of it. An attachment is charged a third read, for its file's lookup reading it
+ * again. `finished` says every table was read whole.
  */
 async function readOwnedRows(ctx: MutationCtx, issue: Doc<"issues">, left: Budget) {
   const owned = Object.fromEntries(ISSUE_OWNED_TABLES.map((table) => [table, [] as Doc<IssueOwnedTable>[]])) as IssueOwnedRows;
@@ -118,8 +132,7 @@ async function readOwnedRows(ctx: MutationCtx, issue: Doc<"issues">, left: Budge
       for await (const row of query) {
         rows.push(row);
         left.rows -= 1;
-        left.bytes -= 2 * getDocumentSize(row);
-        left.queries -= table === "attachments" ? 1 : 0;
+        left.bytes -= (table === "attachments" ? 3 : 2) * getDocumentSize(row);
         if (spent(left)) {
           return { owned, finished: false };
         }
@@ -130,17 +143,20 @@ async function readOwnedRows(ctx: MutationCtx, issue: Doc<"issues">, left: Budge
 }
 
 /**
- * Deletes the rows `readOwnedRows` reads within `left`, and the files only they use, charging the file lookups to `left`.
+ * Deletes the rows `readOwnedRows` reads within `left`, and the files only they use, but no attachment
+ * whose file `left` had no room to look up. `finished` says the issue owns nothing more.
  */
 async function deleteOwnedRows(ctx: MutationCtx, issue: Doc<"issues">, left: Budget) {
   const { owned, finished } = await readOwnedRows(ctx, issue, left);
-  const lookups = await deleteAttachmentFiles(ctx, owned.attachments);
-  left.rows -= lookups.rows;
-  left.bytes -= lookups.bytes;
-  for (const rows of Object.values(owned)) {
+  const attachments = await deleteAttachmentFiles(ctx, owned.attachments, left);
+  const deleting = { ...owned, attachments };
+  for (const rows of Object.values(deleting)) {
     await deleteRows(ctx, rows);
   }
-  return { counts: countTables(ISSUE_OWNED_TABLES, (table) => owned[table].length), finished };
+  return {
+    counts: countTables(ISSUE_OWNED_TABLES, (table) => deleting[table].length),
+    finished: finished && attachments.length === owned.attachments.length,
+  };
 }
 
 /**

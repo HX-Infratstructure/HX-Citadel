@@ -205,27 +205,3 @@ export function assertNoEpics(issues: Doc<"issues">[]): void {
     );
   }
 }
-
-function countOf(kind: IssueKind, count: number): string {
-  if (count === 1) {
-    return `1 ${kind}`;
-  }
-  return `${count} ${kind === "story" ? "stories" : `${kind}s`}`;
-}
-
-/** An epic or feature with children cannot be deleted; a story's subtasks are deleted with it instead. */
-export async function assertNoChildren(
-  ctx: { db: QueryCtx["db"] },
-  issue: Doc<"issues">
-): Promise<void> {
-  const childKind = childKindOf(issue.kind);
-  if (childKind === null || issue.kind === "story") {
-    return;
-  }
-  const children = await orgChildren(ctx, issue.orgId, issue._id);
-  if (children.length > 0) {
-    refuse(
-      `This ${issue.kind} still has ${countOf(childKind, children.length)}; move or delete them first`
-    );
-  }
-}

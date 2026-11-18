@@ -6,7 +6,7 @@ import { nextSubNumber } from "./levels";
 
 export const TESTING_SUBTASK_TITLE = "Complete testing";
 
-type GuardedAction = "deleted" | "moved";
+type GuardedAction = "moved";
 
 const PROOF_PROTOCOLS = new Set(["http:", "https:"]);
 

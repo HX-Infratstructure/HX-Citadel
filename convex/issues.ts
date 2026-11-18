@@ -1,19 +1,17 @@
 import { PaginationOptions, paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { ObjectType, v } from "convex/values";
 import { invalid, notFound, refuse } from "./lib/refusals";
-import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, MutationCtx, QueryCtx } from "./_generated/server";
+import { MutationCtx, QueryCtx } from "./_generated/server";
 import { PARENT_KIND } from "../lib/issue-key";
 import { isGatedStatus } from "../lib/issue-status";
 import { respaceTie, SORT_GAP } from "../lib/sort-order";
 import { changedFields, fieldText, FieldLogOptions, logActivity, logFieldChanges } from "./lib/activity";
 import { orgAdminMutation, orgMutation, orgQuery } from "./lib/customFunctions";
-import { deleteIssuesWithOwnedRows } from "./lib/issueCleanup";
 import { IssueKeys } from "./lib/issueKeys";
 import { patchIssue } from "./lib/issueVersion";
 import { findMembership } from "./lib/mirror";
-import { inOrg, orgChildren, orgRow, requireOrgRow } from "./lib/orgRows";
+import { inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
 import { OrgScope } from "./lib/orgScope";
 import { assertCycleInTeam } from "./lib/rules/cycles";
 import {
@@ -22,7 +20,6 @@ import {
   CLOSED_STATUSES,
 } from "./lib/rules/doneGate";
 import {
-  assertNoChildren,
   assertParentOpen,
   assertValidParent,
   cascadeProject,
@@ -30,7 +27,6 @@ import {
   nextSubNumber,
 } from "./lib/rules/levels";
 import {
-  assertNotTestingSubtask,
   assertProofUrl,
   assertTestingSubtask,
   createTestingSubtask,
@@ -344,9 +340,9 @@ export const create = orgMutation({
 });
 
 /**
- * The team's issues at `rank`, other than `issue`, in creation order. Bounded by design: every write gives a team
- * distinct ranks (create takes the highest + `SORT_GAP`, `placeRank` re-spaces every row it ties, the seed spaces
- * by position), so a rank holds only rows a legacy write left tied.
+ * The team's issues at `rank`, other than `issue`, in creation order. Bounded by design: create takes the highest +
+ * `SORT_GAP`, `placeRank` re-spaces every row it ties and the seed spaces by position, so a rank holds one story,
+ * its Complete testing sub-task (which takes the story's rank, `createTestingSubtask`) and rows a legacy write left tied.
  */
 async function othersAtRank(
   ctx: MutationCtx,
@@ -607,66 +603,6 @@ export const revertChange = orgAdminMutation({
       { issueId: issue._id, ...(await toArgs(ctx, issue, change.oldValue)) },
       { type: "reverted" }
     );
-    return null;
-  },
-});
-
-/**
- * One run of deleting an issue and every row that belongs to it, within one `CLEANUP_BUDGET`. A story's
- * sub-tasks go first, the Complete testing one included. An issue that owns more than one run can delete
- * schedules the next run, which starts from the rows left, until the issue row goes.
- */
-async function deleteIssueRun(ctx: MutationCtx, issue: Doc<"issues">): Promise<void> {
-  const subtasks = issue.kind === "story" ? await orgChildren(ctx, issue.orgId, issue._id) : [];
-  const { finished } = await deleteIssuesWithOwnedRows(ctx, [...subtasks, issue]);
-  if (!finished) {
-    await ctx.scheduler.runAfter(0, internal.issues.continueRemove, { orgId: issue.orgId, issueId: issue._id });
-  }
-}
-
-/** A deleted issue's rows go with it, so the deletion is logged on the surviving parent. */
-async function logChildDeleted(
-  ctx: MutationCtx,
-  child: Doc<"issues">,
-  parent: Doc<"issues"> | null,
-  actorId: Id<"users">
-): Promise<void> {
-  if (parent === null) {
-    return;
-  }
-  await logActivity(ctx, {
-    orgId: child.orgId,
-    issueId: parent._id,
-    actorId,
-    type: "child_deleted",
-    field: "child",
-    oldValue: await new IssueKeys(ctx, child.orgId).label(child),
-  });
-}
-
-export const remove = orgMutation({
-  args: { issueId: v.id("issues") },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
-    assertNotTestingSubtask(issue, "deleted");
-    await assertNoChildren(ctx, issue);
-    const parent = issue.parentIssueId ? await orgRow(ctx, ctx.org._id, issue.parentIssueId) : null;
-    await deleteIssueRun(ctx, issue);
-    await logChildDeleted(ctx, issue, parent, ctx.user._id);
-    return null;
-  },
-});
-
-/** A scheduled run of `remove`, bound to the issue's id. It stops once the issue row is gone. */
-export const continueRemove = internalMutation({
-  args: { orgId: v.id("organizations"), issueId: v.id("issues") },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    const issue = await orgRow(ctx, args.orgId, args.issueId);
-    if (issue !== null) {
-      await deleteIssueRun(ctx, issue);
-    }
     return null;
   },
 });

@@ -20,7 +20,7 @@ import { api } from "@/convex/_generated/api";
 import { Doc, Id } from "@/convex/_generated/dataModel";
 import { errorMessage } from "@/lib/error-message";
 import { sortOrderBetween } from "@/lib/sort-order";
-import { canDropAt, LOAD_MORE_TO_PLACE, rankAnnouncements, rankCollision } from "./backlog-dnd";
+import { backlogAfterUpdate, canDropAt, LOAD_MORE_TO_PLACE, rankAnnouncements, rankCollision } from "./backlog-dnd";
 import { BacklogRow } from "./backlog-row";
 
 /** The new `sortOrder` for the row moved from `from` to `to`, or undefined when it stays put. */
@@ -37,25 +37,6 @@ function rankAfterMove(
   return sortOrder === issues[from].sortOrder ? undefined : sortOrder;
 }
 
-/** A backlog page as it looks after an update: planned rows leave, reranked rows move within the page. */
-function backlogAfterUpdate(
-  backlog: Doc<"issues">[],
-  update: { issueId: Id<"issues">; sortOrder?: number; cycleId?: Id<"cycles"> | null }
-): Doc<"issues">[] {
-  if (update.cycleId) {
-    return backlog.filter((issue) => issue._id !== update.issueId);
-  }
-  const { sortOrder } = update;
-  if (sortOrder === undefined) {
-    return backlog;
-  }
-  return backlog
-    .map((issue) =>
-      issue._id === update.issueId ? { ...issue, sortOrder } : issue
-    )
-    .sort((a, b) => b.sortOrder - a.sortOrder);
-}
-
 export function BacklogView({
   team,
   issues,
@@ -68,14 +49,15 @@ export function BacklogView({
   const cycles = useQuery(api.cycles.listByTeam, { teamId: team._id });
   const updateIssue = useMutation(api.issues.update).withOptimisticUpdate(
     (localStore, args) => {
-      for (const { args: page, value } of localStore.getAllQueries(api.issues.listBacklog)) {
-        if (value && page.teamId === team._id) {
-          localStore.setQuery(api.issues.listBacklog, page, {
-            ...value,
-            page: backlogAfterUpdate(value.page, args),
-          });
-        }
-      }
+      const loaded = localStore
+        .getAllQueries(api.issues.listBacklog)
+        .flatMap(({ args: pageArgs, value }) =>
+          value && pageArgs.teamId === team._id ? [{ pageArgs, value }] : []
+        );
+      const pages = backlogAfterUpdate(loaded.map(({ value }) => value.page), args);
+      loaded.forEach(({ pageArgs, value }, index) => {
+        localStore.setQuery(api.issues.listBacklog, pageArgs, { ...value, page: pages[index] });
+      });
     }
   );
   const sensors = useSensors(

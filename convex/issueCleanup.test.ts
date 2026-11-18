@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
+import { deleteIssuesWithOwnedRows } from "./lib/issueCleanup";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -45,7 +46,12 @@ async function setup() {
   const create = (kind: Kind, parentIssueId?: Id<"issues">) =>
     asMember.mutation(api.issues.create, { teamId, title: `A ${kind}`, kind, parentIssueId });
 
-  const remove = (issueId: Id<"issues">) => asMember.mutation(api.issues.remove, { issueId });
+  /** One cleanup run over the issues still there, in order, as an admin clear runs it. */
+  const remove = (...issueIds: Id<"issues">[]) =>
+    t.run(async (ctx) => {
+      const issues = await Promise.all(issueIds.map((issueId) => ctx.db.get(issueId)));
+      return await deleteIssuesWithOwnedRows(ctx, issues.filter((issue) => issue !== null));
+    });
 
   const attachmentRow = (issueId: Id<"issues">, storageId: Id<"_storage">) => ({
     orgId,
@@ -111,15 +117,6 @@ async function setup() {
 
   const issueDoc = (issueId: Id<"issues">) => t.run((ctx) => ctx.db.get(issueId));
 
-  const childDeletedRows = (parentId: Id<"issues">) =>
-    t.run(async (ctx) => {
-      const rows = await ctx.db
-        .query("activity")
-        .withIndex("by_issue", (q) => q.eq("issueId", parentId))
-        .collect();
-      return rows.filter((row) => row.type === "child_deleted");
-    });
-
   const addComments = (issueId: Id<"issues">, count: number, body: string) =>
     t.run(async (ctx) => {
       for (let i = 0; i < count; i++) {
@@ -127,16 +124,9 @@ async function setup() {
       }
     });
 
-  const scheduledRunStates = async () => {
-    const jobs = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
-    return new Set(jobs.map((job) => job.state.kind));
-  };
-
   return {
-    t,
     create,
     addComments,
-    scheduledRunStates,
     remove,
     addOwnedRows,
     attachFile,
@@ -144,7 +134,6 @@ async function setup() {
     ownedRowCounts,
     storedFile,
     issueDoc,
-    childDeletedRows,
   };
 }
 
@@ -153,6 +142,8 @@ const HEAVY_COMMENTS = 4_000;
 const COMMENT_BYTES = 5 * 1024;
 /** Comments one test transaction writes, well inside the limits. */
 const SEED_BATCH = 1_000;
+/** More runs than the heavy issue needs, so a cleanup that never finishes fails instead of looping. */
+const MAX_RUNS = 10;
 
 const NONE = {
   comments: 0,
@@ -164,7 +155,7 @@ const NONE = {
   relationsAsTarget: 0,
 };
 
-describe("issues.remove leaves nothing behind", () => {
+describe("deleting issues with their owned rows leaves nothing behind", () => {
   test("a story and its sub-task lose every owned row and stored file", async () => {
     const { create, remove, addOwnedRows, relate, ownedRowCounts, storedFile, issueDoc } =
       await setup();
@@ -176,7 +167,7 @@ describe("issues.remove leaves nothing behind", () => {
     await relate(storyId, otherId);
     await relate(subtaskId, otherId);
 
-    await remove(storyId);
+    await remove(subtaskId, storyId);
 
     expect(await ownedRowCounts(storyId)).toEqual(NONE);
     expect(await ownedRowCounts(subtaskId)).toEqual(NONE);
@@ -244,10 +235,8 @@ describe("issues.remove leaves nothing behind", () => {
     expect(await storedFile(keptFile)).not.toBeNull();
   });
 
-  test("an issue that owns more than one mutation can read goes over scheduled runs, each one succeeding", async () => {
-    vi.useFakeTimers();
-    const { t, create, remove, addOwnedRows, addComments, ownedRowCounts, issueDoc, scheduledRunStates } =
-      await setup();
+  test("an issue that owns more than one mutation can read goes over several runs, each within the limits", async () => {
+    const { create, remove, addOwnedRows, addComments, ownedRowCounts, issueDoc } = await setup();
     const storyId = await create("story");
     const subtaskId = await create("subtask", storyId);
     await addOwnedRows(subtaskId);
@@ -255,26 +244,16 @@ describe("issues.remove leaves nothing behind", () => {
       await addComments(storyId, SEED_BATCH, "x".repeat(COMMENT_BYTES));
     }
 
-    await remove(storyId);
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const finishedRuns: boolean[] = [];
+    while (finishedRuns.length < MAX_RUNS && !finishedRuns.includes(true)) {
+      finishedRuns.push((await remove(subtaskId, storyId)).finished);
+    }
 
-    expect(await scheduledRunStates()).toEqual(new Set(["success"]));
+    expect(finishedRuns.length).toBeGreaterThan(1);
+    expect(finishedRuns.at(-1)).toBe(true);
     expect(await issueDoc(storyId)).toBeNull();
     expect(await issueDoc(subtaskId)).toBeNull();
     expect(await ownedRowCounts(storyId)).toEqual(NONE);
     expect(await ownedRowCounts(subtaskId)).toEqual(NONE);
-    vi.useRealTimers();
-  });
-
-  test("the parent's child_deleted row survives deleting a sub-task", async () => {
-    const { create, remove, addOwnedRows, ownedRowCounts, childDeletedRows } = await setup();
-    const storyId = await create("story");
-    const subtaskId = await create("subtask", storyId);
-    await addOwnedRows(subtaskId);
-
-    await remove(subtaskId);
-
-    expect(await ownedRowCounts(subtaskId)).toEqual(NONE);
-    expect(await childDeletedRows(storyId)).toHaveLength(1);
   });
 });

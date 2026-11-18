@@ -4,6 +4,7 @@ import { internalMutation, internalQuery, MutationCtx, QueryCtx } from "./_gener
 import { parseIssueKey } from "../lib/issue-key";
 import { createComment as createCommentWithRules } from "./comments";
 import {
+  capPage,
   createIssue as createIssueWithRules,
   getOrgIssue,
   issueShape,
@@ -250,6 +251,7 @@ export const listIssues = internalQuery({
       .withIndex("by_team", (q) => q.eq("teamId", team._id))
       .order("desc")
       // No index covers team plus workspace, an optional status and an assignee; the filter runs before the page limit, so no match is cut.
+      // `capPage` caps the rows the filter reads, so a page can come back short, or empty, with a cursor to the rest.
       // eslint-disable-next-line @convex-dev/no-filter-in-query
       .filter((q) =>
         q.and(
@@ -258,7 +260,7 @@ export const listIssues = internalQuery({
           q.or(assigneeId === undefined, q.eq(q.field("assigneeId"), assigneeId))
         )
       )
-      .paginate({ numItems: LIST_LIMIT, cursor: cursor ?? null })
+      .paginate(capPage({ numItems: LIST_LIMIT, cursor: cursor ?? null }))
       .catch((error: unknown) => pageFailure(error, cursor));
     const keys = new IssueKeys(ctx, org._id);
     const issues = await Promise.all(
