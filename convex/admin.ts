@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { Doc, Id, TableNames } from "./_generated/dataModel";
 import { internalMutation, MutationCtx } from "./_generated/server";
+import { getOrgByClerkIdOrThrow } from "./lib/mirror";
 
 /**
  * Operator-only cleanup, run with `npx convex run admin:<name>`. Never public:
@@ -33,15 +34,8 @@ const deletedMirrorValidator = v.object({
   members: v.number(),
 });
 
-async function getOrgByClerkId(ctx: MutationCtx, clerkOrgId: string) {
-  const org = await ctx.db
-    .query("organizations")
-    .withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", clerkOrgId))
-    .unique();
-  if (!org) {
-    throw new Error(`Organization ${clerkOrgId} not found`);
-  }
-  return org;
+function getOrgByClerkId(ctx: MutationCtx, clerkOrgId: string) {
+  return getOrgByClerkIdOrThrow(ctx, clerkOrgId, `Organization ${clerkOrgId} not found`);
 }
 
 async function collectEach<P, T>(parents: P[], load: (parent: P) => Promise<T[]>) {

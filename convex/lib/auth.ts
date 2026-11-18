@@ -1,5 +1,11 @@
 import { Doc } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
+import {
+  findUserByClerkId,
+  getMembershipOrThrow,
+  getOrgByClerkIdOrThrow,
+  getUserByClerkIdOrThrow,
+} from "./mirror";
 
 /** Custom claims we add via the Clerk "convex" JWT template. */
 type OrgClaims = {
@@ -25,10 +31,7 @@ export async function getCurrentUserOrNull(
   if (!identity) {
     return null;
   }
-  return await ctx.db
-    .query("users")
-    .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
-    .unique();
+  return await findUserByClerkId(ctx, identity.subject);
 }
 
 export async function getCurrentUser(
@@ -38,14 +41,7 @@ export async function getCurrentUser(
   if (!identity) {
     throw new Error("Not authenticated");
   }
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
-    .unique();
-  if (!user) {
-    throw new Error("User not synced yet");
-  }
-  return user;
+  return await getUserByClerkIdOrThrow(ctx, identity.subject, "User not synced yet");
 }
 
 /**
@@ -61,36 +57,20 @@ export async function getAuthContext(
     throw new Error("Not authenticated");
   }
 
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
-    .unique();
-  if (!user) {
-    throw new Error("User not synced yet");
-  }
+  const user = await getUserByClerkIdOrThrow(ctx, identity.subject, "User not synced yet");
 
   const claims = identity as unknown as OrgClaims;
   if (!claims.org_id) {
     throw new Error("No active organization");
   }
 
-  const org = await ctx.db
-    .query("organizations")
-    .withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", claims.org_id!))
-    .unique();
-  if (!org) {
-    throw new Error("Organization not synced yet");
-  }
-
-  const membership = await ctx.db
-    .query("members")
-    .withIndex("by_org_and_user", (q) =>
-      q.eq("orgId", org._id).eq("userId", user._id)
-    )
-    .unique();
-  if (!membership) {
-    throw new Error("Not a member of this organization");
-  }
+  const org = await getOrgByClerkIdOrThrow(ctx, claims.org_id, "Organization not synced yet");
+  const membership = await getMembershipOrThrow(
+    ctx,
+    org._id,
+    user._id,
+    "Not a member of this organization"
+  );
 
   return { user, org, membership };
 }

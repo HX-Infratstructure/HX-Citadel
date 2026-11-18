@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { logActivity } from "./lib/activity";
 import { internalMutation } from "./_generated/server";
+import { getMembershipOrThrow, getOrgByClerkIdOrThrow, getUserByClerkIdOrThrow } from "./lib/mirror";
 
 /**
  * Dev-only demo workspace, run with `pnpm seed:demo` (never from the UI,
@@ -177,27 +178,22 @@ export const demoData = internalMutation({
     comments: v.number(),
   }),
   handler: async (ctx, { clerkOrgId, clerkUserId }) => {
-    const org = await ctx.db
-      .query("organizations")
-      .withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", clerkOrgId))
-      .unique();
-    if (!org) {
-      throw new Error(`Organization ${clerkOrgId} is not synced to Convex.`);
-    }
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", clerkUserId))
-      .unique();
-    if (!user) {
-      throw new Error(`User ${clerkUserId} is not synced to Convex.`);
-    }
-    const membership = await ctx.db
-      .query("members")
-      .withIndex("by_org_and_user", (q) => q.eq("orgId", org._id).eq("userId", user._id))
-      .unique();
-    if (!membership) {
-      throw new Error(`User ${clerkUserId} is not a member of organization ${clerkOrgId}.`);
-    }
+    const org = await getOrgByClerkIdOrThrow(
+      ctx,
+      clerkOrgId,
+      `Organization ${clerkOrgId} is not synced to Convex.`
+    );
+    const user = await getUserByClerkIdOrThrow(
+      ctx,
+      clerkUserId,
+      `User ${clerkUserId} is not synced to Convex.`
+    );
+    await getMembershipOrThrow(
+      ctx,
+      org._id,
+      user._id,
+      `User ${clerkUserId} is not a member of organization ${clerkOrgId}.`
+    );
 
     const existingTeams = await ctx.db
       .query("teams")
