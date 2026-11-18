@@ -4,6 +4,7 @@ import { MutationCtx, QueryCtx } from "./_generated/server";
 import { getOrgIssue } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { inOrg } from "./lib/orgRows";
 import { OrgScope } from "./lib/orgScope";
 import { invalid, notFound } from "./lib/refusals";
 
@@ -64,10 +65,10 @@ export const listByIssue = orgQuery({
   handler: async (ctx, args) => {
     await getOrgIssue(ctx, ctx.org._id, args.issueId);
 
-    const comments = await ctx.db
-      .query("comments")
-      .withIndex("by_issue", (q) => q.eq("issueId", args.issueId))
-      .collect();
+    const comments = await inOrg(
+      ctx.db.query("comments").withIndex("by_issue", (q) => q.eq("issueId", args.issueId)),
+      ctx.org._id
+    ).collect();
 
     const userCache = new Map<Id<"users">, Doc<"users"> | null>();
     const getUser = async (userId: Id<"users">) => {

@@ -1,5 +1,6 @@
 import { Doc, Id, TableNames } from "../_generated/dataModel";
 import { MutationCtx } from "../_generated/server";
+import { inOrg } from "./orgRows";
 
 export async function deleteRows(ctx: MutationCtx, rows: { _id: Id<TableNames> }[]) {
   for (const row of rows) {
@@ -38,28 +39,21 @@ async function loadRelations(ctx: MutationCtx, issueId: Id<"issues">) {
   return [...outgoing, ...incoming];
 }
 
-async function loadIssueOwnedRows(ctx: MutationCtx, issueId: Id<"issues">) {
+/** The issue's rows in its own workspace; a row from another workspace that points at it is left alone. */
+async function loadIssueOwnedRows(ctx: MutationCtx, issue: Doc<"issues">) {
+  const issueId = issue._id;
   return {
-    comments: await ctx.db
-      .query("comments")
-      .withIndex("by_issue", (q) => q.eq("issueId", issueId))
-      .collect(),
-    activity: await ctx.db
-      .query("activity")
-      .withIndex("by_issue", (q) => q.eq("issueId", issueId))
-      .collect(),
-    attachments: await ctx.db
-      .query("attachments")
-      .withIndex("by_issue", (q) => q.eq("issueId", issueId))
-      .collect(),
+    comments: await inOrg(ctx.db.query("comments").withIndex("by_issue", (q) => q.eq("issueId", issueId)), issue.orgId).collect(),
+    activity: await inOrg(ctx.db.query("activity").withIndex("by_issue", (q) => q.eq("issueId", issueId)), issue.orgId).collect(),
+    attachments: await inOrg(
+      ctx.db.query("attachments").withIndex("by_issue", (q) => q.eq("issueId", issueId)),
+      issue.orgId
+    ).collect(),
     issueLabels: await ctx.db
       .query("issueLabels")
       .withIndex("by_issue", (q) => q.eq("issueId", issueId))
       .collect(),
-    decisions: await ctx.db
-      .query("decisions")
-      .withIndex("by_issue", (q) => q.eq("issueId", issueId))
-      .collect(),
+    decisions: await inOrg(ctx.db.query("decisions").withIndex("by_issue", (q) => q.eq("issueId", issueId)), issue.orgId).collect(),
     issueRelations: await loadRelations(ctx, issueId),
   };
 }
@@ -89,8 +83,8 @@ function addCounts(total: IssueOwnedCounts, counts: IssueOwnedCounts): IssueOwne
 }
 
 /** Deletes every row that belongs to one issue, and its stored files. The issue row is the caller's. */
-export async function deleteIssueOwnedRows(ctx: MutationCtx, issueId: Id<"issues">): Promise<IssueOwnedCounts> {
-  const owned = await loadIssueOwnedRows(ctx, issueId);
+export async function deleteIssueOwnedRows(ctx: MutationCtx, issue: Doc<"issues">): Promise<IssueOwnedCounts> {
+  const owned = await loadIssueOwnedRows(ctx, issue);
   await deleteAttachmentFiles(ctx, owned.attachments);
   for (const rows of Object.values(owned)) {
     await deleteRows(ctx, rows);
@@ -105,7 +99,7 @@ export async function deleteIssueOwnedRows(ctx: MutationCtx, issueId: Id<"issues
 export async function deleteIssuesWithOwnedRows(ctx: MutationCtx, issues: Doc<"issues">[]) {
   let total = NO_OWNED_ROWS;
   for (const issue of issues) {
-    total = addCounts(total, await deleteIssueOwnedRows(ctx, issue._id));
+    total = addCounts(total, await deleteIssueOwnedRows(ctx, issue));
   }
   await deleteRows(ctx, issues);
   return { ...total, issues: issues.length };

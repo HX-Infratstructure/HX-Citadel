@@ -4,6 +4,7 @@ import { getOrgIssue } from "./issues";
 import { logActivity } from "./lib/activity";
 import { deleteAttachmentFiles } from "./lib/issueCleanup";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { inOrg } from "./lib/orgRows";
 
 /** Server-side cap; the upload UI also enforces this before uploading. */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
@@ -85,10 +86,10 @@ export const listByIssue = orgQuery({
   handler: async (ctx, args) => {
     await getOrgIssue(ctx, ctx.org._id, args.issueId);
 
-    const attachments = await ctx.db
-      .query("attachments")
-      .withIndex("by_issue", (q) => q.eq("issueId", args.issueId))
-      .collect();
+    const attachments = await inOrg(
+      ctx.db.query("attachments").withIndex("by_issue", (q) => q.eq("issueId", args.issueId)),
+      ctx.org._id
+    ).collect();
 
     const result = [];
     for (const attachment of attachments) {

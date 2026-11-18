@@ -6,7 +6,7 @@ import { formatIssueKey } from "../../lib/issue-key";
 import { getOrgIssue, LIST_LIMIT } from "../issues";
 import { decisionAnswerValidator, decisionFields, decisionViaValidator } from "../schema";
 import { logActivity } from "./activity";
-import { orgRow } from "./orgRows";
+import { inOrg, orgRow } from "./orgRows";
 import { OrgScope } from "./orgScope";
 
 export const QUESTION_MAX = 500;
@@ -106,11 +106,11 @@ async function assertStory(ctx: Db, issue: Doc<"issues">): Promise<void> {
   refuse("Decisions are asked on stories");
 }
 
-async function openDecision(ctx: Db, issueId: Id<"issues">): Promise<Doc<"decisions"> | null> {
-  return await ctx.db
-    .query("decisions")
-    .withIndex("by_issue_and_status", (q) => q.eq("issueId", issueId).eq("status", "open"))
-    .first();
+async function openDecision(ctx: Db, issue: Doc<"issues">): Promise<Doc<"decisions"> | null> {
+  return await inOrg(
+    ctx.db.query("decisions").withIndex("by_issue_and_status", (q) => q.eq("issueId", issue._id).eq("status", "open")),
+    issue.orgId
+  ).first();
 }
 
 async function getOrgDecision(ctx: Db, orgId: Id<"organizations">, decisionId: Id<"decisions">): Promise<Doc<"decisions">> {
@@ -126,7 +126,7 @@ export async function askDecision(ctx: MutationCtx, scope: OrgScope, ask: Decisi
   const issue = await getOrgIssue(ctx, scope.org._id, ask.issueId);
   await assertStory(ctx, issue);
   const fields = parseAsk(ask);
-  const waiting = await openDecision(ctx, issue._id);
+  const waiting = await openDecision(ctx, issue);
   if (waiting !== null) {
     refuse(`${await displayKey(ctx, issue)} is already waiting on the owner: ${waiting.question}`);
   }
@@ -178,11 +178,10 @@ async function userName(ctx: Db, userId: Id<"users"> | undefined): Promise<strin
 /** A story's latest LIST_LIMIT decisions, newest first, with the asker's and the answerer's names. */
 export async function listIssueDecisions(ctx: Db, orgId: Id<"organizations">, issueId: Id<"issues">): Promise<ListedDecision[]> {
   await getOrgIssue(ctx, orgId, issueId);
-  const decisions = await ctx.db
-    .query("decisions")
-    .withIndex("by_issue", (q) => q.eq("issueId", issueId))
-    .order("desc")
-    .take(LIST_LIMIT);
+  const decisions = await inOrg(
+    ctx.db.query("decisions").withIndex("by_issue", (q) => q.eq("issueId", issueId)).order("desc"),
+    orgId
+  ).take(LIST_LIMIT);
   return await Promise.all(
     decisions.map(async (decision) => ({
       ...decision,

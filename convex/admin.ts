@@ -6,6 +6,7 @@ import { deleteAttachmentFiles, deleteIssuesWithOwnedRows, deleteRows } from "./
 import { patchIssue } from "./lib/issueVersion";
 import { existedBeforeRead, getOrgByClerkIdOrThrow } from "./lib/mirror";
 import { subCounter } from "./lib/rules/levels";
+import { inOrg } from "./lib/orgRows";
 import { findTeamByKey } from "./lib/teams";
 
 /**
@@ -88,14 +89,14 @@ async function loadOrgContent(ctx: QueryCtx | MutationCtx, orgId: Id<"organizati
       ctx.db.query("issueRelations").withIndex("by_issue", (q) => q.eq("issueId", issueId)).collect()
     ),
     comments: await collectEach(issueIds, (issueId) =>
-      ctx.db.query("comments").withIndex("by_issue", (q) => q.eq("issueId", issueId)).collect()
+      inOrg(ctx.db.query("comments").withIndex("by_issue", (q) => q.eq("issueId", issueId)), orgId).collect()
     ),
     activity: await ctx.db
       .query("activity")
       .withIndex("by_org", (q) => q.eq("orgId", orgId))
       .collect(),
     attachments: await collectEach(issueIds, (issueId) =>
-      ctx.db.query("attachments").withIndex("by_issue", (q) => q.eq("issueId", issueId)).collect()
+      inOrg(ctx.db.query("attachments").withIndex("by_issue", (q) => q.eq("issueId", issueId)), orgId).collect()
     ),
     decisions: await ctx.db
       .query("decisions")
@@ -103,7 +104,7 @@ async function loadOrgContent(ctx: QueryCtx | MutationCtx, orgId: Id<"organizati
       .collect(),
     issues,
     cycles: await collectEach(teams, (team) =>
-      ctx.db.query("cycles").withIndex("by_team", (q) => q.eq("teamId", team._id)).collect()
+      inOrg(ctx.db.query("cycles").withIndex("by_team", (q) => q.eq("teamId", team._id)), orgId).collect()
     ),
     labels: await ctx.db
       .query("labels")
@@ -163,14 +164,14 @@ export const clearTeamContent = internalMutation({
   handler: async (ctx, args) => {
     const org = await getOrgByClerkId(ctx, args.clerkOrgId);
     const team = await findTeamByKey(ctx, org._id, args.teamKey);
-    const issues = await ctx.db
-      .query("issues")
-      .withIndex("by_team", (q) => q.eq("teamId", team._id))
-      .collect();
-    const cycles = await ctx.db
-      .query("cycles")
-      .withIndex("by_team", (q) => q.eq("teamId", team._id))
-      .collect();
+    const issues = await inOrg(
+      ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", team._id)),
+      org._id
+    ).collect();
+    const cycles = await inOrg(
+      ctx.db.query("cycles").withIndex("by_team", (q) => q.eq("teamId", team._id)),
+      org._id
+    ).collect();
     const issueCounts = await deleteIssuesWithOwnedRows(ctx, issues);
     await deleteRows(ctx, cycles);
     await ctx.db.delete(team._id);

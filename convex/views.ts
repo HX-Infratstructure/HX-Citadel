@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { inOrg } from "./lib/orgRows";
 import { notFound } from "./lib/refusals";
 
 const viewShape = {
@@ -140,11 +141,10 @@ export const teamIssueLabels = orgQuery({
     if (!team || team.orgId !== ctx.org._id) {
       notFound("Team not found");
     }
-    const issues = await ctx.db
-      .query("issues")
-      .withIndex("by_team", (q) => q.eq("teamId", args.teamId))
-      .order("desc")
-      .take(500);
+    const issues = await inOrg(
+      ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", args.teamId)).order("desc"),
+      ctx.org._id
+    ).take(500);
 
     const labelCache = new Map<
       string,

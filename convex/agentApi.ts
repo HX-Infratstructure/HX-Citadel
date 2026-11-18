@@ -26,7 +26,7 @@ import {
   listedDecisionValidator,
   listIssueDecisions,
 } from "./lib/decisions";
-import { orgChildren, orgRow } from "./lib/orgRows";
+import { inOrg, orgChildren, orgRow } from "./lib/orgRows";
 import { invalid, notFound } from "./lib/refusals";
 import { findTeamByKey } from "./lib/teams";
 import {
@@ -78,13 +78,10 @@ async function findIssueByKey(ctx: Db, orgId: Id<"organizations">, key: string):
     invalid(`invalid issue key ${key}; use KEY-12 or KEY-12.3`);
   }
   const team = await findTeamByKey(ctx, orgId, parsed.teamKey);
-  const story = await ctx.db
-    .query("issues")
-    .withIndex("by_team_and_number", (q) => q.eq("teamId", team._id).eq("number", parsed.number))
-    // The index leaves only rows with this team and number; dropping other orgs' rows before unique() keeps one from making it throw.
-    // eslint-disable-next-line @convex-dev/no-filter-in-query
-    .filter((q) => q.eq(q.field("orgId"), orgId))
-    .unique();
+  const story = await inOrg(
+    ctx.db.query("issues").withIndex("by_team_and_number", (q) => q.eq("teamId", team._id).eq("number", parsed.number)),
+    orgId
+  ).unique();
   if (story === null || story.kind !== "story") {
     notFound(`Issue ${key} not found`);
   }
@@ -217,10 +214,11 @@ export const listIssues = internalQuery({
       .query("issues")
       .withIndex("by_team", (q) => q.eq("teamId", team._id))
       .order("desc")
-      // No index covers team plus an optional status and assignee; the filter runs before the page limit, so no match is cut.
+      // No index covers team plus workspace, an optional status and an assignee; the filter runs before the page limit, so no match is cut.
       // eslint-disable-next-line @convex-dev/no-filter-in-query
       .filter((q) =>
         q.and(
+          q.eq(q.field("orgId"), org._id),
           q.or(status === undefined, q.eq(q.field("status"), status)),
           q.or(assigneeId === undefined, q.eq(q.field("assigneeId"), assigneeId))
         )

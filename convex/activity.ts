@@ -3,7 +3,7 @@ import { cycleName as formatCycleName } from "../lib/sprint";
 import { Doc, Id } from "./_generated/dataModel";
 import { getOrgIssue } from "./issues";
 import { orgQuery } from "./lib/customFunctions";
-import { orgRow } from "./lib/orgRows";
+import { inOrg, orgRow } from "./lib/orgRows";
 
 /**
  * Activity feed queries. Entries are written by `logActivity` in
@@ -29,10 +29,10 @@ export const listByIssue = orgQuery({
   handler: async (ctx, args) => {
     await getOrgIssue(ctx, ctx.org._id, args.issueId);
 
-    const entries = await ctx.db
-      .query("activity")
-      .withIndex("by_issue", (q) => q.eq("issueId", args.issueId))
-      .take(500);
+    const entries = await inOrg(
+      ctx.db.query("activity").withIndex("by_issue", (q) => q.eq("issueId", args.issueId)),
+      ctx.org._id
+    ).take(500);
 
     const userCache = new Map<Id<"users">, Doc<"users"> | null>();
     const getUser = async (userId: Id<"users">) => {

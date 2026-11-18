@@ -4,6 +4,7 @@ import { QueryCtx } from "./_generated/server";
 import { issueShape } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { inOrg } from "./lib/orgRows";
 import { patchIssue } from "./lib/issueVersion";
 import { assertNoEpics } from "./lib/rules/levels";
 import { projectStatusValidator } from "./schema";
@@ -50,10 +51,10 @@ async function countProgress(
   orgId: Id<"organizations">,
   projectId: Id<"projects">
 ) {
-  const issues = await ctx.db
-    .query("issues")
-    .withIndex("by_project", (q) => q.eq("projectId", projectId))
-    .collect();
+  const issues = await inOrg(
+    ctx.db.query("issues").withIndex("by_project", (q) => q.eq("projectId", projectId)),
+    orgId
+  ).collect();
   const progress = {
     total: 0,
     backlog: 0,
@@ -64,9 +65,6 @@ async function countProgress(
     canceled: 0,
   };
   for (const issue of issues) {
-    if (issue.orgId !== orgId) {
-      continue;
-    }
     progress.total += 1;
     progress[issue.status] += 1;
   }
@@ -121,11 +119,10 @@ export const listIssues = orgQuery({
   returns: v.array(v.object(issueShape)),
   handler: async (ctx, args) => {
     await getOrgProject(ctx, ctx.org._id, args.projectId);
-    const issues = await ctx.db
-      .query("issues")
-      .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
-      .collect();
-    return issues.filter((issue) => issue.orgId === ctx.org._id);
+    return await inOrg(
+      ctx.db.query("issues").withIndex("by_project", (q) => q.eq("projectId", args.projectId)),
+      ctx.org._id
+    ).collect();
   },
 });
 
@@ -253,11 +250,10 @@ export const remove = orgMutation({
   handler: async (ctx, args) => {
     const project = await getOrgProject(ctx, ctx.org._id, args.projectId);
 
-    const projectIssues = await ctx.db
-      .query("issues")
-      .withIndex("by_project", (q) => q.eq("projectId", project._id))
-      .collect();
-    const issues = projectIssues.filter((issue) => issue.orgId === ctx.org._id);
+    const issues = await inOrg(
+      ctx.db.query("issues").withIndex("by_project", (q) => q.eq("projectId", project._id)),
+      ctx.org._id
+    ).collect();
     assertNoEpics(issues);
     for (const issue of issues) {
       await patchIssue(ctx, issue, { projectId: undefined });

@@ -31,6 +31,7 @@ import type * as lib_idempotency from "../lib/idempotency.js";
 import type * as lib_issueCleanup from "../lib/issueCleanup.js";
 import type * as lib_issueVersion from "../lib/issueVersion.js";
 import type * as lib_mirror from "../lib/mirror.js";
+import type * as lib_orgRows from "../lib/orgRows.js";
 import type * as lib_orgScope from "../lib/orgScope.js";
 import type * as lib_refusals from "../lib/refusals.js";
 import type * as lib_rules_cycles from "../lib/rules/cycles.js";
@@ -80,6 +81,7 @@ declare const fullApi: ApiFromModules<{
   "lib/issueCleanup": typeof lib_issueCleanup;
   "lib/issueVersion": typeof lib_issueVersion;
   "lib/mirror": typeof lib_mirror;
+  "lib/orgRows": typeof lib_orgRows;
   "lib/orgScope": typeof lib_orgScope;
   "lib/refusals": typeof lib_refusals;
   "lib/rules/cycles": typeof lib_rules_cycles;

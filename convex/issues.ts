@@ -9,7 +9,7 @@ import { changedFields, fieldText, FieldLogOptions, logActivity, logFieldChanges
 import { orgAdminMutation, orgMutation, orgQuery } from "./lib/customFunctions";
 import { deleteIssueOwnedRows } from "./lib/issueCleanup";
 import { FIRST_VERSION, patchIssue } from "./lib/issueVersion";
-import { orgChildren, orgRow } from "./lib/orgRows";
+import { inOrg, orgChildren, orgRow } from "./lib/orgRows";
 import { OrgScope } from "./lib/orgScope";
 import { assertCycleInTeam } from "./lib/rules/cycles";
 import {
@@ -92,11 +92,10 @@ export async function listTeamIssues(
   if (!team || team.orgId !== orgId) {
     notFound("Team not found");
   }
-  return await ctx.db
-    .query("issues")
-    .withIndex("by_team", (q) => q.eq("teamId", teamId))
-    .order("desc")
-    .take(LIST_LIMIT);
+  return await inOrg(
+    ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", teamId)).order("desc"),
+    orgId
+  ).take(LIST_LIMIT);
 }
 
 export const listByTeam = orgQuery({
@@ -123,12 +122,10 @@ export const listBacklog = orgQuery({
     }
     const byStatus = await Promise.all(
       OPEN_STATUSES.map((status) =>
-        ctx.db
-          .query("issues")
-          .withIndex("by_team_and_status", (q) =>
-            q.eq("teamId", args.teamId).eq("status", status)
-          )
-          .collect()
+        inOrg(
+          ctx.db.query("issues").withIndex("by_team_and_status", (q) => q.eq("teamId", args.teamId).eq("status", status)),
+          ctx.org._id
+        ).collect()
       )
     );
     return byStatus
@@ -157,12 +154,12 @@ export const listParentCandidates = orgQuery({
     }
     const byStatus = await Promise.all(
       PARENT_STATUSES.map((status) =>
-        ctx.db
-          .query("issues")
-          .withIndex("by_team_kind_status", (q) =>
-            q.eq("teamId", args.teamId).eq("kind", parentKind).eq("status", status)
-          )
-          .collect()
+        inOrg(
+          ctx.db
+            .query("issues")
+            .withIndex("by_team_kind_status", (q) => q.eq("teamId", args.teamId).eq("kind", parentKind).eq("status", status)),
+          ctx.org._id
+        ).collect()
       )
     );
     return byStatus.flat().sort((a, b) => b._creationTime - a._creationTime);
@@ -184,12 +181,10 @@ export const getByNumber = orgQuery({
     if (!team || team.orgId !== ctx.org._id) {
       return null;
     }
-    const issue = await ctx.db
-      .query("issues")
-      .withIndex("by_team_and_number", (q) =>
-        q.eq("teamId", args.teamId).eq("number", args.number)
-      )
-      .unique();
+    const issue = await inOrg(
+      ctx.db.query("issues").withIndex("by_team_and_number", (q) => q.eq("teamId", args.teamId).eq("number", args.number)),
+      ctx.org._id
+    ).unique();
     return issue?.kind === "story" ? issue : null;
   },
 });
@@ -268,11 +263,10 @@ export async function createIssue(
   const numbering = await claimNumbering(ctx, team, kind, args.parentIssueId);
 
   // New issues sort to the top of their column.
-  const highest = await ctx.db
-    .query("issues")
-    .withIndex("by_team_and_sort_order", (q) => q.eq("teamId", placement.teamId))
-    .order("desc")
-    .first();
+  const highest = await inOrg(
+    ctx.db.query("issues").withIndex("by_team_and_sort_order", (q) => q.eq("teamId", placement.teamId)).order("desc"),
+    org._id
+  ).first();
   const sortOrder = (highest?.sortOrder ?? 0) + SORT_GAP;
 
   const issueId = await ctx.db.insert("issues", {
@@ -321,26 +315,26 @@ async function othersAtRank(
   issue: Doc<"issues">,
   rank: number
 ): Promise<Doc<"issues">[]> {
-  const atRank = await ctx.db
-    .query("issues")
-    .withIndex("by_team_and_sort_order", (q) =>
-      q.eq("teamId", issue.teamId).eq("sortOrder", rank)
-    )
-    .collect();
+  const atRank = await inOrg(
+    ctx.db.query("issues").withIndex("by_team_and_sort_order", (q) => q.eq("teamId", issue.teamId).eq("sortOrder", rank)),
+    issue.orgId
+  ).collect();
   return atRank.filter((other) => other._id !== issue._id);
 }
 
 /** The team's closest rank below `rank`, if any. */
 async function nextLowerRank(
   ctx: MutationCtx,
-  teamId: Id<"teams">,
+  issue: Doc<"issues">,
   rank: number
 ): Promise<number | undefined> {
-  const nextLower = await ctx.db
-    .query("issues")
-    .withIndex("by_team_and_sort_order", (q) => q.eq("teamId", teamId).lt("sortOrder", rank))
-    .order("desc")
-    .first();
+  const nextLower = await inOrg(
+    ctx.db
+      .query("issues")
+      .withIndex("by_team_and_sort_order", (q) => q.eq("teamId", issue.teamId).lt("sortOrder", rank))
+      .order("desc"),
+    issue.orgId
+  ).first();
   return nextLower?.sortOrder;
 }
 
@@ -361,11 +355,11 @@ async function placeRank(
     return rank;
   }
   const below: Doc<"issues">[] = [];
-  let floor = await nextLowerRank(ctx, issue.teamId, rank);
+  let floor = await nextLowerRank(ctx, issue, rank);
   let ranks = respaceTie(rank, tied.length, floor, below.length);
   while (ranks === undefined && floor !== undefined) {
     below.push(...(await othersAtRank(ctx, issue, floor)));
-    floor = await nextLowerRank(ctx, issue.teamId, floor);
+    floor = await nextLowerRank(ctx, issue, floor);
     ranks = respaceTie(rank, tied.length, floor, below.length);
   }
   if (ranks === undefined) {
@@ -502,8 +496,11 @@ const REVERT_ARGS: Record<string, (ctx: MutationCtx, text: string | undefined) =
 };
 
 /** The newest activity row that records a change to `field` on the issue. */
-async function latestFieldChange(ctx: MutationCtx, issueId: Id<"issues">, field: string) {
-  const rows = ctx.db.query("activity").withIndex("by_issue", (q) => q.eq("issueId", issueId)).order("desc");
+async function latestFieldChange(ctx: MutationCtx, issue: Doc<"issues">, field: string) {
+  const rows = inOrg(
+    ctx.db.query("activity").withIndex("by_issue", (q) => q.eq("issueId", issue._id)).order("desc"),
+    issue.orgId
+  );
   for await (const row of rows) {
     if (row.field === field) {
       return row;
@@ -526,7 +523,7 @@ export const revertChange = orgAdminMutation({
       refuse("Only status, assignee, priority and title changes can be reverted");
     }
     const issue = await getOrgIssue(ctx, ctx.org._id, change.issueId);
-    const latest = await latestFieldChange(ctx, issue._id, change.field);
+    const latest = await latestFieldChange(ctx, issue, change.field);
     if (latest?._id !== change._id || fieldText(issue, change.field) !== change.newValue) {
       const team = await orgRow(ctx, issue.orgId, issue.teamId);
       const key = team ? formatIssueKey(team.key, issue) : null;
@@ -543,9 +540,9 @@ export const revertChange = orgAdminMutation({
 });
 
 /** Deletes an issue and every row that belongs to it. */
-async function deleteIssueRow(ctx: MutationCtx, issueId: Id<"issues">): Promise<void> {
-  await deleteIssueOwnedRows(ctx, issueId);
-  await ctx.db.delete(issueId);
+async function deleteIssueRow(ctx: MutationCtx, issue: Doc<"issues">): Promise<void> {
+  await deleteIssueOwnedRows(ctx, issue);
+  await ctx.db.delete(issue._id);
 }
 
 /** A story's subtasks go with it, the Complete testing one included. */
@@ -555,7 +552,7 @@ async function deleteStorySubtasks(ctx: MutationCtx, story: Doc<"issues">): Prom
   }
   const subtasks = await orgChildren(ctx, story.orgId, story._id);
   for (const subtask of subtasks) {
-    await deleteIssueRow(ctx, subtask._id);
+    await deleteIssueRow(ctx, subtask);
   }
 }
 
@@ -600,7 +597,7 @@ export const remove = orgMutation({
     const parent = issue.parentIssueId ? await orgRow(ctx, ctx.org._id, issue.parentIssueId) : null;
     await deleteStorySubtasks(ctx, issue);
     await retireSubNumber(ctx, issue, parent);
-    await deleteIssueRow(ctx, issue._id);
+    await deleteIssueRow(ctx, issue);
     await logChildDeleted(ctx, issue, parent, ctx.user._id);
     return null;
   },

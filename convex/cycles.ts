@@ -6,6 +6,7 @@ import { issueShape } from "./issues";
 import { logActivity } from "./lib/activity";
 import { getOrgCycle } from "./lib/cycles";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { inOrg } from "./lib/orgRows";
 import { patchIssue } from "./lib/issueVersion";
 import { progressShape } from "./projects";
 import { notFound } from "./lib/refusals";
@@ -39,10 +40,10 @@ async function countProgress(
   orgId: Id<"organizations">,
   cycleId: Id<"cycles">
 ) {
-  const issues = await ctx.db
-    .query("issues")
-    .withIndex("by_cycle", (q) => q.eq("cycleId", cycleId))
-    .collect();
+  const issues = await inOrg(
+    ctx.db.query("issues").withIndex("by_cycle", (q) => q.eq("cycleId", cycleId)),
+    orgId
+  ).collect();
   const progress = {
     total: 0,
     backlog: 0,
@@ -53,9 +54,6 @@ async function countProgress(
     canceled: 0,
   };
   for (const issue of issues) {
-    if (issue.orgId !== orgId) {
-      continue;
-    }
     progress.total += 1;
     progress[issue.status] += 1;
   }
@@ -68,11 +66,10 @@ export const listByTeam = orgQuery({
   returns: v.array(v.object(cycleShape)),
   handler: async (ctx, args) => {
     await getOrgTeam(ctx, ctx.org._id, args.teamId);
-    return await ctx.db
-      .query("cycles")
-      .withIndex("by_team_and_number", (q) => q.eq("teamId", args.teamId))
-      .order("desc")
-      .collect();
+    return await inOrg(
+      ctx.db.query("cycles").withIndex("by_team_and_number", (q) => q.eq("teamId", args.teamId)).order("desc"),
+      ctx.org._id
+    ).collect();
   },
 });
 
@@ -97,11 +94,10 @@ export const listWithProgress = orgQuery({
       .collect();
     const result = [];
     for (const team of teams) {
-      const cycles = await ctx.db
-        .query("cycles")
-        .withIndex("by_team_and_number", (q) => q.eq("teamId", team._id))
-        .order("desc")
-        .collect();
+      const cycles = await inOrg(
+        ctx.db.query("cycles").withIndex("by_team_and_number", (q) => q.eq("teamId", team._id)).order("desc"),
+        ctx.org._id
+      ).collect();
       for (const cycle of cycles) {
         result.push({
           ...cycle,
@@ -136,10 +132,10 @@ export const currentForTeam = orgQuery({
   returns: v.union(v.object(cycleShape), v.null()),
   handler: async (ctx, args) => {
     await getOrgTeam(ctx, ctx.org._id, args.teamId);
-    const cycles = await ctx.db
-      .query("cycles")
-      .withIndex("by_team", (q) => q.eq("teamId", args.teamId))
-      .collect();
+    const cycles = await inOrg(
+      ctx.db.query("cycles").withIndex("by_team", (q) => q.eq("teamId", args.teamId)),
+      ctx.org._id
+    ).collect();
     const now = Date.now();
     const active = cycles
       .filter((cycle) => cycle.startDate <= now && now <= cycle.endDate)
@@ -154,11 +150,10 @@ export const listIssues = orgQuery({
   returns: v.array(v.object(issueShape)),
   handler: async (ctx, args) => {
     await getOrgCycle(ctx, ctx.org._id, args.cycleId);
-    const issues = await ctx.db
-      .query("issues")
-      .withIndex("by_cycle", (q) => q.eq("cycleId", args.cycleId))
-      .collect();
-    return issues.filter((issue) => issue.orgId === ctx.org._id);
+    return await inOrg(
+      ctx.db.query("issues").withIndex("by_cycle", (q) => q.eq("cycleId", args.cycleId)),
+      ctx.org._id
+    ).collect();
   },
 });
 
@@ -172,16 +167,11 @@ export const candidateIssues = orgQuery({
   returns: v.array(v.object(issueShape)),
   handler: async (ctx, args) => {
     const cycle = await getOrgCycle(ctx, ctx.org._id, args.cycleId);
-    const issues = await ctx.db
-      .query("issues")
-      .withIndex("by_team", (q) => q.eq("teamId", cycle.teamId))
-      .order("desc")
-      .take(500);
-    return issues
-      .filter(
-        (issue) => issue.orgId === ctx.org._id && issue.cycleId !== args.cycleId
-      )
-      .slice(0, 200);
+    const issues = await inOrg(
+      ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", cycle.teamId)).order("desc"),
+      ctx.org._id
+    ).take(500);
+    return issues.filter((issue) => issue.cycleId !== args.cycleId).slice(0, 200);
   },
 });
 
@@ -201,11 +191,10 @@ export const create = orgMutation({
     }
 
     // Claim the next per-team cycle number.
-    const latest = await ctx.db
-      .query("cycles")
-      .withIndex("by_team_and_number", (q) => q.eq("teamId", args.teamId))
-      .order("desc")
-      .first();
+    const latest = await inOrg(
+      ctx.db.query("cycles").withIndex("by_team_and_number", (q) => q.eq("teamId", args.teamId)).order("desc"),
+      ctx.org._id
+    ).first();
     const number = (latest?.number ?? 0) + 1;
 
     const name = args.name?.trim();
@@ -261,14 +250,11 @@ export const remove = orgMutation({
   handler: async (ctx, args) => {
     const cycle = await getOrgCycle(ctx, ctx.org._id, args.cycleId);
 
-    const issues = await ctx.db
-      .query("issues")
-      .withIndex("by_cycle", (q) => q.eq("cycleId", cycle._id))
-      .collect();
+    const issues = await inOrg(
+      ctx.db.query("issues").withIndex("by_cycle", (q) => q.eq("cycleId", cycle._id)),
+      ctx.org._id
+    ).collect();
     for (const issue of issues) {
-      if (issue.orgId !== ctx.org._id) {
-        continue;
-      }
       await patchIssue(ctx, issue, { cycleId: undefined });
       await logActivity(ctx, {
         orgId: ctx.org._id,
