@@ -14,6 +14,7 @@ import {
   assertTestingSubtask,
   createTestingSubtask,
 } from "./lib/rules/testing";
+import { assertWipFree, assertWipFreeAfterUpdate } from "./lib/rules/wip";
 import {
   issueKindValidator,
   issuePriorityValidator,
@@ -164,6 +165,8 @@ export const create = orgMutation({
       parentIssueId: args.parentIssueId,
       projectId: args.projectId,
     });
+    const status = args.status ?? "todo";
+    await assertWipFree(ctx, { orgId: ctx.org._id, assigneeId: args.assigneeId, kind, status });
     const numbering = await claimNumbering(ctx, team, kind, args.parentIssueId);
 
     // New issues sort to the top of their column.
@@ -182,7 +185,7 @@ export const create = orgMutation({
       ...numbering,
       title: args.title.trim(),
       description: args.description,
-      status: args.status ?? "todo",
+      status,
       priority: args.priority ?? "none",
       assigneeId: args.assigneeId,
       creatorId: ctx.user._id,
@@ -280,6 +283,7 @@ export const update = orgMutation({
       updates.sortOrder = args.sortOrder;
     }
 
+    await assertWipFreeAfterUpdate(ctx, issue, updates);
     await ctx.db.patch(issue._id, updates);
 
     for (const change of changes) {
