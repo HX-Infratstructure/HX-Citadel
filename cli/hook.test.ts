@@ -69,6 +69,10 @@ describe("storyKeys", () => {
   it("ignores lowercase, multi-hyphen and padded look-alikes", () => {
     expect(storyKeys("decode utf-8 and ISO-8859-1 on 2026-11-18, x86-64, HX-012, HX-1.2.3")).toEqual([]);
   });
+
+  it("ignores dates, whose first part is not a team key", () => {
+    expect(storyKeys("shipped 2026-11-18 for the 2026-11 release (A1-3)")).toEqual(["A1-3"]);
+  });
 });
 
 describe("commit comment", () => {

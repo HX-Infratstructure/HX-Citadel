@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { isValidTeamKey, TEAM_KEY_RULE } from "../lib/issue-key";
 import { orgAdminMutation, orgQuery } from "./lib/customFunctions";
 
 const teamShape = {
@@ -43,10 +44,8 @@ export const create = orgAdminMutation({
   returns: v.id("teams"),
   handler: async (ctx, args) => {
     const key = args.key.toUpperCase().trim();
-    if (!/^[A-Z][A-Z0-9]{0,4}$/.test(key)) {
-      throw new Error(
-        "Team key must be 1-5 characters, letters and digits, starting with a letter"
-      );
+    if (!isValidTeamKey(key)) {
+      throw new Error(TEAM_KEY_RULE);
     }
     const existing = await ctx.db
       .query("teams")

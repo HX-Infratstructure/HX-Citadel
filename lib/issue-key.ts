@@ -93,9 +93,33 @@ export function formatIssueKey(
   }
 }
 
+/** A team key: 1-5 upper-case letters and digits, starting with a letter. */
+const TEAM_KEY_PATTERN = "[A-Z][A-Z0-9]{0,4}";
+
+const TEAM_KEY = new RegExp(`^${TEAM_KEY_PATTERN}$`);
+
+export const TEAM_KEY_RULE = "Team key must be 1-5 characters, letters and digits, starting with a letter";
+
+export function isValidTeamKey(key: string): boolean {
+  return TEAM_KEY.test(key);
+}
+
+/** A valid team key from a team name's word initials, or "" when the name has no letter to start one. */
+export function suggestTeamKey(name: string): string {
+  return name
+    .replace(/[^a-zA-Z0-9 ]/g, "")
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word[0])
+    .join("")
+    .toUpperCase()
+    .replace(/^[0-9]+/, "")
+    .slice(0, 5);
+}
+
 export type ParsedIssueKey = { teamKey: string; number: number; subNumber?: number };
 
-const ISSUE_KEY = /^([A-Za-z0-9]+)-(\d+)(?:\.(\d+))?$/;
+const ISSUE_KEY = new RegExp(`^(${TEAM_KEY_PATTERN})-(\\d+)(?:\\.(\\d+))?$`, "i");
 
 /** The inverse of formatIssueKey: KEY-12 or KEY-12.3, else null. */
 export function parseIssueKey(key: string): ParsedIssueKey | null {
