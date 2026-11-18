@@ -162,7 +162,9 @@ export default defineSchema({
     .index("by_team", ["teamId"])
     .index("by_team_and_number", ["teamId", "number"])
     .index("by_team_and_status", ["teamId", "status"])
-    .index("by_assignee", ["orgId", "assigneeId"])
+    .index("by_team_and_sort_order", ["teamId", "sortOrder"])
+    .index("by_team_kind_status", ["teamId", "kind", "status"])
+    .index("by_assignee_kind_status", ["orgId", "assigneeId", "kind", "status"])
     .index("by_project", ["projectId"])
     .index("by_cycle", ["cycleId"])
     .index("by_parent", ["parentIssueId"])
@@ -250,7 +252,9 @@ export default defineSchema({
     fileType: v.string(),
     fileSize: v.number(),
     uploadedBy: v.id("users"),
-  }).index("by_issue", ["issueId"]),
+  })
+    .index("by_issue", ["issueId"])
+    .index("by_storage", ["storageId"]),
 
   views: defineTable({
     orgId: v.id("organizations"),

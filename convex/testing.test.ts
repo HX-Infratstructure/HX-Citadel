@@ -184,6 +184,7 @@ describe("Complete testing sub-task", () => {
     await setProof(testing._id, "https://example.com/run/42");
     await setProof(testing._id, "");
     const saved = await t.run((ctx) => ctx.db.get(testing._id));
+    expect(saved).not.toBeNull();
     expect(saved?.proofUrl).toBeUndefined();
   });
 
@@ -191,11 +192,14 @@ describe("Complete testing sub-task", () => {
     const { t, asMember, create, children } = await setup();
     const storyId = await create("story");
     await create("subtask", { parentIssueId: storyId });
-    expect(await children(storyId)).toHaveLength(2);
+    const childIds = (await children(storyId)).map((child) => child._id);
+    expect(childIds).toHaveLength(2);
 
     await asMember.mutation(api.issues.remove, { issueId: storyId });
 
     expect(await t.run((ctx) => ctx.db.get(storyId))).toBeNull();
-    expect(await children(storyId)).toHaveLength(0);
+    for (const childId of childIds) {
+      expect(await t.run((ctx) => ctx.db.get(childId))).toBeNull();
+    }
   });
 });

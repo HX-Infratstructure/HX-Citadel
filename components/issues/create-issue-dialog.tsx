@@ -2,9 +2,10 @@
 
 import { errorMessage } from "@/lib/error-message";
 import { statusesFor } from "@/lib/issue-status";
+import { missingPlacement } from "@/lib/level-placement";
 import { useMutation, useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
@@ -62,10 +63,20 @@ export function CreateIssueDialog({
   const [priority, setPriority] = useState<IssuePriority>("none");
   const [level, setLevel] = useState<LevelChoice>(DEFAULT_LEVEL);
   const [submitting, setSubmitting] = useState(false);
+  const inFlight = useRef(false);
+  const session = useRef(0);
+
+  useEffect(() => {
+    if (open) {
+      session.current += 1;
+    }
+  }, [open]);
 
   // Fall back to the default/first team without needing an effect.
   const teamId = selectedTeamId ?? defaultTeamId ?? teams?.[0]?._id;
   const offeredStatuses = statusesFor(STATUSES, level.kind);
+  const canSubmit =
+    Boolean(teamId) && title.trim() !== "" && missingPlacement(level) === null;
 
   const changeLevel = (next: LevelChoice) => {
     setLevel(next);
@@ -75,10 +86,12 @@ export function CreateIssueDialog({
   };
 
   const handleSubmit = async () => {
-    if (!teamId || !title.trim()) {
+    if (!teamId || !canSubmit || inFlight.current) {
       return;
     }
+    inFlight.current = true;
     setSubmitting(true);
+    const submittedIn = session.current;
     try {
       const issueId = await createIssue({
         teamId,
@@ -89,6 +102,9 @@ export function CreateIssueDialog({
         ...levelFields(level),
       });
       toast.success("Issue created");
+      if (submittedIn !== session.current) {
+        return;
+      }
       onOpenChange(false);
       setTitle("");
       setDescription("");
@@ -103,6 +119,7 @@ export function CreateIssueDialog({
         errorMessage(error, "Failed to create issue")
       );
     } finally {
+      inFlight.current = false;
       setSubmitting(false);
     }
   };
@@ -194,10 +211,10 @@ export function CreateIssueDialog({
           </Button>
           <Button
             size="sm"
-            disabled={!title.trim() || !teamId || submitting}
+            disabled={!canSubmit || submitting}
             onClick={() => void handleSubmit()}
           >
-            Create issue
+            {submitting ? "Creating…" : "Create issue"}
           </Button>
         </div>
       </DialogContent>

@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { getOrgIssue } from "./issues";
 import { logActivity } from "./lib/activity";
+import { deleteAttachmentFiles } from "./lib/issueCleanup";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 
 /** Server-side cap; the upload UI also enforces this before uploading. */
@@ -43,6 +44,14 @@ export const create = orgMutation({
 
     if (args.fileSize > MAX_ATTACHMENT_BYTES) {
       throw new Error("Attachments are limited to 25 MB");
+    }
+
+    const existing = await ctx.db
+      .query("attachments")
+      .withIndex("by_storage", (q) => q.eq("storageId", args.storageId))
+      .first();
+    if (existing) {
+      throw new Error("This file is already attached");
     }
 
     const fileName = args.fileName.trim() || "Untitled";
@@ -115,7 +124,7 @@ export const remove = orgMutation({
       );
     }
 
-    await ctx.storage.delete(attachment.storageId);
+    await deleteAttachmentFiles(ctx, [attachment]);
     await ctx.db.delete(attachment._id);
 
     await logActivity(ctx, {

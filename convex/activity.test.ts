@@ -194,6 +194,27 @@ describe("R6: one activity row per change", () => {
     ]);
   });
 
+  test("listByIssue shows names for assignee, project and cycle, and the stored value for a missing reference", async () => {
+    const { t, asMember, ids, create } = await setup();
+    const storyId = await create("story");
+    for (const change of [
+      { assigneeId: ids.memberId },
+      { projectId: ids.projectA },
+      { cycleId: ids.cycleId },
+      { projectId: ids.projectB },
+    ]) {
+      await asMember.mutation(api.issues.update, { issueId: storyId, ...change });
+    }
+    await t.run((ctx) => ctx.db.delete(ids.projectB));
+    const shown = await asMember.query(api.activity.listByIssue, { issueId: storyId });
+    expect(shown.slice(1).map(({ field, oldValue, newValue }) => ({ field, oldValue, newValue }))).toEqual([
+      { field: "assignee", oldValue: undefined, newValue: "Member" },
+      { field: "project", oldValue: undefined, newValue: "A" },
+      { field: "cycle", oldValue: undefined, newValue: "Cycle 1" },
+      { field: "project", oldValue: "A", newValue: ids.projectB },
+    ]);
+  });
+
   test("deleting a sub-task logs child_deleted on its surviving story", async () => {
     const { asMember, ids, create, rows } = await setup();
     const storyId = await create("story");

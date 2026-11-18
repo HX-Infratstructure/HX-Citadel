@@ -18,16 +18,17 @@ async function otherStoryInProgress(
   ctx: MutationCtx,
   candidate: WipCandidate & { assigneeId: Id<"users"> }
 ): Promise<Doc<"issues"> | null> {
-  const assigned = await ctx.db
+  const inProgress = await ctx.db
     .query("issues")
-    .withIndex("by_assignee", (q) =>
-      q.eq("orgId", candidate.orgId).eq("assigneeId", candidate.assigneeId)
+    .withIndex("by_assignee_kind_status", (q) =>
+      q
+        .eq("orgId", candidate.orgId)
+        .eq("assigneeId", candidate.assigneeId)
+        .eq("kind", "story")
+        .eq("status", "in_progress")
     )
-    .collect();
-  return (
-    assigned.find((issue) => issue._id !== candidate.issueId && isStoryInProgress(issue)) ??
-    null
-  );
+    .take(2);
+  return inProgress.find((issue) => issue._id !== candidate.issueId) ?? null;
 }
 
 async function refusal(

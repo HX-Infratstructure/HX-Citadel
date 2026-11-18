@@ -1,3 +1,6 @@
+import type { Doc } from "../convex/_generated/dataModel";
+import { isGatedStatus } from "./issue-status";
+
 export type IssueKind = "epic" | "feature" | "story" | "subtask";
 
 const KINDS: IssueKind[] = ["epic", "feature", "story", "subtask"];
@@ -15,9 +18,11 @@ export function childKindOf(kind: IssueKind): IssueKind | null {
   return KINDS.find((child) => PARENT_KIND[child] === kind) ?? null;
 }
 
-/** The issues a new issue of this kind may sit under: those one level up. */
-export function validParents<T extends { kind: IssueKind }>(issues: T[], kind: IssueKind): T[] {
-  return issues.filter((issue) => issue.kind === PARENT_KIND[kind]);
+type ParentCandidate = { kind: IssueKind; status: Doc<"issues">["status"] };
+
+/** The issues a new issue of this kind may sit under: those one level up that are not In Review or Done. */
+export function validParents<T extends ParentCandidate>(issues: T[], kind: IssueKind): T[] {
+  return issues.filter((issue) => issue.kind === PARENT_KIND[kind] && !isGatedStatus(issue.status));
 }
 
 /** Whether each level must sit under a parent; the server's rule table and the UI pickers both read it. */
@@ -28,10 +33,18 @@ export const PARENT_REQUIRED: Record<IssueKind, boolean> = {
   subtask: true,
 };
 
+/** Whether each level must belong to a project; the server's rule table and the create form both read it. */
+export const PROJECT_REQUIRED: Record<IssueKind, boolean> = {
+  epic: true,
+  feature: false,
+  story: false,
+  subtask: false,
+};
+
 export type ParentChoices<T> = { parents: T[]; allowsNone: boolean };
 
 /** Where an existing issue may move: its valid parents, and whether it may stand alone; null for a level with no parent. */
-export function parentChoices<T extends { kind: IssueKind }>(
+export function parentChoices<T extends ParentCandidate>(
   issues: T[],
   kind: IssueKind
 ): ParentChoices<T> | null {

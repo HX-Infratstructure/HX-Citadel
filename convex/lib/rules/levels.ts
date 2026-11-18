@@ -1,6 +1,13 @@
 import { Doc, Id } from "../../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../../_generated/server";
-import { childKindOf, formatIssueKey, IssueKind, PARENT_KIND, PARENT_REQUIRED } from "../../../lib/issue-key";
+import {
+  childKindOf,
+  formatIssueKey,
+  IssueKind,
+  PARENT_KIND,
+  PARENT_REQUIRED,
+  PROJECT_REQUIRED,
+} from "../../../lib/issue-key";
 import { GATED_LABELS, isGatedStatus } from "../../../lib/issue-status";
 import { ActivityActor, changedFields, logFieldChanges } from "../activity";
 import { patchIssue } from "../issueVersion";
@@ -17,19 +24,6 @@ export type ResolvedPlacement = {
   projectId?: Id<"projects">;
 };
 
-type ParentRule = {
-  parent: IssueKind | null;
-  parentRequired: boolean;
-  projectRequired: boolean;
-};
-
-const PARENT_RULES: Record<IssueKind, ParentRule> = {
-  epic: { parent: PARENT_KIND.epic, parentRequired: PARENT_REQUIRED.epic, projectRequired: true },
-  feature: { parent: PARENT_KIND.feature, parentRequired: PARENT_REQUIRED.feature, projectRequired: false },
-  story: { parent: PARENT_KIND.story, parentRequired: PARENT_REQUIRED.story, projectRequired: false },
-  subtask: { parent: PARENT_KIND.subtask, parentRequired: PARENT_REQUIRED.subtask, projectRequired: false },
-};
-
 function article(kind: IssueKind): string {
   return kind === "epic" ? "an" : "a";
 }
@@ -39,7 +33,7 @@ function capitalize(text: string): string {
 }
 
 function assertParentKind(kind: IssueKind, parentKind: IssueKind): void {
-  const allowed = PARENT_RULES[kind].parent;
+  const allowed = PARENT_KIND[kind];
   const subject = capitalize(article(kind));
   if (allowed === null) {
     throw new Error(
@@ -83,6 +77,19 @@ function inheritedProject(
   return parent.projectId;
 }
 
+/** A root issue's project must exist in its team's organization. */
+async function assertProjectInOrg(
+  ctx: { db: QueryCtx["db"] },
+  teamId: Id<"teams">,
+  projectId: Id<"projects">
+): Promise<void> {
+  const team = await ctx.db.get(teamId);
+  const project = await ctx.db.get(projectId);
+  if (!team || !project || project.orgId !== team.orgId) {
+    throw new Error("Project not found");
+  }
+}
+
 /**
  * Enforce the level matrix (epic → project, feature → epic, story → feature or none,
  * subtask → story) and return the team and project the issue must carry.
@@ -92,16 +99,19 @@ export async function assertValidParent(
   kind: IssueKind,
   placement: Placement
 ): Promise<ResolvedPlacement> {
-  const rule = PARENT_RULES[kind];
+  const parentKind = PARENT_KIND[kind];
   const subject = capitalize(article(kind));
-  if (rule.projectRequired && !placement.projectId) {
+  if (PROJECT_REQUIRED[kind] && !placement.projectId) {
     throw new Error(`${subject} ${kind} needs a project`);
   }
   if (!placement.parentIssueId) {
-    if (rule.parentRequired && rule.parent) {
+    if (PARENT_REQUIRED[kind] && parentKind) {
       throw new Error(
-        `${subject} ${kind} needs ${article(rule.parent)} ${rule.parent} as its parent`
+        `${subject} ${kind} needs ${article(parentKind)} ${parentKind} as its parent`
       );
+    }
+    if (placement.projectId) {
+      await assertProjectInOrg(ctx, placement.teamId, placement.projectId);
     }
     return { teamId: placement.teamId, projectId: placement.projectId };
   }
@@ -148,7 +158,7 @@ export async function nextSubNumber(
   return highest + 1;
 }
 
-/** Every descendant of an issue, found by walking by_parent. */
+/** Every descendant of an issue, found by walking by_parent; leaf kinds are not queried. */
 async function descendants(
   ctx: { db: QueryCtx["db"] },
   rootId: Id<"issues">
@@ -162,7 +172,8 @@ async function descendants(
       .withIndex("by_parent", (q) => q.eq("parentIssueId", parentId))
       .collect();
     found.push(...children);
-    pending.push(...children.map((child) => child._id));
+    const parents = children.filter((child) => childKindOf(child.kind) !== null);
+    pending.push(...parents.map((child) => child._id));
   }
   return found;
 }
@@ -175,11 +186,11 @@ export async function cascadeProject(
   actor: ActivityActor
 ): Promise<void> {
   for (const descendant of await descendants(ctx, rootId)) {
-    const changes = changedFields(descendant, { projectId });
-    if (changes.length > 0) {
-      await patchIssue(ctx, descendant._id, { projectId });
-      await logFieldChanges(ctx, actor, descendant._id, changes);
+    if (descendant.projectId === projectId) {
+      continue;
     }
+    await patchIssue(ctx, descendant._id, { projectId });
+    await logFieldChanges(ctx, actor, descendant._id, changedFields(descendant, { projectId }));
   }
 }
 

@@ -14,20 +14,20 @@ export default function TeamBacklogPage() {
   const params = useParams<{ orgSlug: string; teamId: string }>();
   const teamId = params.teamId as Id<"teams">;
   const team = useQuery(api.teams.get, { teamId });
-  const issues = useQuery(api.issues.listBacklog, { teamId });
-
-  if (team === undefined || issues === undefined) {
-    return (
-      <div className="flex flex-1 items-center justify-center">
-        <Loader2 className="size-4 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  const issues = useQuery(api.issues.listBacklog, team ? { teamId } : "skip");
 
   if (team === null) {
     return (
       <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
         Team not found.
+      </div>
+    );
+  }
+
+  if (team === undefined || issues === undefined) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <Loader2 className="size-4 animate-spin text-muted-foreground" />
       </div>
     );
   }

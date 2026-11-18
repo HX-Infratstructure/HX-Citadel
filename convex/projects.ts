@@ -252,15 +252,13 @@ export const remove = orgMutation({
   handler: async (ctx, args) => {
     const project = await getOrgProject(ctx, ctx.org._id, args.projectId);
 
-    const issues = await ctx.db
+    const projectIssues = await ctx.db
       .query("issues")
       .withIndex("by_project", (q) => q.eq("projectId", project._id))
       .collect();
+    const issues = projectIssues.filter((issue) => issue.orgId === ctx.org._id);
     assertNoEpics(issues);
     for (const issue of issues) {
-      if (issue.orgId !== ctx.org._id) {
-        continue;
-      }
       await patchIssue(ctx, issue._id, { projectId: undefined });
       await logActivity(ctx, {
         orgId: ctx.org._id,

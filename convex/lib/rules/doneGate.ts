@@ -6,17 +6,27 @@ import { TESTING_SUBTASK_TITLE } from "./testing";
 
 type IssueStatus = Doc<"issues">["status"];
 
-/** Canceled work is out of scope, so a canceled child never holds its parent back. */
+/**
+ * Canceled work is out of scope, so a canceled child never holds its parent back. The one
+ * exception is a story's Complete testing sub-task, which must be done (P2.4).
+ */
 export const CLOSED_STATUSES: ReadonlySet<IssueStatus> = new Set(["done", "canceled"]);
 
 const NO_PROOF = "(no proof link)";
 
-function isOpen(child: Doc<"issues">): boolean {
+function isStoryTesting(parent: Doc<"issues">, child: Doc<"issues">): boolean {
+  return parent.kind === "story" && child.testing === true;
+}
+
+function isOpen(parent: Doc<"issues">, child: Doc<"issues">): boolean {
+  if (isStoryTesting(parent, child)) {
+    return child.status !== "done";
+  }
   return !CLOSED_STATUSES.has(child.status);
 }
 
 function lacksProof(parent: Doc<"issues">, child: Doc<"issues">): boolean {
-  return parent.kind === "story" && child.testing === true && !child.proofUrl;
+  return isStoryTesting(parent, child) && !child.proofUrl;
 }
 
 function issueLabel(teamKey: string, issue: Doc<"issues">, parentNumber?: number): string {
@@ -35,7 +45,7 @@ function missingTestingSubtask(parent: Doc<"issues">, children: Doc<"issues">[])
 
 function blockers(teamKey: string, parent: Doc<"issues">, children: Doc<"issues">[]): string[] {
   const listed = children
-    .filter((child) => isOpen(child) || lacksProof(parent, child))
+    .filter((child) => isOpen(parent, child) || lacksProof(parent, child))
     .map((child) => blockerLabel(teamKey, parent, child));
   if (missingTestingSubtask(parent, children)) {
     listed.push(`${TESTING_SUBTASK_TITLE} ${NO_PROOF}`);
@@ -45,7 +55,8 @@ function blockers(teamKey: string, parent: Doc<"issues">, children: Doc<"issues"
 
 /**
  * In Review and Done need every direct child done (or canceled); a story also needs its
- * Complete testing sub-task to carry a proof link. The refusal lists what is still open.
+ * Complete testing sub-task done, never canceled, with a proof link. The refusal lists
+ * what is still open.
  */
 export async function assertDoneGate(
   ctx: MutationCtx,
