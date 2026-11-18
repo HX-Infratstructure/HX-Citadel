@@ -119,6 +119,20 @@ describe("owner revert from the activity log", () => {
     expect((await s.issue(storyId)).priority).toBe("high");
   });
 
+  test("a field that returned to the same value since is refused", async () => {
+    const s = await setup();
+    const storyId = await s.story("Story");
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, priority: "low" });
+    const earlier = await s.lastChange(storyId, "priority_changed");
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, priority: "high" });
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, priority: "low" });
+    const rowsBefore = (await s.feed(storyId)).length;
+
+    await expect(s.revert(earlier)).rejects.toThrow(/ENG-1 priority has changed since/);
+    expect((await s.issue(storyId)).priority).toBe("low");
+    expect(await s.feed(storyId)).toHaveLength(rowsBefore);
+  });
+
   test("reverting In Review to In Progress is refused by WIP when the assignee holds another", async () => {
     const s = await setup();
     const first = await s.story("First", s.memberId);

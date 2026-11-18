@@ -7,6 +7,7 @@ import {
   createIssue as createIssueWithRules,
   getOrgIssue,
   issueShape,
+  LIST_LIMIT,
   setIssueProof,
   updateIssue as updateIssueWithRules,
 } from "./issues";
@@ -18,7 +19,7 @@ import {
   resolveAgentScope,
 } from "./lib/orgScope";
 import { expireKeys, idempotencyValidator, Idempotency, withIdempotency } from "./lib/idempotency";
-import { assertIfMatch, issueVersion, StaleData } from "./lib/issueVersion";
+import { assertIfMatch, issueVersion } from "./lib/issueVersion";
 import {
   askDecision as askDecisionWithRules,
   decisionValidator,
@@ -54,8 +55,11 @@ async function agentWrite<T>(
   return await withIdempotency(ctx, scope, key, () => write(scope));
 }
 
+/** The issue JSON agents see. A story's sub-task counter is server bookkeeping, so it stays out. */
 function withKey(issue: Doc<"issues">, teamKey: string, parentNumber?: number) {
-  return { ...issue, key: formatIssueKey(teamKey, issue, parentNumber), version: issueVersion(issue) };
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { nextSubNumber, ...fields } = issue;
+  return { ...fields, key: formatIssueKey(teamKey, issue, parentNumber), version: issueVersion(issue) };
 }
 
 async function subtasksOf(ctx: Db, issueId: Id<"issues">): Promise<Doc<"issues">[]> {
@@ -112,7 +116,7 @@ export const createIssue = internalMutation({
     agentWrite(ctx, agentName, idempotency, async (scope) => {
       const team = await findTeamByKey(ctx, scope.org._id, teamKey);
       if (ifMatch !== undefined && parentKey === undefined) {
-        throw new ConvexError<StaleData>({ code: "stale", message: "If-Match needs a parentKey; a new story has no version to check" });
+        throw new ConvexError({ code: "validation", message: "If-Match applies only with parentKey" });
       }
       const parent = parentKey === undefined ? null : (await findIssueByKey(ctx, scope.org._id, parentKey)).issue;
       if (parent !== null && parentKey !== undefined) {
@@ -178,9 +182,6 @@ const listedIssue = v.object({
   parentKey: v.union(v.string(), v.null()),
   version: v.number(),
 });
-
-/** The newest matching issues a list returns; filters apply before the limit. */
-const LIST_LIMIT = 500;
 
 export const listIssues = internalQuery({
   args: {

@@ -72,11 +72,15 @@ describe("internal.agentApi.createIssue", () => {
     await expect(t.mutation(internal.agentApi.createIssue, { ...args, title: "Second" })).rejects.toThrow(WIP_REFUSAL);
   });
 
-  test("If-Match on a story create, with no parent to check, is refused and creates nothing", async () => {
+  test("If-Match on a story create, with no parent to check, is 400 validation and creates nothing", async () => {
     const t = await setup();
-    await expect(
-      t.mutation(internal.agentApi.createIssue, { agentName: "cc1", teamKey: "ENG", title: "Story", ifMatch: 1 })
-    ).rejects.toThrow("If-Match needs a parentKey");
+    const response = await t.fetch("/api/v1/issues", {
+      method: "POST",
+      headers: { "X-Agent-Id": "cc1", "If-Match": '"1"', ...freshKey() },
+      body: JSON.stringify({ teamKey: "ENG", title: "Story" }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ code: "validation", message: "If-Match applies only with parentKey" });
     expect(await t.run(async (ctx) => (await ctx.db.query("issues").collect()).length)).toBe(0);
   });
 });
@@ -173,6 +177,17 @@ describe("REST /api/v1/issues", () => {
     const subtask = await t.fetch("/api/v1/issues/ENG-1.1", { headers: { "X-Agent-Id": "cc1" } });
     expect(subtask.status).toBe(200);
     expect((await subtask.json()).issue).toMatchObject({ key: "ENG-1.1", kind: "subtask" });
+  });
+
+  test("a story's JSON leaves out its sub-task counter", async () => {
+    const t = await setup();
+    await post(t, { teamKey: "ENG", title: "Story" }, "cc1");
+    const story = await t.fetch("/api/v1/issues/ENG-1", { headers: { "X-Agent-Id": "cc1" } });
+    expect((await story.json()).issue).not.toHaveProperty("nextSubNumber");
+    const listed = await t.fetch("/api/v1/issues?team=ENG", { headers: { "X-Agent-Id": "cc1" } });
+    const listedStory = (await listed.json()).issues.find((issue: { key: string }) => issue.key === "ENG-1");
+    expect(listedStory).toMatchObject({ kind: "story" });
+    expect(listedStory).not.toHaveProperty("nextSubNumber");
   });
 
   test("GET needs X-Agent-Id and an unknown key is 404", async () => {

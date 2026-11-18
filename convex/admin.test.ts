@@ -322,7 +322,7 @@ async function seedTeam(
 }
 
 async function setupTeams() {
-  const t = convexTest(schema, modules);
+  const t = convexTest({ schema, modules, transactionLimits: true });
   const seeded = await t.run(async (ctx) => {
     const { orgId, userId } = await seedMirror(ctx, TEAM_ORG);
     const cleared = await seedTeam(ctx, orgId, userId, CLEARED_TEAM);
@@ -397,6 +397,57 @@ describe("admin.clearTeamContent", () => {
     }));
     expect(files.cleared).toBeNull();
     expect(files.kept).not.toBeNull();
+  });
+
+  test("keeps a file that an attachment in the other team still uses", async () => {
+    const { t, cleared, kept } = await setupTeams();
+    const keptAttachmentId = await t.run(async (ctx) => {
+      const keptStory = await ctx.db.get(kept.storyId);
+      return ctx.db.insert("attachments", {
+        orgId: keptStory!.orgId,
+        issueId: kept.storyId,
+        storageId: cleared.storageId,
+        fileName: "shared.txt",
+        fileType: "text/plain",
+        fileSize: 3,
+        uploadedBy: keptStory!.creatorId,
+      });
+    });
+
+    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+
+    const after = await t.run(async (ctx) => ({
+      file: await ctx.db.system.get(cleared.storageId),
+      keptAttachment: await ctx.db.get(keptAttachmentId),
+    }));
+    expect(after.file).not.toBeNull();
+    expect(after.keptAttachment).not.toBeNull();
+  });
+
+  test("refuses a team too large for one transaction and changes nothing", async () => {
+    const { t, cleared } = await setupTeams();
+    await t.run(async (ctx) => {
+      const story = await ctx.db.get(cleared.storyId);
+      for (let number = 10; number < 610; number++) {
+        await ctx.db.insert("issues", {
+          orgId: story!.orgId,
+          teamId: cleared.teamId,
+          status: "todo",
+          priority: "none",
+          creatorId: story!.creatorId,
+          kind: "story",
+          number,
+          title: `bulk ${number}`,
+          sortOrder: number,
+        });
+      }
+    });
+    const before = await snapshot(t, [...CONTENT_TABLES, ...MIRROR_TABLES]);
+
+    await expect(
+      t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM })
+    ).rejects.toThrow("Too many index ranges read in a single function execution");
+    expect(await snapshot(t, [...CONTENT_TABLES, ...MIRROR_TABLES])).toEqual(before);
   });
 
   test("finds the team by a lower-case, padded key", async () => {

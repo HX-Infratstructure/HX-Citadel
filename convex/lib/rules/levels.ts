@@ -145,17 +145,31 @@ export async function assertParentOpen(
   );
 }
 
-/** Next subtask number under a story. Mutations are serializable, so max + 1 is safe. */
-export async function nextSubNumber(
-  ctx: { db: QueryCtx["db"] },
-  storyId: Id<"issues">
-): Promise<number> {
+/** A story written before its counter existed resumes after its highest current subtask. */
+async function legacySubNumber(ctx: { db: QueryCtx["db"] }, storyId: Id<"issues">): Promise<number> {
   const subtasks = await ctx.db
     .query("issues")
     .withIndex("by_parent", (q) => q.eq("parentIssueId", storyId))
     .collect();
-  const highest = Math.max(0, ...subtasks.map((subtask) => subtask.subNumber ?? 0));
-  return highest + 1;
+  return Math.max(0, ...subtasks.map((subtask) => subtask.subNumber ?? 0)) + 1;
+}
+
+/**
+ * Claim the next subtask number under a story. The story keeps a counter, so a key a moved or
+ * deleted subtask held is never handed out again. The counter is a bookkeeping field, so claiming
+ * a number does not move the story's version.
+ */
+export async function nextSubNumber(
+  ctx: { db: MutationCtx["db"] },
+  storyId: Id<"issues">
+): Promise<number> {
+  const story = await ctx.db.get(storyId);
+  if (story === null) {
+    throw new Error("Parent issue not found");
+  }
+  const subNumber = story.nextSubNumber ?? (await legacySubNumber(ctx, storyId));
+  await patchIssue(ctx, story, { nextSubNumber: subNumber + 1 });
+  return subNumber;
 }
 
 /** Every descendant of an issue, found by walking by_parent; leaf kinds are not queried. */
@@ -189,7 +203,7 @@ export async function cascadeProject(
     if (descendant.projectId === projectId) {
       continue;
     }
-    await patchIssue(ctx, descendant._id, { projectId });
+    await patchIssue(ctx, descendant, { projectId });
     await logFieldChanges(ctx, actor, descendant._id, changedFields(descendant, { projectId }));
   }
 }

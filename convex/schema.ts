@@ -137,6 +137,8 @@ export default defineSchema({
     number: v.optional(v.number()),
     /** Per-story sequence number, subtasks only, displayed as KEY-number.subNumber */
     subNumber: v.optional(v.number()),
+    /** Stories only: the subNumber the next subtask claims, so a moved or deleted subtask's key is never reused */
+    nextSubNumber: v.optional(v.number()),
     title: v.string(),
     description: v.optional(v.string()),
     status: issueStatusValidator,

@@ -268,7 +268,7 @@ export const remove = orgMutation({
       if (issue.orgId !== ctx.org._id) {
         continue;
       }
-      await patchIssue(ctx, issue._id, { cycleId: undefined });
+      await patchIssue(ctx, issue, { cycleId: undefined });
       await logActivity(ctx, {
         orgId: ctx.org._id,
         issueId: issue._id,

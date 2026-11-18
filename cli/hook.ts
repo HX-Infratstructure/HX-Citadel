@@ -16,6 +16,8 @@ const NOT_KEY_CHARACTER = /[^A-Za-z0-9.-]+/;
 const TRAILING_DOTS = /\.+$/;
 const WARNING = "hx-citadel hook: warning:";
 const HOOK_NAME = "pre-push";
+/** The whole pre-push run waits at most this long for the tracker; comments still unanswered then are warnings. */
+const HOOK_DEADLINE_MS = 5_000;
 const CLI_PATH = path.resolve(__dirname, "hx-citadel.ts");
 const TSX_PATH = path.resolve(__dirname, "..", "node_modules", ".bin", "tsx");
 
@@ -91,9 +93,9 @@ function pushedComments(git: GitRepo, refs: PushedRef[], remoteUrl: string, io: 
   return [...new Set(shas)].flatMap((sha) => commitComments(git, remoteUrl, sha));
 }
 
-async function post(api: CitadelApi, { key, sha, body }: CommitComment, io: Io): Promise<void> {
+async function post(api: CitadelApi, { key, sha, body }: CommitComment, deadline: AbortSignal, io: Io): Promise<void> {
   try {
-    await api.write("POST", issuePath(key, "comments"), { body }, { idempotencyKey: commitIdempotencyKey(sha, key) });
+    await api.write("POST", issuePath(key, "comments"), { body }, { idempotencyKey: commitIdempotencyKey(sha, key), signal: deadline });
     io.err(`hx-citadel hook: ${key} <- commit ${sha.slice(0, SHORT_SHA_LENGTH)}`);
   } catch (error) {
     io.err(`${WARNING} ${key} commit ${sha.slice(0, SHORT_SHA_LENGTH)}: ${errorLine(error)}`);
@@ -117,8 +119,9 @@ async function prePush(argv: string[], env: Env, io: Io): Promise<number> {
     const api = connect(options.agent, env);
     const git = new GitRepo(options.repo ?? process.cwd());
     const comments = pushedComments(git, pushedRefs(input), positionals[1] ?? git.originUrl(), io);
+    const deadline = AbortSignal.timeout(HOOK_DEADLINE_MS);
     for (const comment of comments) {
-      await post(api, comment, io);
+      await post(api, comment, deadline, io);
     }
   } catch (error) {
     io.err(`${WARNING} ${errorLine(error)}; the push continues`);

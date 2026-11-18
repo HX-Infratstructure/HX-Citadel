@@ -259,7 +259,7 @@ export const remove = orgMutation({
     const issues = projectIssues.filter((issue) => issue.orgId === ctx.org._id);
     assertNoEpics(issues);
     for (const issue of issues) {
-      await patchIssue(ctx, issue._id, { projectId: undefined });
+      await patchIssue(ctx, issue, { projectId: undefined });
       await logActivity(ctx, {
         orgId: ctx.org._id,
         issueId: issue._id,

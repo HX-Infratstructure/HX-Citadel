@@ -210,6 +210,18 @@ describe("issue levels", () => {
     expect((await asMember.query(api.issues.get, { issueId: moving }))?.subNumber).toBe(3);
   });
 
+  test("never reuses the key of a subtask moved away from its story", async () => {
+    const { asMember, create } = await setup();
+    const storyA = await create("story");
+    const storyB = await create("story");
+    const moving = await create("subtask", { parentIssueId: storyA });
+
+    await asMember.mutation(api.issueRelations.setParent, { issueId: moving, parentIssueId: storyB });
+    const next = await create("subtask", { parentIssueId: storyA });
+
+    expect((await asMember.query(api.issues.get, { issueId: next }))?.subNumber).toBe(3);
+  });
+
   test.each([
     ["without a project", false],
     ["with a project", true],
@@ -298,8 +310,10 @@ describe("issue levels", () => {
   });
 
   test("moves an epic's project without querying subtasks for children", async () => {
-    // About 615 reads: 202 child queries plus one patchIssue read per descendant (401). Querying subtasks for children adds 200.
-    const { t, asMember, tree, insertOtherProject } = await setup({ databaseQueries: 700 });
+    // 209 reads, measured: 202 child queries plus 7 of the update's own. The cascade hands patchIssue the rows it
+    // loaded, so the 401 descendants add none. Querying subtasks for children would add 200 (409), re-reading each
+    // descendant 401 (610); 300 refuses both.
+    const { t, asMember, tree, insertOtherProject } = await setup({ databaseQueries: 300 });
     const { epic, feature, story } = await tree();
     await t.run(async (ctx) => {
       const shared = (await ctx.db.get(story))!;

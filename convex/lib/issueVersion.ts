@@ -11,25 +11,31 @@ export function issueVersion(issue: Doc<"issues">): number {
 
 type IssueFields = Partial<Omit<Doc<"issues">, "_id" | "_creationTime" | "version">>;
 
+/** Fields the server keeps for itself. No client reads or If-Match guards them, so they never move the version. */
+export const BOOKKEEPING_FIELDS: ReadonlySet<keyof IssueFields> = new Set(["nextSubNumber"]);
+
 /**
- * The only place an issue row is patched, so every change bumps its version by one.
- * A patch that changes no field writes nothing, so it cannot make another writer's If-Match stale.
+ * The only place an issue row is patched, so every change bumps its version by one, unless it
+ * changes only bookkeeping fields. A patch that changes no field writes nothing, so it cannot make
+ * another writer's If-Match stale. A caller that already holds the row passes it and saves a read.
  */
 export async function patchIssue(
   ctx: { db: MutationCtx["db"] },
-  issueId: Id<"issues">,
+  issueOrId: Doc<"issues"> | Id<"issues">,
   fields: IssueFields
 ): Promise<number> {
-  const issue = await ctx.db.get(issueId);
+  const issue = typeof issueOrId === "string" ? await ctx.db.get(issueOrId) : issueOrId;
   if (issue === null) {
-    throw new Error(`Issue ${issueId} not found`);
+    throw new Error(`Issue ${issueOrId} not found`);
   }
   const keys = Object.keys(fields) as (keyof IssueFields)[];
-  if (keys.every((key) => fields[key] === issue[key])) {
+  const changed = keys.filter((key) => fields[key] !== issue[key]);
+  if (changed.length === 0) {
     return issueVersion(issue);
   }
-  const version = issueVersion(issue) + 1;
-  await ctx.db.patch(issueId, { ...fields, version });
+  const bumps = changed.some((key) => !BOOKKEEPING_FIELDS.has(key));
+  const version = bumps ? issueVersion(issue) + 1 : issueVersion(issue);
+  await ctx.db.patch(issue._id, { ...fields, version });
   return version;
 }
 

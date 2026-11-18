@@ -45,6 +45,7 @@ export const issueShape = {
   type: v.optional(issueTypeValidator),
   number: v.optional(v.number()),
   subNumber: v.optional(v.number()),
+  nextSubNumber: v.optional(v.number()),
   title: v.string(),
   description: v.optional(v.string()),
   status: issueStatusValidator,
@@ -75,6 +76,9 @@ export async function getOrgIssue(
   return issue;
 }
 
+/** The most issues one list returns, newest first. */
+export const LIST_LIMIT = 500;
+
 /** A team's issues, newest first, inside the caller's workspace. */
 export async function listTeamIssues(
   ctx: { db: QueryCtx["db"] },
@@ -89,7 +93,7 @@ export async function listTeamIssues(
     .query("issues")
     .withIndex("by_team", (q) => q.eq("teamId", teamId))
     .order("desc")
-    .take(500);
+    .take(LIST_LIMIT);
 }
 
 export const listByTeam = orgQuery({
@@ -469,6 +473,17 @@ const REVERT_ARGS: Record<string, (ctx: MutationCtx, text: string | undefined) =
   assignee: (ctx, text) => ({ assigneeId: assigneeOf(ctx, text) }),
 };
 
+/** The newest activity row that records a change to `field` on the issue. */
+async function latestFieldChange(ctx: MutationCtx, issueId: Id<"issues">, field: string) {
+  const rows = ctx.db.query("activity").withIndex("by_issue", (q) => q.eq("issueId", issueId)).order("desc");
+  for await (const row of rows) {
+    if (row.field === field) {
+      return row;
+    }
+  }
+  return null;
+}
+
 /** Apply an activity row's old value back through `updateIssue`, logged as one `reverted` row. */
 export const revertChange = orgAdminMutation({
   args: { activityId: v.id("activity") },
@@ -483,7 +498,8 @@ export const revertChange = orgAdminMutation({
       throw new Error("Only status, assignee, priority and title changes can be reverted");
     }
     const issue = await getOrgIssue(ctx, ctx.org._id, change.issueId);
-    if (fieldText(issue, change.field) !== change.newValue) {
+    const latest = await latestFieldChange(ctx, issue._id, change.field);
+    if (latest?._id !== change._id || fieldText(issue, change.field) !== change.newValue) {
       const team = await ctx.db.get(issue.teamId);
       const key = team ? formatIssueKey(team.key, issue) : null;
       throw new Error(`${key ?? issue.title} ${change.field} has changed since; revert the latest change instead`);

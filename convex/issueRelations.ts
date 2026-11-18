@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { formatIssueKey } from "../lib/issue-key";
 import { Doc, Id } from "./_generated/dataModel";
-import { QueryCtx } from "./_generated/server";
+import { MutationCtx, QueryCtx } from "./_generated/server";
 import { getOrgIssue } from "./issues";
 import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
@@ -322,7 +322,7 @@ export const hierarchy = orgQuery({
 
 /** A subtask moved to another story takes the next number there, so keys stay unique. */
 async function renumberedSubtask(
-  ctx: { db: QueryCtx["db"] },
+  ctx: { db: MutationCtx["db"] },
   kind: Doc<"issues">["kind"],
   parentIssueId: Id<"issues"> | null
 ): Promise<Pick<Doc<"issues">, "subNumber">> {

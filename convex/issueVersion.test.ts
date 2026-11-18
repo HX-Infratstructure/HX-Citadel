@@ -5,6 +5,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
+import { patchIssue } from "./lib/issueVersion";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -109,6 +110,15 @@ describe("issues.version", () => {
     expect(await versionOf(t, "ENG-1")).toBe(1);
   });
 
+  test("a patch that changes a real field with the sub-task counter still bumps by one", async () => {
+    const t = await setup();
+    await t.run(async (ctx) => {
+      const story = (await ctx.db.query("issues").collect()).find((issue) => issue.kind === "story")!;
+      expect(await patchIssue(ctx, story, { nextSubNumber: 9, title: "Renamed" })).toBe(2);
+    });
+    expect(await versionOf(t, "ENG-1")).toBe(2);
+  });
+
   test("GET sends the ETag of the issue's version", async () => {
     const t = await setup();
     expect((await send(t, "GET", "/ENG-1")).headers.get("ETag")).toBe('"1"');
@@ -116,6 +126,23 @@ describe("issues.version", () => {
 });
 
 describe("If-Match", () => {
+  test("an If-Match read from a moved sub-task never writes the next sub-task", async () => {
+    const t = await setup();
+    await send(t, "POST", "", { teamKey: "ENG", title: "Other story" });
+    await send(t, "POST", "/ENG-1/subtasks", { title: "Moved away" });
+    expect(await versionOf(t, "ENG-1.2")).toBe(1);
+    await t.run(async (ctx) => {
+      const issues = await ctx.db.query("issues").collect();
+      const moved = issues.find((issue) => issue.title === "Moved away")!;
+      const other = issues.find((issue) => issue.title === "Other story")!;
+      await ctx.db.patch(moved._id, { parentIssueId: other._id, subNumber: 2, version: 2 });
+    });
+    await send(t, "POST", "/ENG-1/subtasks", { title: "Replacement" });
+    const pending = await send(t, "PATCH", "/ENG-1.2", { title: "Meant for the moved one" }, { "If-Match": '"1"' });
+    expect(pending.status).toBe(404);
+    expect((await (await send(t, "GET", "/ENG-1.3")).json()).issue).toMatchObject({ title: "Replacement", version: 1 });
+  });
+
   test("a stale If-Match is 412 stale and the row is unchanged", async () => {
     const t = await setup();
     await send(t, "PATCH", "/ENG-1", { title: "Second" });
@@ -225,6 +252,6 @@ describe("one home for issue patches", () => {
       [...readFileSync(join(__dirname, file), "utf8").matchAll(/ctx\.db\.patch\(([^,]+),/g)].map((match) => ({ file, id: match[1] }))
     );
     const issuePatches = patches.filter((patch) => !NON_ISSUE_IDS.includes(patch.id));
-    expect(issuePatches).toEqual([{ file: join("lib", "issueVersion.ts"), id: "issueId" }]);
+    expect(issuePatches).toEqual([{ file: join("lib", "issueVersion.ts"), id: "issue._id" }]);
   });
 });

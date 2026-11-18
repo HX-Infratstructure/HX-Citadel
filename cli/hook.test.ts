@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -96,6 +98,7 @@ describe("hx-citadel hook pre-push", () => {
   beforeEach(() => stubFetch());
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     repos.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true }));
   });
 
@@ -169,6 +172,51 @@ describe("hx-citadel hook pre-push", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(result.err).toContain("not_found: No such story");
   });
+
+  it("stops waiting at the hook deadline when the API never answers, warns about each comment and exits 0", async () => {
+    const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => realTimeout(50));
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init.signal;
+          if (signal?.aborted) {
+            reject(signal.reason);
+          }
+          signal?.addEventListener("abort", () => reject(signal.reason));
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { dir, base, second } = pushedRepo();
+    const result = await hook(["pre-push", "--repo", dir], `refs/heads/main ${second} refs/heads/main ${base}\n`);
+
+    expect(result.code).toBe(0);
+    expect(timeout).toHaveBeenCalledExactlyOnceWith(5_000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.err.match(/warning: .*server_error: .*did not answer/g)).toHaveLength(3);
+  }, 2_000);
+
+  it("stops waiting for a response body the API starts and never finishes, over a real fetch", async () => {
+    vi.unstubAllGlobals();
+    const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(() => realTimeout(100));
+    const server = createServer((_request, response) => {
+      response.writeHead(201, { "Content-Type": "application/json" });
+      response.write('{"comment":');
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const { dir, base, second } = pushedRepo();
+      const result = await hook(["pre-push", "--repo", dir], `refs/heads/main ${second} refs/heads/main ${base}\n`, { ...ENV, HX_CITADEL_API: `http://127.0.0.1:${port}` });
+
+      expect(result.code).toBe(0);
+      expect(result.err.match(/warning: .*server_error: .*did not answer/g)).toHaveLength(3);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 2_000);
 
   it("warns and exits 0 without an agent or base URL, sending nothing", async () => {
     const fetchMock = stubFetch();

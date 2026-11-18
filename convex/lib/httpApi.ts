@@ -111,7 +111,7 @@ const ERROR_MAP: { pattern: RegExp; status: number; code: string }[] = [
 ];
 
 /** Typed `ConvexError` codes the shared write logic throws, by HTTP status. */
-const TYPED_ERRORS: Record<string, number> = { stale: 412, idempotency_key_reused: 409, [RULE_REFUSED]: 409 };
+const TYPED_ERRORS: Record<string, number> = { validation: 400, stale: 412, idempotency_key_reused: 409, [RULE_REFUSED]: 409 };
 
 function typedFailure(error: unknown): HttpFailure | null {
   if (!(error instanceof ConvexError)) {

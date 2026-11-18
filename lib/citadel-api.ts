@@ -16,7 +16,8 @@ export class CitadelApiError extends Error {
 }
 
 export type ApiBody = Record<string, unknown>;
-export type WriteOptions = { idempotencyKey: string; ifMatch?: number };
+/** `signal` is the caller's deadline; once it fires, the call refuses with `server_error`. */
+export type WriteOptions = { idempotencyKey: string; ifMatch?: number; signal?: AbortSignal };
 type Query = Record<string, string | undefined>;
 
 export function issuePath(key?: string, action?: IssueAction): string {
@@ -40,17 +41,28 @@ export class CitadelApi {
     if (options.ifMatch !== undefined) {
       headers["If-Match"] = `"${options.ifMatch}"`;
     }
-    return this.send(method, path, {}, headers, JSON.stringify(body));
+    return this.send(method, path, {}, headers, JSON.stringify(body), options.signal);
   }
 
-  private async send(method: string, path: string, query: Query, headers: Record<string, string>, body?: string): Promise<ApiBody> {
+  private async send(method: string, path: string, query: Query, headers: Record<string, string>, body?: string, signal?: AbortSignal): Promise<ApiBody> {
+    try {
+      return await this.exchange(method, path, query, headers, body, signal);
+    } catch (error) {
+      if (signal?.aborted) {
+        throw new CitadelApiError("server_error", `The REST API did not answer ${method} ${path} before the deadline (${errorMessage(signal.reason, "aborted")})`);
+      }
+      throw error;
+    }
+  }
+
+  private async exchange(method: string, path: string, query: Query, headers: Record<string, string>, body?: string, signal?: AbortSignal): Promise<ApiBody> {
     const url = new URL(path, this.baseUrl ?? siteUrl());
     for (const [name, value] of Object.entries(query)) {
       if (value !== undefined) {
         url.searchParams.set(name, value);
       }
     }
-    const response = await fetch(url.toString(), { method, headers: { ...headers, [AGENT_HEADER]: this.agentId }, body });
+    const response = await fetch(url.toString(), { method, headers: { ...headers, [AGENT_HEADER]: this.agentId }, body, signal });
     const payload: unknown = await response.json().catch(() => null);
     if (!response.ok) {
       throw apiError(response.status, payload);

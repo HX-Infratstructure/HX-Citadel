@@ -51,6 +51,20 @@ describe("CitadelApi", () => {
     expect(headers.has("If-Match")).toBe(false);
   });
 
+  it("maps a write the API does not answer before the caller's signal fires to server_error", async () => {
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(init.signal?.reason)))
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const signal = AbortSignal.timeout(20);
+    const result = await toolResult(() => new CitadelApi("cc1").write("POST", issuePath("HX-1", "comments"), { body: "b" }, { idempotencyKey: "k-4", signal }));
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result).code).toBe("server_error");
+    expect(textOf(result).message).toMatch(/did not answer POST \/api\/v1\/issues\/HX-1\/comments before the deadline/);
+    expect((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].signal).toBe(signal);
+  }, 2_000);
+
   it.each([
     ["an HTML page", "<html>proxy</html>"],
     ["JSON null", "null"],
