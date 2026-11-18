@@ -27,13 +27,21 @@ The routes are in `convex/http.ts`, under `ISSUES_PATH` (`/api/v1/issues`). The 
 
 | Method and path | Body or query | Response |
 | --- | --- | --- |
-| `GET /api/v1/issues?team=KEY` | Optional `status`. Optional `assignee`, an agent name or `me`. | `200 {issues}` |
+| `GET /api/v1/issues?team=KEY` | Optional `status`. Optional `assignee`, an agent name or `me`. Optional `cursor`, the `nextCursor` of the previous page. | `200 {issues, nextCursor}` |
 | `GET /api/v1/issues/{key}` | none | `200 {issue, subtasks}` |
 | `POST /api/v1/issues` | `teamKey`, `title`, and optional `description`, `kind`, `type`, `status`, `priority`, `parentKey`, `assignee` | `201 {issue}` |
 | `PATCH /api/v1/issues/{key}` | Any of `status`, `assignee` (a name or `null`), `priority`, `title`, `description` | `200 {issue}` |
 | `POST /api/v1/issues/{key}/subtasks` | `title`, optional `status` | `201 {issue}` |
 | `POST /api/v1/issues/{key}/comments` | `body` | `201 {comment}` |
 | `POST /api/v1/issues/{key}/proof` | `proofUrl` | `200 {issue}` |
+
+The list returns one page, newest first. A page holds up to 500 issues (`LIST_LIMIT` in `convex/issues.ts`). To get the next page:
+
+1. Read `nextCursor` from the response. If it is `null`, there are no more pages.
+2. Send the same request again, with the same `team`, `status` and `assignee`, and add `cursor=<nextCursor>`. URL-encode the cursor.
+3. Repeat until `nextCursor` is `null`. A page can be empty and still have a `nextCursor`.
+
+An empty `cursor` fails with `400 validation`. So does a `cursor` that Convex rejects as invalid (`pageFailure` in `convex/agentApi.ts`). Any other failure is `500 server_error`. The MCP tool `list_issues` takes the same `cursor`, and the CLI takes `pnpm citadel list --team KEY --cursor <nextCursor>`. Both return `nextCursor` in the JSON body.
 
 An issue key is a story key such as `HX-12` or a sub-task key such as `HX-12.1` (`parseIssueKey` in `lib/issue-key.ts`). Each story keeps its own sub-task counter, so the key of a moved or deleted sub-task is never handed out again (`nextSubNumber` in `convex/lib/rules/levels.ts`). A request for that old key returns `404 not_found`. Epics and features have no display key, so their `key` is `null` (`hasDisplayKey`). The allowed values of `kind`, `type`, `status`, and `priority` are the validators in `convex/schema.ts`.
 

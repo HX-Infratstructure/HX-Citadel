@@ -1,7 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { ConvexError } from "convex/values";
 import { internal } from "./_generated/api";
+import { pageFailure } from "./agentApi";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -131,6 +133,86 @@ describe("internal.agentApi.listIssues past the newest 500 issues", () => {
     });
     const { issues } = await t.query(internal.agentApi.listIssues, { agentName: "cc1", teamKey: "ENG" });
     expect(issues).toContainEqual(expect.objectContaining({ title: "Cross-org sub-task", key: null, parentKey: null }));
+  });
+
+  type Page = { issues: { _id: string; status: string; assignee: string | null }[]; nextCursor: string | null };
+  const page = async (t: T, query: string): Promise<Page> => {
+    const response = await t.fetch(`/api/v1/issues?team=ENG${query}`, { headers: { "X-Agent-Id": "cc1" } });
+    expect(response.status).toBe(200);
+    return await response.json();
+  };
+
+  test("GET pages 501 issues as 500 with a nextCursor, then the last one with nextCursor null", async () => {
+    const t = await setup();
+    await t.mutation(internal.agentApi.createIssue, { agentName: "cc1", teamKey: "ENG", title: "Story" });
+    await fill(t, 499);
+    const first = await page(t, "");
+    expect(first.issues).toHaveLength(500);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    const second = await page(t, `&cursor=${encodeURIComponent(first.nextCursor!)}`);
+    expect(second.issues).toHaveLength(1);
+    expect(second.nextCursor).toBeNull();
+    expect(new Set([...first.issues, ...second.issues].map((issue) => issue._id)).size).toBe(501);
+  });
+
+  test("GET keeps the status and assignee filters on every page", async () => {
+    const t = await setup();
+    await t.mutation(internal.agentApi.createIssue, { agentName: "cc1", teamKey: "ENG", title: "Mine", assignee: "cc1" });
+    const expected = await t.run(async (ctx) => {
+      const { orgId, teamId, creatorId, assigneeId } = (await ctx.db.query("issues").first())!;
+      const shapes = [{ status: "todo", assigneeId }, { status: "todo" }, { status: "done", assigneeId }] as const;
+      for (let i = 0; i < 1503; i++) {
+        const filler = { orgId, teamId, creatorId, kind: "story", number: 1000 + i, sortOrder: i, title: "Filler", priority: "none" } as const;
+        await ctx.db.insert("issues", { ...filler, ...shapes[i % 3] });
+      }
+      const all = await ctx.db.query("issues").collect();
+      return all.filter((issue) => issue.status === "todo" && issue.assigneeId === assigneeId).map((issue) => issue._id);
+    });
+    const filters = "&status=todo&assignee=me";
+    let next = await page(t, filters);
+    expect(next.issues).toHaveLength(500);
+    const listed = [...next.issues];
+    for (let pages = 1; typeof next.nextCursor === "string" && pages < 10; pages++) {
+      next = await page(t, `${filters}&cursor=${encodeURIComponent(next.nextCursor)}`);
+      listed.push(...next.issues);
+    }
+    expect(next.nextCursor).toBeNull();
+    expect(expected.length).toBeGreaterThan(500);
+    expect(listed.every((issue) => issue.status === "todo" && issue.assignee === "cc1")).toBe(true);
+    expect(listed.map((issue) => issue._id).sort()).toEqual([...expected].sort());
+  });
+
+  test("GET with an empty cursor is 400 validation", async () => {
+    const t = await setup();
+    const response = await t.fetch("/api/v1/issues?team=ENG&cursor=", { headers: { "X-Agent-Id": "cc1" } });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ code: "validation", message: "cursor cannot be empty" });
+  });
+});
+
+describe("pageFailure, the .paginate error mapping", () => {
+  const thrown = (run: () => never) => {
+    try {
+      run();
+    } catch (error) {
+      return error;
+    }
+  };
+
+  test("a sent cursor that Convex names (InvalidCursor) is a validation refusal", () => {
+    const error = thrown(() => pageFailure(new Error("InvalidCursor: the cursor could not be parsed"), "c1"));
+    expect(error).toBeInstanceOf(ConvexError);
+    expect((error as ConvexError<{ code: string }>).data.code).toBe("validation");
+  });
+
+  test("any other failure, such as a read limit, is rethrown unchanged and stays a 500", () => {
+    const readLimit = new Error("Too many documents read in a single function execution");
+    expect(thrown(() => pageFailure(readLimit, "c1"))).toBe(readLimit);
+  });
+
+  test("a cursor error with no cursor sent is rethrown unchanged", () => {
+    const invalidCursor = new Error("InvalidCursor");
+    expect(thrown(() => pageFailure(invalidCursor, undefined))).toBe(invalidCursor);
   });
 });
 
@@ -419,7 +501,7 @@ describe("REST P3.2b routes", () => {
     await post(t, { teamKey: "ENG", title: "Story" }, "cc1");
     const fresh = await send(t, "GET", "?team=ENG&assignee=me", undefined, { "X-Agent-Id": "newbie" });
     expect(fresh.status).toBe(200);
-    expect(await fresh.json()).toEqual({ issues: [] });
+    expect(await fresh.json()).toEqual({ issues: [], nextCursor: null });
     expect(await failure(await send(t, "GET", "?team=ENG&assignee=nobody"))).toEqual({ status: 404, code: "not_found" });
   });
 });

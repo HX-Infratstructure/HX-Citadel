@@ -104,7 +104,8 @@ function assigneeValue(assignee: string | undefined): string | null | undefined 
 }
 
 export const commands = {
-  list: ({ api }, args) => api.get(issuePath(), { team: required(args, "team", "--team KEY"), status: args.status, assignee: args.assignee }),
+  list: ({ api }, args) =>
+    api.get(issuePath(), { team: required(args, "team", "--team KEY"), status: args.status, assignee: args.assignee, cursor: args.cursor }),
 
   get: ({ api }, args) => api.get(issuePath(required(args, "key", "KEY"))),
 

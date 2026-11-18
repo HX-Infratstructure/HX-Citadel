@@ -48,6 +48,15 @@ describe("hx-citadel", () => {
     expect(JSON.parse(result.out)).toEqual({ issues: [{ key: "HX-1" }] });
   });
 
+  it("list --cursor asks for the next page and prints its nextCursor", async () => {
+    const fetchMock = stubFetch({ status: 200, body: { issues: [{ key: "HX-1" }], nextCursor: "c2" } });
+    const result = await cli(["list", "--team", "HX", "--cursor", "c1"]);
+
+    expect(result.code).toBe(0);
+    expect(call(fetchMock, 0).url).toBe(`${API}/api/v1/issues?team=HX&cursor=c1`);
+    expect(JSON.parse(result.out)).toEqual({ issues: [{ key: "HX-1" }], nextCursor: "c2" });
+  });
+
   it("get reads one issue by key", async () => {
     const fetchMock = stubFetch({ status: 200, body: issue, etag: '"7"' });
     const result = await cli(["get", "HX-1.2"]);

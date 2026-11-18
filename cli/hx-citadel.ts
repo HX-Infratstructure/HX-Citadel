@@ -12,7 +12,11 @@ const flag = { type: "boolean" } as const;
 const COMMON: Options = { agent: text, "idempotency-key": text, "no-if-match": flag, json: flag, help: flag };
 
 const SPECS: Record<CommandName, Spec> = {
-  list: { usage: "list --team KEY [--status S] [--assignee NAME|me]", positionals: [], options: { team: text, status: text, assignee: text } },
+  list: {
+    usage: "list --team KEY [--status S] [--assignee NAME|me] [--cursor NEXT_CURSOR]",
+    positionals: [],
+    options: { team: text, status: text, assignee: text, cursor: text },
+  },
   get: { usage: "get KEY", positionals: ["key"], options: {} },
   create: {
     usage: "create --team KEY --title T [--kind K] [--type T] [--status S] [--priority P] [--parent KEY] [--assignee NAME]",

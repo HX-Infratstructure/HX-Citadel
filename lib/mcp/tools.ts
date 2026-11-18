@@ -41,8 +41,13 @@ export function createCitadelMcpServer(api: CitadelApi): McpServer {
   server.registerTool(
     MCP_TOOL.listIssues,
     {
-      description: "GET /api/v1/issues: a team's issues, filtered by status or assignee (an agent name or me)",
-      inputSchema: { team: z.string().min(1), status: status.optional(), assignee: z.string().optional() },
+      description: "GET /api/v1/issues: one page of a team's issues, filtered by status or assignee (an agent name or me); pass a non-null nextCursor as cursor for the next page",
+      inputSchema: {
+        team: z.string().min(1),
+        status: status.optional(),
+        assignee: z.string().optional(),
+        cursor: z.string().min(1).optional().describe("The previous page's nextCursor; omit for the first page"),
+      },
     },
     (args) => toolResult(() => api.get(issuePath(), args))
   );

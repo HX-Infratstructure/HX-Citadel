@@ -74,10 +74,10 @@ async function createIssueRoute(ctx: ActionCtx, _request: Request, { body, field
   return issueJson(201, await ctx.runMutation(internal.agentApi.createIssue, args));
 }
 
-/** GET /api/v1/issues?team=KEY&status=&assignee= (an agent name or `me`) */
+/** GET /api/v1/issues?team=KEY&status=&assignee= (an agent name or `me`)&cursor= (the previous page's nextCursor) */
 async function listIssuesRoute(ctx: ActionCtx, request: Request, agentName: string): Promise<Response> {
   const query = new URL(request.url).searchParams;
-  const filters = Object.fromEntries(["status", "assignee"].flatMap((name) => (query.has(name) ? [[name, query.get(name)]] : [])));
+  const filters = Object.fromEntries(["status", "assignee", "cursor"].flatMap((name) => (query.has(name) ? [[name, query.get(name)]] : [])));
   const args = bodyArgs<FunctionArgs<typeof internal.agentApi.listIssues>>(filters, { agentName, teamKey: query.get("team") ?? undefined });
   return json(200, await ctx.runQuery(internal.agentApi.listIssues, args));
 }

@@ -176,6 +176,14 @@ async function assigneeFilter(ctx: QueryCtx, orgId: Id<"organizations">, agentNa
   return await resolveAgentAssignee(ctx, orgId, assignee);
 }
 
+/** A failed `.paginate` is the client's only when it sent a cursor and Convex names the cursor (`InvalidCursor`); anything else stays a 500. */
+export function pageFailure(error: unknown, cursor: string | undefined): never {
+  if (cursor !== undefined && error instanceof Error && /cursor/i.test(error.message)) {
+    invalid("cursor must be the nextCursor of an earlier page of this list");
+  }
+  throw error;
+}
+
 const listedIssue = v.object({
   ...issueShape,
   key: v.union(v.string(), v.null()),
@@ -190,20 +198,25 @@ export const listIssues = internalQuery({
     teamKey: v.string(),
     status: v.optional(issueStatusValidator),
     assignee: v.optional(v.string()),
+    /** The `nextCursor` of the previous page; absent for the first page. */
+    cursor: v.optional(v.string()),
   },
-  returns: v.object({ issues: v.array(listedIssue) }),
-  handler: async (ctx, { agentName, teamKey, status, assignee }) => {
+  returns: v.object({ issues: v.array(listedIssue), nextCursor: v.union(v.string(), v.null()) }),
+  handler: async (ctx, { agentName, teamKey, status, assignee, cursor }) => {
+    if (cursor === "") {
+      invalid("cursor cannot be empty");
+    }
     const org = await resolveAgentReadScope(ctx, agentName);
     const team = await findTeamByKey(ctx, org._id, teamKey);
     const assigneeId = await assigneeFilter(ctx, org._id, agentName, assignee);
     if (assigneeId === null) {
-      return { issues: [] };
+      return { issues: [], nextCursor: null };
     }
-    const matches = await ctx.db
+    const page = await ctx.db
       .query("issues")
       .withIndex("by_team", (q) => q.eq("teamId", team._id))
       .order("desc")
-      // No index covers team plus an optional status and assignee; the filter runs before take, so no match is cut.
+      // No index covers team plus an optional status and assignee; the filter runs before the page limit, so no match is cut.
       // eslint-disable-next-line @convex-dev/no-filter-in-query
       .filter((q) =>
         q.and(
@@ -211,7 +224,8 @@ export const listIssues = internalQuery({
           q.or(assigneeId === undefined, q.eq(q.field("assigneeId"), assigneeId))
         )
       )
-      .take(LIST_LIMIT);
+      .paginate({ numItems: LIST_LIMIT, cursor: cursor ?? null })
+      .catch((error: unknown) => pageFailure(error, cursor));
     const parents = new Map<Id<"issues">, Promise<Doc<"issues"> | null>>();
     const orgParent = async (parentId: Id<"issues">) => {
       const parent = await ctx.db.get(parentId);
@@ -224,7 +238,7 @@ export const listIssues = internalQuery({
       return parents.get(parentId)!;
     };
     const issues = await Promise.all(
-      matches.map(async (issue) => {
+      page.page.map(async (issue) => {
         const parent = issue.parentIssueId === undefined ? null : await parentOf(issue.parentIssueId);
         const user = issue.assigneeId === undefined ? null : await ctx.db.get(issue.assigneeId);
         return {
@@ -234,7 +248,7 @@ export const listIssues = internalQuery({
         };
       })
     );
-    return { issues };
+    return { issues, nextCursor: page.isDone ? null : page.continueCursor };
   },
 });
 

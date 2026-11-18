@@ -60,6 +60,15 @@ describe("/mcp", () => {
     expect(JSON.parse(init.body as string)).toEqual({ teamKey: "HX", title: "T" });
   });
 
+  it("forwards list_issues's cursor as a query parameter and returns the page's nextCursor", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ issues: [], nextCursor: "c2" }), { status: 200 }));
+    const body = await (await POST(rpc("tools/call", { name: "list_issues", arguments: { team: "HX", cursor: "c1" } }))).json();
+
+    expect(JSON.parse(toolText(body))).toEqual({ issues: [], nextCursor: "c2" });
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(url).toBe(`${SITE}/api/v1/issues?team=HX&cursor=c1`);
+  });
+
   it("forwards create_issue's ifMatch as If-Match, the parent's version check", async () => {
     const args = { teamKey: "HX", title: "T", parentKey: "HX-3", ifMatch: 4, idempotencyKey: "k-2" };
     await POST(rpc("tools/call", { name: "create_issue", arguments: args }));
