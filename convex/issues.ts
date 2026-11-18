@@ -1,3 +1,4 @@
+import { PaginationOptions, paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { ObjectType, v } from "convex/values";
 import { invalid, notFound, refuse } from "./lib/refusals";
 import { Doc, Id } from "./_generated/dataModel";
@@ -103,32 +104,33 @@ const OPEN_STATUSES = issueStatusValidator.members
   .map((member) => member.value)
   .filter((status) => !CLOSED_STATUSES.has(status));
 
+/** `paginationOpts` with the page held to at most `LIST_LIMIT` items, whatever the client asks for. */
+export function capPage(paginationOpts: PaginationOptions): PaginationOptions {
+  return { ...paginationOpts, numItems: Math.min(paginationOpts.numItems, LIST_LIMIT) };
+}
+
 /**
- * The backlog: open stories with no cycle, the top `LIST_LIMIT` by `sortOrder` (owner's rank).
- * Reads the newest `LIST_LIMIT` of each open status only, so neither a long closed history nor a crowded status
- * counts against the read limit. New stories rank on top, so a crowded status gives up its oldest.
+ * The backlog, one page at a time: open stories with no cycle, highest `sortOrder` (owner's rank) first.
+ * It reads the team's rank index in order and filters inside the query, so the first page always starts at the
+ * top-ranked story, however old it is. A page reads every row down to its last story, closed ones included.
  */
 export const listBacklog = orgQuery({
-  args: { teamId: v.id("teams") },
-  returns: v.array(v.object(issueShape)),
+  args: { teamId: v.id("teams"), paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(v.object(issueShape)),
   handler: async (ctx, args) => {
     await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
-    const byStatus = await Promise.all(
-      OPEN_STATUSES.map((status) =>
-        inOrg(
-          ctx.db
-            .query("issues")
-            .withIndex("by_team_and_status", (q) => q.eq("teamId", args.teamId).eq("status", status))
-            .order("desc"),
-          ctx.org._id
-        ).take(LIST_LIMIT)
+    return await inOrg(
+      ctx.db.query("issues").withIndex("by_team_and_sort_order", (q) => q.eq("teamId", args.teamId)).order("desc"),
+      ctx.org._id
+    )
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("kind"), "story"),
+          q.eq(q.field("cycleId"), undefined),
+          q.or(...OPEN_STATUSES.map((status) => q.eq(q.field("status"), status)))
+        )
       )
-    );
-    return byStatus
-      .flat()
-      .filter((issue) => issue.kind === "story" && issue.cycleId === undefined)
-      .sort((a, b) => b.sortOrder - a.sortOrder)
-      .slice(0, LIST_LIMIT);
+      .paginate(capPage(args.paginationOpts));
   },
 });
 

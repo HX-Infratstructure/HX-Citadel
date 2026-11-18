@@ -4,7 +4,7 @@ import { StorageActionWriter } from "convex/server";
 import { describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
 import { PAGE_SIZE } from "./admin";
-import { ISSUE_OWNED_TABLES, IssueOwnedCounts, ROW_BUDGET } from "./lib/issueCleanup";
+import { CLEANUP_BUDGET, ISSUE_OWNED_TABLES, IssueOwnedCounts } from "./lib/issueCleanup";
 import { Doc, Id, TableNames } from "./_generated/dataModel";
 import { MutationCtx } from "./_generated/server";
 import { createTestingSubtask } from "./lib/rules/testing";
@@ -210,6 +210,48 @@ async function addActivity(t: TestConvex, issueId: Id<"issues">, count: number) 
   }
 }
 
+/** Issues with their own files each: within the row budget, and past Convex's 4,096 queries in file lookups. */
+const ISSUES_WITH_FILES = 90;
+const FILES_PER_ISSUE = 40;
+
+/** Gives the issue `count` attachments, each with its own stored file. Returns the files. */
+async function addFiles(t: TestConvex, issueId: Id<"issues">, count: number) {
+  return await t.run(async (ctx) => {
+    const issue = (await ctx.db.get(issueId))!;
+    const files: Id<"_storage">[] = [];
+    for (let index = 0; index < count; index++) {
+      const storageId = await ctx.storage.store(new Blob([`file ${index}`]));
+      await ctx.db.insert("attachments", {
+        orgId: issue.orgId,
+        issueId,
+        storageId,
+        fileName: `${index}.txt`,
+        fileType: "text/plain",
+        fileSize: 6,
+        uploadedBy: issue.creatorId,
+      });
+      files.push(storageId);
+    }
+    return files;
+  });
+}
+
+/** Comments on one issue: within the row budget, and past Convex's 16 MiB read limit in all. */
+const LARGE_COMMENTS = 4_000;
+const COMMENT_CHARS = 5 * 1024;
+
+/** Gives the issue `count` comments of `chars` characters, `TEST_BATCH` a transaction. */
+async function addComments(t: TestConvex, issueId: Id<"issues">, count: number, chars: number) {
+  for (let start = 0; start < count; start += TEST_BATCH) {
+    await t.run(async (ctx) => {
+      const issue = (await ctx.db.get(issueId))!;
+      for (let index = start; index < Math.min(start + TEST_BATCH, count); index++) {
+        await ctx.db.insert("comments", { orgId: issue.orgId, issueId, authorId: issue.creatorId, body: "c".repeat(chars) });
+      }
+    });
+  }
+}
+
 /** Owned rows a run's counts say it deleted. */
 function ownedRowsDeleted(counts: IssueOwnedCounts) {
   return ISSUE_OWNED_TABLES.reduce((sum, table) => sum + counts[table], 0);
@@ -378,7 +420,7 @@ describe("admin.clearOrgContent", () => {
 
     const counts = await t.mutation(internal.admin.clearOrgContent, { clerkOrgId: CLEARED_ORG });
 
-    expect(ownedRowsDeleted(counts)).toBe(ROW_BUDGET);
+    expect(ownedRowsDeleted(counts)).toBe(CLEANUP_BUDGET.rows);
     expect(counts).toMatchObject({ issues: 0, teams: 0 });
     expect(await t.run((ctx) => ctx.db.get(heavyId))).not.toBeNull();
     await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -790,7 +832,7 @@ describe("admin.clearTeamContent", () => {
 
     const counts = await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
 
-    expect(ownedRowsDeleted(counts)).toBe(ROW_BUDGET);
+    expect(ownedRowsDeleted(counts)).toBe(CLEANUP_BUDGET.rows);
     expect(counts).toMatchObject({ issues: 0, cycles: 0, teams: 0 });
     expect(await t.run((ctx) => ctx.db.get(cleared.storyId))).not.toBeNull();
     await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -826,6 +868,56 @@ describe("admin.clearTeamContent", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect(await left()).toEqual({ team: null, story: null, activity: 0 });
+    vi.useRealTimers();
+  }, 60_000);
+
+  test("clears a team whose issues have more files than one run can look up over the scheduled runs, every run succeeding", async () => {
+    vi.useFakeTimers();
+    const { t, cleared } = await setupTeams();
+    await addIssues(t, cleared.teamId, ISSUES_WITH_FILES);
+    const teamIssues = () =>
+      t.run((ctx) => ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", cleared.teamId)).collect());
+    const issueIds = new Set((await teamIssues()).map((issue) => issue._id));
+    const files: Id<"_storage">[] = [];
+    for (const issueId of issueIds) {
+      files.push(...(await addFiles(t, issueId, FILES_PER_ISSUE)));
+    }
+
+    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
+    const left = await t.run(async (ctx) => {
+      const stored = new Set((await ctx.db.system.query("_storage").collect()).map((file) => file._id));
+      const attachments = await ctx.db.query("attachments").collect();
+      return {
+        team: await ctx.db.get(cleared.teamId),
+        files: files.filter((file) => stored.has(file)),
+        attachments: attachments.filter((attachment) => issueIds.has(attachment.issueId)),
+      };
+    });
+    expect(left).toEqual({ team: null, files: [], attachments: [] });
+    expect(await teamIssues()).toEqual([]);
+    vi.useRealTimers();
+  }, 60_000);
+
+  test("clears a team whose issue's comments pass the read limit over the scheduled runs, every run succeeding", async () => {
+    vi.useFakeTimers();
+    const { t, cleared } = await setupTeams();
+    await addComments(t, cleared.storyId, LARGE_COMMENTS, COMMENT_CHARS);
+
+    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
+    const left = await t.run(async (ctx) => ({
+      team: await ctx.db.get(cleared.teamId),
+      story: await ctx.db.get(cleared.storyId),
+      comments: (
+        await ctx.db.query("comments").withIndex("by_issue", (q) => q.eq("issueId", cleared.storyId)).take(1)
+      ).length,
+    }));
+    expect(left).toEqual({ team: null, story: null, comments: 0 });
     vi.useRealTimers();
   }, 60_000);
 

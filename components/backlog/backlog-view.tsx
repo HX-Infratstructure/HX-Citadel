@@ -37,7 +37,7 @@ function rankAfterMove(
   return sortOrder === issues[from].sortOrder ? undefined : sortOrder;
 }
 
-/** The backlog as it looks after an update: planned rows leave, reranked rows move. */
+/** A backlog page as it looks after an update: planned rows leave, reranked rows move within the page. */
 function backlogAfterUpdate(
   backlog: Doc<"issues">[],
   update: { issueId: Id<"issues">; sortOrder?: number; cycleId?: Id<"cycles"> | null }
@@ -66,14 +66,13 @@ export function BacklogView({
   const cycles = useQuery(api.cycles.listByTeam, { teamId: team._id });
   const updateIssue = useMutation(api.issues.update).withOptimisticUpdate(
     (localStore, args) => {
-      const query = { teamId: team._id };
-      const current = localStore.getQuery(api.issues.listBacklog, query);
-      if (current) {
-        localStore.setQuery(
-          api.issues.listBacklog,
-          query,
-          backlogAfterUpdate(current, args)
-        );
+      for (const { args: page, value } of localStore.getAllQueries(api.issues.listBacklog)) {
+        if (value && page.teamId === team._id) {
+          localStore.setQuery(api.issues.listBacklog, page, {
+            ...value,
+            page: backlogAfterUpdate(value.page, args),
+          });
+        }
       }
     }
   );

@@ -1,6 +1,6 @@
+import { getDocumentSize } from "convex/values";
 import { Doc, Id, TableNames } from "../_generated/dataModel";
 import { MutationCtx } from "../_generated/server";
-import { relationsOf } from "./issueRelations";
 import { inOrg } from "./orgRows";
 
 export async function deleteRows(ctx: MutationCtx, rows: { _id: Id<TableNames> }[]) {
@@ -34,59 +34,94 @@ export async function deleteAttachmentFiles(ctx: MutationCtx, attachments: Doc<"
 }
 
 /**
- * Every table whose rows belong to one issue, and how to read up to `limit` of them: the one
- * list the deletes, the counts and the admin validators derive from. Rows are read in the
- * issue's own workspace, so a row from another workspace that points at it is left alone.
- * An issue's relations are one bounded read of at most twice `RELATION_LIMIT` rows, so they
- * are read whole whatever the limit.
+ * Every table whose rows belong to one issue, and the queries that read them: the one list the deletes,
+ * the counts and the admin validators derive from. Rows are read in the issue's own workspace, so a row
+ * from another workspace that points at it is left alone.
  */
 const ISSUE_OWNED_ROWS = {
-  comments: (ctx: MutationCtx, issue: Doc<"issues">, limit: number) =>
-    inOrg(ctx.db.query("comments").withIndex("by_issue", (q) => q.eq("issueId", issue._id)), issue.orgId).take(limit),
-  activity: (ctx: MutationCtx, issue: Doc<"issues">, limit: number) =>
-    inOrg(ctx.db.query("activity").withIndex("by_issue", (q) => q.eq("issueId", issue._id)), issue.orgId).take(limit),
-  attachments: (ctx: MutationCtx, issue: Doc<"issues">, limit: number) =>
-    inOrg(ctx.db.query("attachments").withIndex("by_issue", (q) => q.eq("issueId", issue._id)), issue.orgId).take(limit),
-  issueLabels: (ctx: MutationCtx, issue: Doc<"issues">, limit: number) =>
-    ctx.db.query("issueLabels").withIndex("by_issue", (q) => q.eq("issueId", issue._id)).take(limit),
-  decisions: (ctx: MutationCtx, issue: Doc<"issues">, limit: number) =>
-    inOrg(ctx.db.query("decisions").withIndex("by_issue", (q) => q.eq("issueId", issue._id)), issue.orgId).take(limit),
-  issueRelations: (ctx: MutationCtx, issue: Doc<"issues">) => relationsOf(ctx, issue._id),
+  comments: (ctx: MutationCtx, issue: Doc<"issues">) => [
+    inOrg(ctx.db.query("comments").withIndex("by_issue", (q) => q.eq("issueId", issue._id)), issue.orgId),
+  ],
+  activity: (ctx: MutationCtx, issue: Doc<"issues">) => [
+    inOrg(ctx.db.query("activity").withIndex("by_issue", (q) => q.eq("issueId", issue._id)), issue.orgId),
+  ],
+  attachments: (ctx: MutationCtx, issue: Doc<"issues">) => [
+    inOrg(ctx.db.query("attachments").withIndex("by_issue", (q) => q.eq("issueId", issue._id)), issue.orgId),
+  ],
+  issueLabels: (ctx: MutationCtx, issue: Doc<"issues">) => [
+    ctx.db.query("issueLabels").withIndex("by_issue", (q) => q.eq("issueId", issue._id)),
+  ],
+  decisions: (ctx: MutationCtx, issue: Doc<"issues">) => [
+    inOrg(ctx.db.query("decisions").withIndex("by_issue", (q) => q.eq("issueId", issue._id)), issue.orgId),
+  ],
+  issueRelations: (ctx: MutationCtx, issue: Doc<"issues">) => [
+    ctx.db.query("issueRelations").withIndex("by_issue", (q) => q.eq("issueId", issue._id)),
+    ctx.db.query("issueRelations").withIndex("by_related", (q) => q.eq("relatedIssueId", issue._id)),
+  ],
 };
 
 type IssueOwnedTable = keyof typeof ISSUE_OWNED_ROWS;
-type IssueOwnedRows = { [T in IssueOwnedTable]: Awaited<ReturnType<(typeof ISSUE_OWNED_ROWS)[T]>> };
+type IssueOwnedRows = { [T in IssueOwnedTable]: Doc<T>[] };
 export type IssueOwnedCounts = Record<IssueOwnedTable, number>;
 
 export const ISSUE_OWNED_TABLES = Object.keys(ISSUE_OWNED_ROWS) as IssueOwnedTable[];
 
-/**
- * Owned rows one admin run deletes. Convex fails a mutation whole, changing nothing, past 16,000
- * documents written or 32,000 read. A run writes at most 4,000 owned rows, 200 relations past the
- * budget on the issue it stops at, and a page each of issues, cycles and saved views (`PAGE_SIZE`
- * in admin.ts): about 4,500 writes. It reads each of those rows, counts each delete as a read
- * as well, and reads one more row per attachment for its file: under 14,000 reads.
- */
-export const ROW_BUDGET = 4_000;
+type Budget = { rows: number; bytes: number; queries: number };
 
 /**
- * Deletes up to `budget` of the rows one issue owns, table by table, and the files only they use.
- * `left` is the budget it did not use: above zero, every table was read whole, so the issue owns nothing.
+ * What one admin run's cleanup may read. Convex fails a mutation whole, changing nothing, past 4,096
+ * queries, 16 MiB or 32,000 documents read, or 16,000 written; the rest is the caller's.
+ * - `queries`: each owned-table query, and each attachment's `by_storage` lookup for its file. The
+ *   caller makes about 110 more: its page queries, a cycle query per team on a page and six org-only tables.
+ * - `bytes`: a row is read once and again by its delete. A run stops on the row that passes the budget,
+ *   so it reads at most one more document (1 MiB) twice: 10 MiB. The file lookups read up to 3,000 small
+ *   attachment rows; the caller's pages hold the rest.
+ * - `rows`: a run writes at most 4,000 owned rows and a page each of issues, cycles, saved views and
+ *   org-only rows, about 5,000 writes; it reads those, one row per file lookup and the caller's pages,
+ *   under 14,000 reads.
  */
-async function deleteOwnedRows(ctx: MutationCtx, issue: Doc<"issues">, budget: number) {
-  const entries = [];
-  let left = budget;
+export const CLEANUP_BUDGET: Readonly<Budget> = { rows: 4_000, bytes: 8 * 1024 * 1024, queries: 3_000 };
+
+function spent(left: Budget) {
+  return left.rows <= 0 || left.bytes <= 0 || left.queries <= 0;
+}
+
+/**
+ * Reads the rows one issue owns, table by table, charging each query and row to `left`, and stops on the
+ * row that spends any part of it. An attachment also charges the `by_storage` lookup for its file:
+ * `deleteAttachmentFiles` makes at most one per row. `finished` says every table was read whole.
+ */
+async function readOwnedRows(ctx: MutationCtx, issue: Doc<"issues">, left: Budget) {
+  const owned = Object.fromEntries(ISSUE_OWNED_TABLES.map((table) => [table, [] as Doc<IssueOwnedTable>[]])) as IssueOwnedRows;
   for (const table of ISSUE_OWNED_TABLES) {
-    const rows = left > 0 ? await ISSUE_OWNED_ROWS[table](ctx, issue, left) : [];
-    entries.push([table, rows]);
-    left -= rows.length;
+    const rows: Doc<IssueOwnedTable>[] = owned[table];
+    for (const query of ISSUE_OWNED_ROWS[table](ctx, issue)) {
+      if (spent(left)) {
+        return { owned, finished: false };
+      }
+      left.queries -= 1;
+      for await (const row of query) {
+        rows.push(row);
+        left.rows -= 1;
+        left.bytes -= 2 * getDocumentSize(row);
+        left.queries -= table === "attachments" ? 1 : 0;
+        if (spent(left)) {
+          return { owned, finished: false };
+        }
+      }
+    }
   }
-  const owned = Object.fromEntries(entries) as IssueOwnedRows;
+  return { owned, finished: true };
+}
+
+/** Deletes the rows `readOwnedRows` reads within `left`, and the files only they use. */
+async function deleteOwnedRows(ctx: MutationCtx, issue: Doc<"issues">, left: Budget) {
+  const { owned, finished } = await readOwnedRows(ctx, issue, left);
   await deleteAttachmentFiles(ctx, owned.attachments);
   for (const rows of Object.values(owned)) {
     await deleteRows(ctx, rows);
   }
-  return { counts: countTables(ISSUE_OWNED_TABLES, (table) => owned[table].length), left };
+  return { counts: countTables(ISSUE_OWNED_TABLES, (table) => owned[table].length), finished };
 }
 
 /**
@@ -95,27 +130,26 @@ async function deleteOwnedRows(ctx: MutationCtx, issue: Doc<"issues">, budget: n
  * owns more rows than one mutation can delete.
  */
 export async function deleteIssueOwnedRows(ctx: MutationCtx, issue: Doc<"issues">) {
-  let left: number;
+  let finished: boolean;
   do {
-    ({ left } = await deleteOwnedRows(ctx, issue, ROW_BUDGET));
-  } while (left <= 0);
+    ({ finished } = await deleteOwnedRows(ctx, issue, { ...CLEANUP_BUDGET }));
+  } while (!finished);
 }
 
 /**
- * Deletes the issues in order, each with the rows it owns, up to `ROW_BUDGET` owned rows in all.
- * The issue the budget runs out on loses a chunk of its rows and stays, with those after it, so
- * the next run starts there. One issue at a time, so a relation between two of them is read and
+ * Deletes the issues in order, each with the rows it owns, within one `CLEANUP_BUDGET`. The issue it
+ * runs out on loses the rows it read and stays, with those after it, so the next run starts there and
+ * reads on from its first row left. One issue at a time, so a relation between two of them is read and
  * deleted once. `finished` says every issue went.
  */
 export async function deleteIssuesWithOwnedRows(ctx: MutationCtx, issues: Doc<"issues">[]) {
   const perIssue: IssueOwnedCounts[] = [];
-  let budget = ROW_BUDGET;
+  const left = { ...CLEANUP_BUDGET };
   let deleted = 0;
   for (const issue of issues) {
-    const { counts, left } = await deleteOwnedRows(ctx, issue, budget);
+    const { counts, finished } = await deleteOwnedRows(ctx, issue, left);
     perIssue.push(counts);
-    budget = left;
-    if (budget <= 0) {
+    if (!finished) {
       break;
     }
     await ctx.db.delete(issue._id);

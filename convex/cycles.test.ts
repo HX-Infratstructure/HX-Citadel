@@ -38,7 +38,7 @@ describe("cycle dates", () => {
 });
 
 describe("a cycle with more than LIST_LIMIT issues", () => {
-  test("lists and counts at most LIST_LIMIT of them", async () => {
+  test("lists LIST_LIMIT of them and counts every one, on the list and the detail", async () => {
     const s = await setup();
     await s.t.run(async (ctx) => {
       for (let number = 1; number <= LIST_LIMIT + 1; number++) {
@@ -48,7 +48,7 @@ describe("a cycle with more than LIST_LIMIT issues", () => {
           kind: "story",
           number,
           title: `Story ${number}`,
-          status: "todo",
+          status: number <= LIST_LIMIT ? "done" : "todo",
           priority: "none",
           creatorId: s.userId,
           cycleId: s.cycleId,
@@ -59,8 +59,11 @@ describe("a cycle with more than LIST_LIMIT issues", () => {
 
     const issues = await s.member.query(api.cycles.listIssues, { cycleId: s.cycleId });
     const [cycle] = await s.member.query(api.cycles.listWithProgress, {});
+    const detail = await s.member.query(api.cycles.progress, { cycleId: s.cycleId });
 
+    const expected = { total: LIST_LIMIT + 1, done: LIST_LIMIT, todo: 1 };
     expect(issues).toHaveLength(LIST_LIMIT);
-    expect(cycle.progress).toMatchObject({ total: LIST_LIMIT, todo: LIST_LIMIT });
+    expect(cycle.progress).toMatchObject(expected);
+    expect(detail).toMatchObject(expected);
   });
 });

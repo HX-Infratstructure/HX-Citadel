@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
+import { Id } from "./_generated/dataModel";
 import { LIST_LIMIT } from "./issues";
 import schema from "./schema";
 
@@ -12,6 +13,8 @@ const ORG_CLAIM = "org_test";
 const MEMBER_CLERK_ID = "user_member";
 const OUTSIDER_CLERK_ID = "user_outsider";
 const FIRST_NUMBER = 7;
+
+type Setup = Awaited<ReturnType<typeof setup>>;
 
 async function setup(transactionLimits?: { documentsRead: number }) {
   const t = convexTest({ schema, modules, transactionLimits });
@@ -135,6 +138,47 @@ describe("issues.create on a free organization", () => {
   });
 });
 
+const FIRST_PAGE = { numItems: LIST_LIMIT, cursor: null };
+
+type BacklogPage = { page: { _id: Id<"issues">; sortOrder: number }[]; isDone: boolean; continueCursor: string };
+
+/** Every page of the backlog, following the cursor until the last page. */
+async function backlogPages<Page extends BacklogPage>(pageAt: (cursor: string | null) => Promise<Page>) {
+  const pages: Page["page"][] = [];
+  let cursor: string | null = null;
+  for (;;) {
+    const result: Page = await pageAt(cursor);
+    pages.push(result.page);
+    if (result.isDone) {
+      return pages;
+    }
+    cursor = result.continueCursor;
+  }
+}
+
+/** `LIST_LIMIT + 1` open stories in one status, the oldest ranked top; their ids in rank order. */
+async function seedOldestRankedTop(t: Setup["t"], teamId: Id<"teams">, memberId: Id<"users">) {
+  return await t.run(async (ctx) => {
+    const team = await ctx.db.get(teamId);
+    const ids = [];
+    for (let i = 0; i <= LIST_LIMIT; i++) {
+      ids.push(
+        await ctx.db.insert("issues", {
+          orgId: team!.orgId,
+          teamId,
+          kind: "story",
+          title: `Story ${i}`,
+          status: "todo",
+          priority: "none",
+          creatorId: memberId,
+          sortOrder: (LIST_LIMIT + 1 - i) * 1000,
+        })
+      );
+    }
+    return ids;
+  });
+}
+
 describe("issues.listBacklog", () => {
   test("lists the team's open stories with no cycle, highest sortOrder first", async () => {
     const { t, teamId, memberId } = await setup();
@@ -175,36 +219,9 @@ describe("issues.listBacklog", () => {
     });
     await asMember.mutation(api.issues.update, { issueId: low, sortOrder: -5 });
 
-    const backlog = await asMember.query(api.issues.listBacklog, { teamId });
+    const { page: backlog } = await asMember.query(api.issues.listBacklog, { teamId, paginationOpts: FIRST_PAGE });
 
     expect(backlog.map((issue) => issue._id)).toEqual([high, low]);
-  });
-
-  test("loads the backlog of a team whose closed stories exceed the read limit", async () => {
-    const { t, teamId, memberId } = await setup({ documentsRead: 30 });
-    const asMember = t.withIdentity({
-      subject: MEMBER_CLERK_ID,
-      org_id: ORG_CLAIM,
-    });
-    const openId = await t.run(async (ctx) => {
-      const team = await ctx.db.get(teamId);
-      const story = {
-        orgId: team!.orgId,
-        teamId,
-        kind: "story",
-        creatorId: memberId,
-        priority: "none",
-        sortOrder: 1000,
-      } as const;
-      for (let i = 0; i < 40; i++) {
-        await ctx.db.insert("issues", { ...story, title: `Shipped ${i}`, status: "done" });
-      }
-      return await ctx.db.insert("issues", { ...story, title: "Open", status: "todo" });
-    });
-
-    const backlog = await asMember.query(api.issues.listBacklog, { teamId });
-
-    expect(backlog.map((issue) => issue._id)).toEqual([openId]);
   });
 
   test("refuses a caller who is not a member of the active organization", async () => {
@@ -214,36 +231,75 @@ describe("issues.listBacklog", () => {
       org_id: ORG_CLAIM,
     });
     await expect(
-      asOutsider.query(api.issues.listBacklog, { teamId })
+      asOutsider.query(api.issues.listBacklog, { teamId, paginationOpts: FIRST_PAGE })
     ).rejects.toThrow();
   });
 
-  test("lists at most LIST_LIMIT stories, highest rank first", async () => {
+  test("the first page starts at the top-ranked story, the oldest, when one open status holds more than LIST_LIMIT", async () => {
     const { t, teamId, memberId } = await setup();
     const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
-    const oldestFirst = await t.run(async (ctx) => {
+    const rankOrder = await seedOldestRankedTop(t, teamId, memberId);
+
+    const first = await asMember.query(api.issues.listBacklog, {
+      teamId,
+      paginationOpts: { numItems: LIST_LIMIT + 100, cursor: null },
+    });
+
+    expect(first.page[0]._id).toBe(rankOrder[0]);
+    expect(first.page).toHaveLength(LIST_LIMIT);
+    expect(first.isDone).toBe(false);
+  });
+
+  test("following the cursor reaches every story once, in rank order across pages", async () => {
+    const { t, teamId, memberId } = await setup();
+    const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+    const rankOrder = await seedOldestRankedTop(t, teamId, memberId);
+
+    const pages = await backlogPages((cursor) =>
+      asMember.query(api.issues.listBacklog, { teamId, paginationOpts: { numItems: 200, cursor } })
+    );
+
+    const stories = pages.flat();
+    expect(pages.length).toBeGreaterThan(2);
+    expect(stories.map((issue) => issue._id)).toEqual(rankOrder);
+    expect(stories.every((issue, i) => i === 0 || stories[i - 1].sortOrder > issue.sortOrder)).toBe(true);
+  });
+
+  test("stories with a cycle, other kinds, closed stories and another workspace's rows appear on no page", async () => {
+    const { t, teamId, memberId } = await setup();
+    const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+    const listed = await t.run(async (ctx) => {
       const team = await ctx.db.get(teamId);
+      const orgId = team!.orgId;
+      const otherOrgId = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
+      const cycleId = await ctx.db.insert("cycles", { orgId, teamId, number: 1, startDate: 0, endDate: 1 });
+      const story = { orgId, teamId, kind: "story", status: "todo", priority: "none", creatorId: memberId } as const;
+      const rows = [
+        { ...story, title: "Top", sortOrder: 9000, listed: true },
+        { ...story, title: "Planned", sortOrder: 8000, cycleId, listed: false },
+        { ...story, title: "Epic", sortOrder: 7000, kind: "epic", listed: false },
+        { ...story, title: "Sub-task", sortOrder: 6000, kind: "subtask", listed: false },
+        { ...story, title: "In progress", sortOrder: 5000, status: "in_progress", listed: true },
+        { ...story, title: "Done", sortOrder: 4000, status: "done", listed: false },
+        { ...story, title: "Canceled", sortOrder: 3000, status: "canceled", listed: false },
+        { ...story, title: "Foreign", sortOrder: 2000, orgId: otherOrgId, listed: false },
+        { ...story, title: "Backlog", sortOrder: 1000, status: "backlog", listed: true },
+      ] as const;
       const ids = [];
-      for (let i = 0; i <= LIST_LIMIT; i++) {
-        ids.push(
-          await ctx.db.insert("issues", {
-            orgId: team!.orgId,
-            teamId,
-            kind: "story",
-            title: `Story ${i}`,
-            status: "todo",
-            priority: "none",
-            creatorId: memberId,
-            sortOrder: (i + 1) * 1000,
-          })
-        );
+      for (const { listed, ...row } of rows) {
+        const id = await ctx.db.insert("issues", row);
+        if (listed) {
+          ids.push(id);
+        }
       }
       return ids;
     });
 
-    const backlog = await asMember.query(api.issues.listBacklog, { teamId });
+    const pages = await backlogPages((cursor) =>
+      asMember.query(api.issues.listBacklog, { teamId, paginationOpts: { numItems: 1, cursor } })
+    );
 
-    expect(backlog.map((issue) => issue._id)).toEqual(oldestFirst.slice(1).reverse());
+    expect(pages.flat().map((issue) => issue._id)).toEqual(listed);
   });
 });
 
@@ -496,7 +552,7 @@ describe("issue ranking", () => {
 
     await asMember.mutation(api.issues.update, { issueId: moved, sortOrder: 5000 });
 
-    const backlog = await asMember.query(api.issues.listBacklog, { teamId });
+    const { page: backlog } = await asMember.query(api.issues.listBacklog, { teamId, paginationOpts: FIRST_PAGE });
     const ranks = backlog.map((issue) => issue.sortOrder);
     expect(new Set(ranks).size).toBe(3);
     expect(backlog.map((issue) => issue._id)).toEqual([above, moved, below]);
@@ -525,7 +581,7 @@ describe("issue ranking", () => {
 
     await asMember.mutation(api.issues.update, { issueId: moved, sortOrder: 1000 });
 
-    const backlog = await asMember.query(api.issues.listBacklog, { teamId });
+    const { page: backlog } = await asMember.query(api.issues.listBacklog, { teamId, paginationOpts: FIRST_PAGE });
     const ranks = backlog.map((issue) => issue.sortOrder);
     expect(new Set(ranks).size).toBe(4);
     expect(backlog.map((issue) => issue._id)).toEqual([above, moved, lower, bottom]);

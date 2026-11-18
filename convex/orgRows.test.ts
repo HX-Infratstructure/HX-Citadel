@@ -114,7 +114,7 @@ describe("an issue or cycle from another workspace that names our team", () => {
   test("stays out of the team's lists, the backlog, the agent list and the number lookup", async () => {
     const { t, admin, teamId, storyId } = await setup();
     const listed = await admin.query(api.issues.listByTeam, { teamId });
-    const backlog = await admin.query(api.issues.listBacklog, { teamId });
+    const { page: backlog } = await admin.query(api.issues.listBacklog, { teamId, paginationOpts: { numItems: 10, cursor: null } });
     const agentList = await t.query(internal.agentApi.listIssues, { agentName: "cc1", teamKey: "ENG" });
     const byNumber = await admin.query(api.issues.getByNumber, { teamId, number: 1 });
     const cycles = await admin.query(api.cycles.listByTeam, { teamId });
@@ -179,7 +179,9 @@ const onStory = (orgId: Id<"organizations">, s: Setup) => ({ orgId, issueId: s.s
 
 const LOADERS = [
   loader("Team", "issues.listByTeam", team, (s, teamId) => s.admin.query(api.issues.listByTeam, { teamId })),
-  loader("Team", "issues.listBacklog", team, (s, teamId) => s.admin.query(api.issues.listBacklog, { teamId })),
+  loader("Team", "issues.listBacklog", team, (s, teamId) =>
+    s.admin.query(api.issues.listBacklog, { teamId, paginationOpts: { numItems: 10, cursor: null } })
+  ),
   loader("Team", "issues.listParentCandidates", team, (s, teamId) =>
     s.admin.query(api.issues.listParentCandidates, { teamId, kind: "story" })
   ),
@@ -188,10 +190,12 @@ const LOADERS = [
   loader("Team", "views.teamIssueLabels", team, (s, teamId) => s.admin.query(api.views.teamIssueLabels, { teamId })),
   loader("Team", "cycles.listByTeam", team, (s, teamId) => s.admin.query(api.cycles.listByTeam, { teamId })),
   loader("Project", "projects.listIssues", project, (s, projectId) => s.admin.query(api.projects.listIssues, { projectId })),
+  loader("Project", "projects.progress", project, (s, projectId) => s.admin.query(api.projects.progress, { projectId })),
   loader("Project", "issues.create epic", project, (s, projectId) =>
     s.admin.mutation(api.issues.create, { teamId: s.teamId, title: "Epic", kind: "epic", projectId })
   ),
   loader("Cycle", "cycles.listIssues", cycle, (s, cycleId) => s.admin.query(api.cycles.listIssues, { cycleId })),
+  loader("Cycle", "cycles.progress", cycle, (s, cycleId) => s.admin.query(api.cycles.progress, { cycleId })),
   loader("Cycle", "issues.update cycleId", cycle, (s, cycleId) =>
     s.admin.mutation(api.issues.update, { issueId: s.storyId, cycleId })
   ),

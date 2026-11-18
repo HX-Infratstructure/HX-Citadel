@@ -19,7 +19,7 @@ const SPECS: Record<CommandName, Spec> = {
   },
   get: { usage: "get KEY", positionals: ["key"], options: {} },
   create: {
-    usage: "create --team KEY --title T [--kind K] [--type T] [--status S] [--priority P] [--parent KEY] [--assignee NAME]",
+    usage: "create --team KEY|--parent KEY --title T [--kind K] [--type T] [--status S] [--priority P] [--assignee NAME]",
     positionals: [],
     options: { team: text, title: text, kind: text, type: text, status: text, priority: text, parent: text, assignee: text },
   },

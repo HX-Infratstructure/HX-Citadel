@@ -21,12 +21,12 @@ export const cycleShape = {
   endDate: v.number(),
 };
 
-/** A cycle's issues, at most `LIST_LIMIT`. */
-async function cycleIssues(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">, cycleId: Id<"cycles">) {
-  return await inOrg(
+/** Every issue of a cycle in the workspace. */
+function cycleIssueQuery(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">, cycleId: Id<"cycles">) {
+  return inOrg(
     ctx.db.query("issues").withIndex("by_cycle", (q) => q.eq("cycleId", cycleId)),
     orgId
-  ).take(LIST_LIMIT);
+  );
 }
 
 /** A team's cycles, newest first. Bounded by design: one team's cycles, about 52 a year, and no agent route creates one. */
@@ -80,7 +80,7 @@ export const listWithProgress = orgQuery({
           ...cycle,
           teamName: team.name,
           teamKey: team.key,
-          progress: countByStatus(await cycleIssues(ctx, ctx.org._id, cycle._id)),
+          progress: await countByStatus(cycleIssueQuery(ctx, ctx.org._id, cycle._id)),
         });
       }
     }
@@ -112,13 +112,23 @@ export const currentForTeam = orgQuery({
   },
 });
 
-/** All issues scheduled into a cycle (detail page computes progress from this). */
+/** A cycle's issues for the detail page list, at most `LIST_LIMIT`; `progress` counts them all. */
 export const listIssues = orgQuery({
   args: { cycleId: v.id("cycles") },
   returns: v.array(v.object(issueShape)),
   handler: async (ctx, args) => {
     await requireOrgRow(ctx, ctx.org._id, args.cycleId, "Cycle");
-    return await cycleIssues(ctx, ctx.org._id, args.cycleId);
+    return await cycleIssueQuery(ctx, ctx.org._id, args.cycleId).take(LIST_LIMIT);
+  },
+});
+
+/** A cycle's issue counts by status, over every issue, for the detail page. */
+export const progress = orgQuery({
+  args: { cycleId: v.id("cycles") },
+  returns: progressShape,
+  handler: async (ctx, args) => {
+    await requireOrgRow(ctx, ctx.org._id, args.cycleId, "Cycle");
+    return await countByStatus(cycleIssueQuery(ctx, ctx.org._id, args.cycleId));
   },
 });
 
@@ -210,10 +220,7 @@ export const remove = orgMutation({
     const cycle = await requireOrgRow(ctx, ctx.org._id, args.cycleId, "Cycle");
 
     // Bounded by design: one sprint's issues, and the mutation is atomic, so a cycle too big to read fails whole and unschedules nothing.
-    const issues = await inOrg(
-      ctx.db.query("issues").withIndex("by_cycle", (q) => q.eq("cycleId", cycle._id)),
-      ctx.org._id
-    ).collect();
+    const issues = await cycleIssueQuery(ctx, ctx.org._id, cycle._id).collect();
     for (const issue of issues) {
       await patchIssue(ctx, issue, { cycleId: undefined });
       await logActivity(ctx, {

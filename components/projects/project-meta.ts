@@ -1,5 +1,4 @@
 import { Doc } from "@/convex/_generated/dataModel";
-import { IssueStatus } from "@/components/shared/issue-meta";
 
 export type ProjectStatus = Doc<"projects">["status"];
 
@@ -50,17 +49,6 @@ export const EMPTY_PROGRESS: IssueProgress = {
   done: 0,
   canceled: 0,
 };
-
-export function progressFromIssues(
-  issues: { status: IssueStatus }[]
-): IssueProgress {
-  const progress: IssueProgress = { ...EMPTY_PROGRESS };
-  for (const issue of issues) {
-    progress.total += 1;
-    progress[issue.status] += 1;
-  }
-  return progress;
-}
 
 /** Percent complete = done / (total − canceled). */
 export function completionPercent(progress: IssueProgress): number {

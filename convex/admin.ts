@@ -133,7 +133,7 @@ async function viewsOpeningTeam(ctx: MutationCtx, team: Doc<"teams">, cursor: st
 }
 
 /**
- * Deletes a page of issues within one run's owned-row budget (`ROW_BUDGET`). `more` says a next run has
+ * Deletes a page of issues within one run's owned-row budget (`CLEANUP_BUDGET`). `more` says a next run has
  * issues to delete: the budget ran out first, or the page was full.
  */
 async function deleteIssuePage(ctx: MutationCtx, issues: Doc<"issues">[]) {
@@ -221,8 +221,8 @@ export const orgHasContent = internalQuery({
 
 /**
  * Each run deletes one page and schedules the next until nothing is left. Returns what this run
- * deleted. A rerun starts from the rows that are left. A run deletes at most `ROW_BUDGET` of the rows
- * its issues own, so an issue that owns more loses a chunk per run and goes once it owns nothing.
+ * deleted. A rerun starts from the rows that are left. A run stays within `CLEANUP_BUDGET` (rows, bytes
+ * and queries) for the rows its issues own, so an issue that owns more loses a chunk per run and goes once it owns nothing.
  */
 export const clearOrgContent = internalMutation({
   args: { clerkOrgId: v.string() },

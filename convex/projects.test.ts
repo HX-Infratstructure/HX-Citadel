@@ -153,7 +153,7 @@ describe("project input is a typed refusal", () => {
 });
 
 describe("a project with more than LIST_LIMIT issues", () => {
-  test("lists and counts at most LIST_LIMIT of them", async () => {
+  test("lists LIST_LIMIT of them and counts every one, on the list and the detail", async () => {
     const s = await setupProject();
     await s.t.run(async (ctx) => {
       for (let number = 1; number <= LIST_LIMIT + 1; number++) {
@@ -163,7 +163,7 @@ describe("a project with more than LIST_LIMIT issues", () => {
           kind: "story",
           number,
           title: `Story ${number}`,
-          status: "done",
+          status: number <= LIST_LIMIT ? "done" : "todo",
           priority: "none",
           creatorId: s.userId,
           projectId: s.projectId,
@@ -174,8 +174,11 @@ describe("a project with more than LIST_LIMIT issues", () => {
 
     const issues = await s.member.query(api.projects.listIssues, { projectId: s.projectId });
     const [project] = await s.member.query(api.projects.listWithProgress, {});
+    const detail = await s.member.query(api.projects.progress, { projectId: s.projectId });
 
+    const expected = { total: LIST_LIMIT + 1, done: LIST_LIMIT, todo: 1 };
     expect(issues).toHaveLength(LIST_LIMIT);
-    expect(project.progress).toMatchObject({ total: LIST_LIMIT, done: LIST_LIMIT });
+    expect(project.progress).toMatchObject(expected);
+    expect(detail).toMatchObject(expected);
   });
 });
