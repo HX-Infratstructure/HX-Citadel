@@ -9,6 +9,7 @@
  */
 
 import type * as activity from "../activity.js";
+import type * as admin from "../admin.js";
 import type * as agent_chat from "../agent/chat.js";
 import type * as agent_data from "../agent/data.js";
 import type * as agent_embeddings from "../agent/embeddings.js";
@@ -46,6 +47,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   activity: typeof activity;
+  admin: typeof admin;
   "agent/chat": typeof agent_chat;
   "agent/data": typeof agent_data;
   "agent/embeddings": typeof agent_embeddings;
