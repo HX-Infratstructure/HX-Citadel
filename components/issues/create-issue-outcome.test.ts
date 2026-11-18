@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { Id } from "@/convex/_generated/dataModel";
-import { createIssueOutcome, IssueDraft } from "./create-issue-outcome";
+import { createIssueOutcome, fallbackTeamId, IssueDraft } from "./create-issue-outcome";
 
 const submitted: IssueDraft = {
   teamId: "team1" as Id<"teams">,
@@ -56,5 +56,30 @@ describe("createIssueOutcome", () => {
     expect(
       createIssueOutcome(false, submitted, { ...submitted, level: { ...submitted.level, ...change } })
     ).toBe("keep");
+  });
+});
+
+describe("fallbackTeamId", () => {
+  const team1 = "team1" as Id<"teams">;
+  const team2 = "team2" as Id<"teams">;
+
+  test("a loaded list falls back to its first team", () => {
+    expect(fallbackTeamId([{ _id: team2 }], team1)).toBe(team2);
+  });
+
+  test("a skipped query keeps the remembered team", () => {
+    expect(fallbackTeamId(undefined, team1)).toBe(team1);
+  });
+
+  test("an empty loaded list has no fallback", () => {
+    expect(fallbackTeamId([], team1)).toBeUndefined();
+  });
+
+  test("a stale success clears a fallback-team draft after the closed dialog skips the query", () => {
+    const submittedTeam = fallbackTeamId([{ _id: team1 }], undefined);
+    const afterClose = fallbackTeamId(undefined, submittedTeam);
+    expect(
+      createIssueOutcome(false, { ...submitted, teamId: submittedTeam }, { ...submitted, teamId: afterClose })
+    ).toBe("clear");
   });
 });

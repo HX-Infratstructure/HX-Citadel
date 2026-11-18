@@ -41,6 +41,7 @@ import {
 } from "@/components/issues/create-issue-level";
 import {
   createIssueOutcome,
+  fallbackTeamId,
   IssueDraft,
 } from "@/components/issues/create-issue-outcome";
 
@@ -61,6 +62,9 @@ export function CreateIssueDialog({
   const [selectedTeamId, setSelectedTeamId] = useState<
     Id<"teams"> | undefined
   >(undefined);
+  const [rememberedFallback, setRememberedFallback] = useState<
+    Id<"teams"> | undefined
+  >(undefined);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<IssueStatus>("todo");
@@ -69,8 +73,13 @@ export function CreateIssueDialog({
   const [submitting, setSubmitting] = useState(false);
   const inFlight = useRef(false);
   const session = useRef(0);
-  // Fall back to the default/first team without needing an effect.
-  const teamId = selectedTeamId ?? defaultTeamId ?? teams?.[0]?._id;
+  // Closing skips the teams query; remembering the fallback keeps a pending
+  // create's committed draft on the team it was submitted with.
+  const fallback = fallbackTeamId(teams, rememberedFallback);
+  if (fallback !== rememberedFallback) {
+    setRememberedFallback(fallback);
+  }
+  const teamId = selectedTeamId ?? defaultTeamId ?? fallback;
   const draft: IssueDraft = {
     teamId,
     title,

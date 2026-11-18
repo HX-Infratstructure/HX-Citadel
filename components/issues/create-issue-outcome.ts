@@ -14,6 +14,14 @@ export type IssueDraft = {
   level: LevelFields;
 };
 
+/** The first loaded team; a skipped or loading query (`undefined`) keeps the remembered one. */
+export function fallbackTeamId(
+  teams: readonly { _id: Id<"teams"> }[] | undefined,
+  remembered: Id<"teams"> | undefined
+) {
+  return teams === undefined ? remembered : teams[0]?._id;
+}
+
 /** After a successful create: finish the dialog, clear the submitted draft, or keep a newer draft. */
 export type CreateOutcome = "finish" | "clear" | "keep";
 
