@@ -1,24 +1,18 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { ConvexError } from "convex/values";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
 import { Id, TableNames } from "./_generated/dataModel";
 import { MAX_CHILDREN } from "./lib/orgRows";
 import schema from "./schema";
+import { ORG, registerWorkspaceEnv } from "./workspace.fixture";
 
 const modules = import.meta.glob("./**/*.*s");
 
-const ORG = "org_hx";
 const ADMIN = "user_admin";
 
-beforeEach(() => {
-  process.env.HX_WORKSPACE_ORG_ID = ORG;
-});
-
-afterEach(() => {
-  delete process.env.HX_WORKSPACE_ORG_ID;
-});
+registerWorkspaceEnv();
 
 /** Our workspace with one story, and another workspace whose rows point at our story and team. */
 async function setup() {
