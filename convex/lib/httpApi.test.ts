@@ -37,7 +37,7 @@ function captured(run: () => unknown): unknown {
   throw new Error("expected a throw");
 }
 
-/** The statuses `docs/AGENT-API.md` promises agents, one row per code. */
+/** A pinned copy of `ERROR_STATUS` in `lib/api-contract.ts`, one row per code: a status change must change both. */
 const WIRE_STATUS: [ErrorCode, number][] = [
   ["actor_required", 400],
   ["idempotency_key_required", 400],

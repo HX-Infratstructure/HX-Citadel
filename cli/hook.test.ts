@@ -66,7 +66,7 @@ async function hook(argv: string[], input = "", env: Record<string, string | und
 
 describe("storyKeys", () => {
   it("finds story and subtask keys once each, in order", () => {
-    expect(storyKeys("HX-12: fix the board (HX-12.3, ENG2-4).\n\nAlso HX-12 again; closes HX-7.")).toEqual(["HX-12", "HX-12.3", "ENG2-4", "HX-7"]);
+    expect(storyKeys("CIT-12: fix the board (CIT-12.3, ENG2-4).\n\nAlso CIT-12 again; closes CIT-7.")).toEqual(["CIT-12", "CIT-12.3", "ENG2-4", "CIT-7"]);
   });
 
   it("ignores lowercase, multi-hyphen and padded look-alikes", () => {

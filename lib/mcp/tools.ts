@@ -8,7 +8,7 @@ const literals = <T extends string>(validator: { members: { value: T }[] }) => z
 
 const status = literals(issueStatusValidator);
 const priority = literals(issuePriorityValidator);
-const key = z.string().min(1).describe("The issue key, such as HX-12 or HX-12.1");
+const key = z.string().min(1).describe("The issue key, such as CIT-12 or CIT-12.1");
 const writeShape = {
   idempotencyKey: z.string().min(1).describe("Sent as Idempotency-Key; a replay returns the stored result"),
 };
@@ -22,7 +22,6 @@ function writeArgs<T extends WriteOptions>({ idempotencyKey, ifMatch, ...body }:
   return [body, { idempotencyKey, ifMatch }];
 }
 
-/** The MCP server for one agent: seven tools, each one REST call. */
 /** Every tool the server registers, by name; the live checker asserts `tools/list` returns exactly these. */
 export const MCP_TOOL = {
   listIssues: "list_issues",
