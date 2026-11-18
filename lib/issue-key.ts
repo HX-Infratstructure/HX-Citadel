@@ -20,6 +20,27 @@ export function validParents<T extends { kind: IssueKind }>(issues: T[], kind: I
   return issues.filter((issue) => issue.kind === PARENT_KIND[kind]);
 }
 
+/** Whether each level must sit under a parent; the server's rule table and the UI pickers both read it. */
+export const PARENT_REQUIRED: Record<IssueKind, boolean> = {
+  epic: false,
+  feature: true,
+  story: false,
+  subtask: true,
+};
+
+export type ParentChoices<T> = { parents: T[]; allowsNone: boolean };
+
+/** Where an existing issue may move: its valid parents, and whether it may stand alone; null for a level with no parent. */
+export function parentChoices<T extends { kind: IssueKind }>(
+  issues: T[],
+  kind: IssueKind
+): ParentChoices<T> | null {
+  if (PARENT_KIND[kind] === null) {
+    return null;
+  }
+  return { parents: validParents(issues, kind), allowsNone: !PARENT_REQUIRED[kind] };
+}
+
 export type KeyedIssue = {
   kind: IssueKind;
   number?: number;

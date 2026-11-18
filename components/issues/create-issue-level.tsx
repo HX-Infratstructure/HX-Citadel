@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { KIND_LABELS, STORY_TYPE_LABELS } from "@/components/issues/issue-key";
-import { validParents } from "@/lib/issue-key";
+import { parentChoices } from "@/lib/issue-key";
 
 type StoryType = NonNullable<Doc<"issues">["type"]>;
 type CreatableKind = "epic" | "feature" | "story";
@@ -131,7 +131,8 @@ function ParentPicker({
   onChange: (value: LevelChoice) => void;
 }) {
   const issues = useQuery(api.issues.listByTeam, { teamId });
-  const parents = validParents(issues ?? [], value.kind);
+  const choices = parentChoices(issues ?? [], value.kind);
+  const parents = choices?.parents ?? [];
   const parentLabel = value.kind === "feature" ? "Epic" : "Feature";
   const selectParent = (parentId: string) =>
     onChange({
@@ -145,7 +146,7 @@ function ParentPicker({
         <SelectValue placeholder={parentLabel} />
       </SelectTrigger>
       <SelectContent>
-        {value.kind === "story" && (
+        {choices?.allowsNone && (
           <SelectItem value={NO_PARENT}>No feature</SelectItem>
         )}
         {parents.map((parent) => (

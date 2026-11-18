@@ -1,6 +1,6 @@
 import { Doc, Id } from "../../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../../_generated/server";
-import { childKindOf, IssueKind, PARENT_KIND } from "../../../lib/issue-key";
+import { childKindOf, IssueKind, PARENT_KIND, PARENT_REQUIRED } from "../../../lib/issue-key";
 import { ActivityActor, changedFields, logFieldChanges } from "../activity";
 
 type Placement = {
@@ -22,10 +22,10 @@ type ParentRule = {
 };
 
 const PARENT_RULES: Record<IssueKind, ParentRule> = {
-  epic: { parent: PARENT_KIND.epic, parentRequired: false, projectRequired: true },
-  feature: { parent: PARENT_KIND.feature, parentRequired: true, projectRequired: false },
-  story: { parent: PARENT_KIND.story, parentRequired: false, projectRequired: false },
-  subtask: { parent: PARENT_KIND.subtask, parentRequired: true, projectRequired: false },
+  epic: { parent: PARENT_KIND.epic, parentRequired: PARENT_REQUIRED.epic, projectRequired: true },
+  feature: { parent: PARENT_KIND.feature, parentRequired: PARENT_REQUIRED.feature, projectRequired: false },
+  story: { parent: PARENT_KIND.story, parentRequired: PARENT_REQUIRED.story, projectRequired: false },
+  subtask: { parent: PARENT_KIND.subtask, parentRequired: PARENT_REQUIRED.subtask, projectRequired: false },
 };
 
 function article(kind: IssueKind): string {
