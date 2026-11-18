@@ -199,12 +199,6 @@ function describeActivity(entry: ActivityEntry): ReactNode {
           removed label <Emphasis>{oldValue}</Emphasis>
         </>
       );
-    case "child_deleted":
-      return (
-        <>
-          deleted sub-issue <Emphasis>{oldValue}</Emphasis>
-        </>
-      );
     default:
       if (field) {
         return describeFieldChange(field, newValue);

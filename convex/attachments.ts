@@ -4,7 +4,6 @@ import { ATTACHMENT_TOO_LARGE, MAX_ATTACHMENT_BYTES } from "../lib/api-contract"
 import { invalid, refuse } from "./lib/refusals";
 import { capPage, getOrgIssue } from "./issues";
 import { logActivity } from "./lib/activity";
-import { deleteAttachmentFiles } from "./lib/issueCleanup";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { inOrg, requireOrgRow } from "./lib/orgRows";
 
@@ -122,7 +121,7 @@ export const remove = orgMutation({
       refuse("Only the uploader or an admin can delete an attachment");
     }
 
-    await deleteAttachmentFiles(ctx, [attachment]);
+    await ctx.storage.delete(attachment.storageId);
     await ctx.db.delete(attachment._id);
 
     await logActivity(ctx, {

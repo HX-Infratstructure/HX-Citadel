@@ -1,8 +1,11 @@
 import { closestCenter, CollisionDetection, pointerWithin, UniqueIdentifier } from "@dnd-kit/core";
+import type { OptimisticLocalStore } from "convex/browser";
+import { api } from "../../convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 
 type RankedStory = { _id: string; title: string };
-type RankedIssue = { _id: string; sortOrder: number };
-type IssueUpdate = { issueId: string; sortOrder?: number; cycleId?: string | null };
+type RankedIssue = { _id: string; sortOrder: number; _creationTime: number };
+type BacklogUpdate = { issueId: Id<"issues">; sortOrder?: number; cycleId?: Id<"cycles"> | null };
 type Dragged = { active: { id: UniqueIdentifier } };
 type DraggedOver = Dragged & { over: { id: UniqueIdentifier } | null };
 
@@ -51,22 +54,24 @@ export function rankAnnouncements(stories: RankedStory[], moreToLoad: boolean) {
 export const rankCollision: CollisionDetection = (args) =>
   args.pointerCoordinates && pointerWithin(args).length === 0 ? [] : closestCenter(args);
 
+/** Highest first, in the order `listBacklog` reads `by_team_and_sort_order`: rank, then creation time. */
+const byRank = (a: RankedIssue, b: RankedIssue) => b.sortOrder - a.sortOrder || b._creationTime - a._creationTime;
+
 /**
- * The page that holds `sortOrder`. Loaded pages are consecutive rank ranges, so it is the page
- * with the highest lowest rank at or below `sortOrder`, or the bottom page when none is.
+ * The page that holds `story`. Loaded pages are consecutive rank ranges, so it is the top page whose
+ * lowest row sorts at or below `story`, or the bottom page when none does. Empty pages hold no range.
  */
-function pageHolding(pages: RankedIssue[][], sortOrder: number): number {
-  const lowest = pages.map((page) => page.at(-1)?.sortOrder);
-  const ranks = lowest.filter((rank) => rank !== undefined);
-  const below = ranks.filter((rank) => rank <= sortOrder);
-  return lowest.indexOf(below.length > 0 ? Math.max(...below) : Math.min(...ranks));
+function pageHolding(pages: RankedIssue[][], story: RankedIssue): number {
+  const ends = pages.flatMap((page, index) => (page.length > 0 ? [{ index, lowest: page[page.length - 1] }] : []));
+  ends.sort((a, b) => byRank(a.lowest, b.lowest));
+  return (ends.find(({ lowest }) => byRank(lowest, story) >= 0) ?? ends[ends.length - 1]).index;
 }
 
 /**
- * The loaded backlog pages after an update: a planned story leaves the backlog, and a
- * reranked story moves to the page that holds its new rank, in rank order.
+ * The pages of one loaded list after an update: a planned story leaves the backlog, and a reranked
+ * story moves to the page that holds its new rank, in rank order.
  */
-export function backlogAfterUpdate<T extends RankedIssue>(pages: T[][], update: IssueUpdate): T[][] {
+function backlogAfterUpdate<T extends RankedIssue>(pages: T[][], update: BacklogUpdate): T[][] {
   const without = pages.map((page) => page.filter((issue) => issue._id !== update.issueId));
   if (update.cycleId) {
     return without;
@@ -76,8 +81,25 @@ export function backlogAfterUpdate<T extends RankedIssue>(pages: T[][], update: 
   if (sortOrder === undefined || story === undefined) {
     return pages;
   }
-  const target = pageHolding(pages, sortOrder);
-  return without.map((page, index) =>
-    index === target ? [...page, { ...story, sortOrder }].sort((a, b) => b.sortOrder - a.sortOrder) : page
-  );
+  const moved = { ...story, sortOrder };
+  const target = pageHolding(pages, moved);
+  return without.map((page, index) => (index === target ? [...page, moved].sort(byRank) : page));
+}
+
+/** Applies an update to every loaded backlog list of the team, each `usePaginatedQuery` on its own. */
+export function updateBacklog(localStore: OptimisticLocalStore, teamId: Id<"teams">, update: BacklogUpdate) {
+  const loaded = localStore
+    .getAllQueries(api.issues.listBacklog)
+    .flatMap(({ args, value }) => (value && args.teamId === teamId ? [{ args, value }] : []));
+  const lists = new Map<number | undefined, typeof loaded>();
+  for (const query of loaded) {
+    const { id } = query.args.paginationOpts;
+    lists.set(id, [...(lists.get(id) ?? []), query]);
+  }
+  for (const list of lists.values()) {
+    const pages = backlogAfterUpdate(list.map(({ value }) => value.page), update);
+    list.forEach(({ args, value }, index) => {
+      localStore.setQuery(api.issues.listBacklog, args, { ...value, page: pages[index] });
+    });
+  }
 }

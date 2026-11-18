@@ -250,8 +250,8 @@ export const listIssues = internalQuery({
       .query("issues")
       .withIndex("by_team", (q) => q.eq("teamId", team._id))
       .order("desc")
-      // No index covers team plus workspace, an optional status and an assignee; the filter runs before the page limit, so no match is cut.
-      // `capPage` caps the rows the filter reads, so a page can come back short, or empty, with a cursor to the rest.
+      // No index covers team, workspace, an optional status and an assignee, so the filter runs inside the query.
+      // `capPage` caps the rows it reads: a page can come back short, or empty, with a cursor that skips no match.
       // eslint-disable-next-line @convex-dev/no-filter-in-query
       .filter((q) =>
         q.and(

@@ -107,9 +107,10 @@ const PAGE_READ_BYTES = 8 * 1024 * 1024;
 
 /**
  * `paginationOpts` with the page held to at most `LIST_LIMIT` items and `PAGE_READ_ROWS` rows or `PAGE_READ_BYTES`
- * read, whatever the client asks for. A page that runs out of reads first comes back `SplitRequired`: its
- * `continueCursor` resumes after the last row read, and `usePaginatedQuery` replaces it by its two halves at
- * `splitCursor`, each a smaller read.
+ * read, whatever the client asks for. A page that runs out of reads first comes back `SplitRequired`, holding every
+ * match among the rows it read, and its `continueCursor` resumes after the last row read. A caller that follows
+ * `continueCursor`, like the REST list, misses nothing; `usePaginatedQuery` replaces the page by its two halves at
+ * `splitCursor`.
  */
 export function capPage(paginationOpts: PaginationOptions): PaginationOptions {
   return {

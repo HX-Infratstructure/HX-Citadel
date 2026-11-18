@@ -47,7 +47,7 @@ async function setup() {
     asMember.mutation(api.issues.create, { teamId, title: `A ${kind}`, kind, parentIssueId });
 
   /** One cleanup run over the issues still there, in order, as an admin clear runs it. */
-  const remove = (...issueIds: Id<"issues">[]) =>
+  const cleanupRun = (...issueIds: Id<"issues">[]) =>
     t.run(async (ctx) => {
       const issues = await Promise.all(issueIds.map((issueId) => ctx.db.get(issueId)));
       return await deleteIssuesWithOwnedRows(ctx, issues.filter((issue) => issue !== null));
@@ -74,8 +74,12 @@ async function setup() {
       return storageId;
     });
 
-  const attachFile = (issueId: Id<"issues">, storageId: Id<"_storage">) =>
-    t.run((ctx) => ctx.db.insert("attachments", attachmentRow(issueId, storageId)));
+  const addAttachments = (issueId: Id<"issues">, count: number) =>
+    t.run(async (ctx) => {
+      for (let i = 0; i < count; i++) {
+        await ctx.db.insert("attachments", attachmentRow(issueId, await ctx.storage.store(new Blob(["proof"]))));
+      }
+    });
 
   const relate = (issueId: Id<"issues">, relatedIssueId: Id<"issues">) =>
     t.run((ctx) =>
@@ -115,6 +119,8 @@ async function setup() {
 
   const storedFile = (storageId: Id<"_storage">) => t.run((ctx) => ctx.db.system.get(storageId));
 
+  const storedFileCount = () => t.run(async (ctx) => (await ctx.db.system.query("_storage").collect()).length);
+
   const issueDoc = (issueId: Id<"issues">) => t.run((ctx) => ctx.db.get(issueId));
 
   const addComments = (issueId: Id<"issues">, count: number, body: string) =>
@@ -127,12 +133,13 @@ async function setup() {
   return {
     create,
     addComments,
-    remove,
+    cleanupRun,
     addOwnedRows,
-    attachFile,
+    addAttachments,
     relate,
     ownedRowCounts,
     storedFile,
+    storedFileCount,
     issueDoc,
   };
 }
@@ -142,6 +149,8 @@ const HEAVY_COMMENTS = 4_000;
 const COMMENT_BYTES = 5 * 1024;
 /** Comments one test transaction writes, well inside the limits. */
 const SEED_BATCH = 1_000;
+/** Attachments on one issue, each with its own file: more rows than one run deletes. */
+const MANY_ATTACHMENTS = 4_100;
 /** More runs than the heavy issue needs, so a cleanup that never finishes fails instead of looping. */
 const MAX_RUNS = 10;
 
@@ -157,7 +166,7 @@ const NONE = {
 
 describe("deleting issues with their owned rows leaves nothing behind", () => {
   test("a story and its sub-task lose every owned row and stored file", async () => {
-    const { create, remove, addOwnedRows, relate, ownedRowCounts, storedFile, issueDoc } =
+    const { create, cleanupRun, addOwnedRows, relate, ownedRowCounts, storedFile, issueDoc } =
       await setup();
     const storyId = await create("story");
     const subtaskId = await create("subtask", storyId);
@@ -167,7 +176,7 @@ describe("deleting issues with their owned rows leaves nothing behind", () => {
     await relate(storyId, otherId);
     await relate(subtaskId, otherId);
 
-    await remove(subtaskId, storyId);
+    await cleanupRun(subtaskId, storyId);
 
     expect(await ownedRowCounts(storyId)).toEqual(NONE);
     expect(await ownedRowCounts(subtaskId)).toEqual(NONE);
@@ -177,45 +186,19 @@ describe("deleting issues with their owned rows leaves nothing behind", () => {
     expect(await issueDoc(subtaskId)).toBeNull();
   });
 
-  test("a stored file stays while another issue's attachment still uses it", async () => {
-    const { create, remove, addOwnedRows, attachFile, storedFile } = await setup();
-    const firstId = await create("story");
-    const secondId = await create("story");
-    const sharedFile = await addOwnedRows(firstId);
-    await attachFile(secondId, sharedFile);
-
-    await remove(firstId);
-    expect(await storedFile(sharedFile)).not.toBeNull();
-
-    await remove(secondId);
-    expect(await storedFile(sharedFile)).toBeNull();
-  });
-
-  test("a file two attachments of one issue share is deleted once with the issue", async () => {
-    const { create, remove, addOwnedRows, attachFile, storedFile, issueDoc } = await setup();
-    const storyId = await create("story");
-    const sharedFile = await addOwnedRows(storyId);
-    await attachFile(storyId, sharedFile);
-
-    await remove(storyId);
-
-    expect(await storedFile(sharedFile)).toBeNull();
-    expect(await issueDoc(storyId)).toBeNull();
-  });
-
   test("a relation where the deleted issue is the target goes too", async () => {
-    const { create, remove, relate, ownedRowCounts } = await setup();
+    const { create, cleanupRun, relate, ownedRowCounts } = await setup();
     const sourceId = await create("story");
     const targetId = await create("story");
     await relate(sourceId, targetId);
 
-    await remove(targetId);
+    await cleanupRun(targetId);
 
     expect((await ownedRowCounts(sourceId)).relationsAsSource).toBe(0);
   });
 
   test("another issue's comments, labels and relations are untouched", async () => {
-    const { create, remove, addOwnedRows, relate, ownedRowCounts, storedFile } = await setup();
+    const { create, cleanupRun, addOwnedRows, relate, ownedRowCounts, storedFile } = await setup();
     const deletedId = await create("story");
     const keptId = await create("story");
     const thirdId = await create("story");
@@ -225,7 +208,7 @@ describe("deleting issues with their owned rows leaves nothing behind", () => {
     await relate(thirdId, keptId);
     const before = await ownedRowCounts(keptId);
 
-    await remove(deletedId);
+    await cleanupRun(deletedId);
 
     expect(await ownedRowCounts(keptId)).toEqual(before);
     expect(before.comments).toBe(1);
@@ -236,7 +219,7 @@ describe("deleting issues with their owned rows leaves nothing behind", () => {
   });
 
   test("an issue that owns more than one mutation can read goes over several runs, each within the limits", async () => {
-    const { create, remove, addOwnedRows, addComments, ownedRowCounts, issueDoc } = await setup();
+    const { create, cleanupRun, addOwnedRows, addComments, ownedRowCounts, issueDoc } = await setup();
     const storyId = await create("story");
     const subtaskId = await create("subtask", storyId);
     await addOwnedRows(subtaskId);
@@ -245,8 +228,8 @@ describe("deleting issues with their owned rows leaves nothing behind", () => {
     }
 
     const finishedRuns: boolean[] = [];
-    while (finishedRuns.length < MAX_RUNS && !finishedRuns.includes(true)) {
-      finishedRuns.push((await remove(subtaskId, storyId)).finished);
+    while (finishedRuns.length < MAX_RUNS && finishedRuns.at(-1) !== true) {
+      finishedRuns.push((await cleanupRun(subtaskId, storyId)).finished);
     }
 
     expect(finishedRuns.length).toBeGreaterThan(1);
@@ -256,4 +239,23 @@ describe("deleting issues with their owned rows leaves nothing behind", () => {
     expect(await ownedRowCounts(storyId)).toEqual(NONE);
     expect(await ownedRowCounts(subtaskId)).toEqual(NONE);
   });
+
+  test("an issue with more attachments than one run deletes goes in a few runs, with every file", async () => {
+    const { create, cleanupRun, addAttachments, ownedRowCounts, storedFileCount, issueDoc } = await setup();
+    const storyId = await create("story");
+    for (let seeded = 0; seeded < MANY_ATTACHMENTS; seeded += SEED_BATCH) {
+      await addAttachments(storyId, Math.min(SEED_BATCH, MANY_ATTACHMENTS - seeded));
+    }
+
+    const finishedRuns: boolean[] = [];
+    while (finishedRuns.length < MAX_RUNS && finishedRuns.at(-1) !== true) {
+      finishedRuns.push((await cleanupRun(storyId)).finished);
+    }
+
+    expect(finishedRuns.length).toBeGreaterThan(1);
+    expect(finishedRuns.at(-1)).toBe(true);
+    expect(await issueDoc(storyId)).toBeNull();
+    expect(await ownedRowCounts(storyId)).toEqual(NONE);
+    expect(await storedFileCount()).toBe(0);
+  }, 60_000);
 });

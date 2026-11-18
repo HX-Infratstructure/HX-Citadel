@@ -20,7 +20,7 @@ import { api } from "@/convex/_generated/api";
 import { Doc, Id } from "@/convex/_generated/dataModel";
 import { errorMessage } from "@/lib/error-message";
 import { sortOrderBetween } from "@/lib/sort-order";
-import { backlogAfterUpdate, canDropAt, LOAD_MORE_TO_PLACE, rankAnnouncements, rankCollision } from "./backlog-dnd";
+import { canDropAt, LOAD_MORE_TO_PLACE, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
 import { BacklogRow } from "./backlog-row";
 
 /** The new `sortOrder` for the row moved from `from` to `to`, or undefined when it stays put. */
@@ -47,18 +47,8 @@ export function BacklogView({
   moreToLoad: boolean;
 }) {
   const cycles = useQuery(api.cycles.listByTeam, { teamId: team._id });
-  const updateIssue = useMutation(api.issues.update).withOptimisticUpdate(
-    (localStore, args) => {
-      const loaded = localStore
-        .getAllQueries(api.issues.listBacklog)
-        .flatMap(({ args: pageArgs, value }) =>
-          value && pageArgs.teamId === team._id ? [{ pageArgs, value }] : []
-        );
-      const pages = backlogAfterUpdate(loaded.map(({ value }) => value.page), args);
-      loaded.forEach(({ pageArgs, value }, index) => {
-        localStore.setQuery(api.issues.listBacklog, pageArgs, { ...value, page: pages[index] });
-      });
-    }
+  const updateIssue = useMutation(api.issues.update).withOptimisticUpdate((localStore, args) =>
+    updateBacklog(localStore, team._id, args)
   );
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),

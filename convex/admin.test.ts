@@ -195,9 +195,6 @@ async function addIssues(t: TestConvex, teamId: Id<"teams">, count: number) {
   });
 }
 
-/** Attachments sharing one legacy file: a page of issues re-reading every row left would pass Convex's 32,000 reads. */
-const LEGACY_FILE_ROWS = 400;
-
 /** Activity rows on one issue: more than one run deletes, and more than one Convex mutation can write. */
 const HEAVY_ACTIVITY = 20_000;
 
@@ -211,32 +208,6 @@ async function addActivity(t: TestConvex, issueId: Id<"issues">, count: number) 
       }
     });
   }
-}
-
-/** Issues with their own files each: within the row budget, and past Convex's 4,096 queries in file lookups. */
-const ISSUES_WITH_FILES = 90;
-const FILES_PER_ISSUE = 40;
-
-/** Gives the issue `count` attachments, each with its own stored file. Returns the files. */
-async function addFiles(t: TestConvex, issueId: Id<"issues">, count: number) {
-  return await t.run(async (ctx) => {
-    const issue = (await ctx.db.get(issueId))!;
-    const files: Id<"_storage">[] = [];
-    for (let index = 0; index < count; index++) {
-      const storageId = await ctx.storage.store(new Blob([`file ${index}`]));
-      await ctx.db.insert("attachments", {
-        orgId: issue.orgId,
-        issueId,
-        storageId,
-        fileName: `${index}.txt`,
-        fileType: "text/plain",
-        fileSize: 6,
-        uploadedBy: issue.creatorId,
-      });
-      files.push(storageId);
-    }
-    return files;
-  });
 }
 
 /** Comments on one issue: within the row budget, and past Convex's 16 MiB read limit in all. */
@@ -692,34 +663,6 @@ async function queueRunThenClearTeam(t: TestConvex, teamId: Id<"teams">) {
   expect(await t.run((ctx) => ctx.db.get(teamId))).toBeNull();
 }
 
-/** A legacy attachment's file name, near Convex's 1 MiB document limit. */
-const LARGE_FILE_NAME_CHARS = 900 * 1024;
-/** Files the cleared story shares with a large row in the kept team: one run looking them all up reads past the limit. */
-const SHARED_LARGE_FILES = Math.ceil(TRANSACTION_READ_BYTES / LARGE_FILE_NAME_CHARS) + 2;
-
-/**
- * Stores `count` files, each attached to `largeIssueId` with a large file name and then to each of
- * `sharedWith` with a short one, as legacy rows were. One transaction per file, so no test write passes
- * the limit. Returns the files.
- */
-async function addLargeFiles(t: TestConvex, largeIssueId: Id<"issues">, count: number, sharedWith: Id<"issues">[]) {
-  const files: Id<"_storage">[] = [];
-  for (let index = 0; index < count; index++) {
-    const storageId = await t.run(async (ctx) => {
-      const { orgId, creatorId } = (await ctx.db.get(largeIssueId))!;
-      const storageId = await ctx.storage.store(new Blob([`large ${index}`]));
-      const row = { orgId, storageId, fileType: "text/plain", fileSize: 6, uploadedBy: creatorId };
-      await ctx.db.insert("attachments", { ...row, issueId: largeIssueId, fileName: "n".repeat(LARGE_FILE_NAME_CHARS) });
-      for (const issueId of sharedWith) {
-        await ctx.db.insert("attachments", { ...row, issueId, fileName: `${index}.txt` });
-      }
-      return storageId;
-    });
-    files.push(storageId);
-  }
-  return files;
-}
-
 describe("admin.clearTeamContent", () => {
   test("deletes one team's content and the team, and keeps the other team, org rows and the mirror", async () => {
     const { t, cleared, kept } = await setupTeams();
@@ -760,61 +703,6 @@ describe("admin.clearTeamContent", () => {
     }));
     expect(files.cleared).toBeNull();
     expect(files.kept).not.toBeNull();
-  });
-
-  test("keeps a file that an attachment in the other team still uses", async () => {
-    const { t, cleared, kept } = await setupTeams();
-    const keptAttachmentId = await t.run(async (ctx) => {
-      const keptStory = await ctx.db.get(kept.storyId);
-      return ctx.db.insert("attachments", {
-        orgId: keptStory!.orgId,
-        issueId: kept.storyId,
-        storageId: cleared.storageId,
-        fileName: "shared.txt",
-        fileType: "text/plain",
-        fileSize: 3,
-        uploadedBy: keptStory!.creatorId,
-      });
-    });
-
-    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
-
-    const after = await t.run(async (ctx) => ({
-      file: await ctx.db.system.get(cleared.storageId),
-      keptAttachment: await ctx.db.get(keptAttachmentId),
-    }));
-    expect(after.file).not.toBeNull();
-    expect(after.keptAttachment).not.toBeNull();
-  });
-
-  test("a legacy file 400 attachments share is cleared within the read limit, and goes with its last row", async () => {
-    vi.useFakeTimers();
-    const { t, cleared } = await setupTeams();
-    await addIssues(t, cleared.teamId, LEGACY_FILE_ROWS);
-    const fileId = await t.run(async (ctx) => {
-      const storageId = await ctx.storage.store(new Blob(["legacy"]));
-      const issues = await ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", cleared.teamId)).collect();
-      for (const issue of issues) {
-        await ctx.db.insert("attachments", {
-          orgId: issue.orgId,
-          issueId: issue._id,
-          storageId,
-          fileName: "legacy.txt",
-          fileType: "text/plain",
-          fileSize: 6,
-          uploadedBy: issue.creatorId,
-        });
-      }
-      return storageId;
-    });
-
-    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
-    expect(await t.run((ctx) => ctx.db.system.get(fileId))).not.toBeNull();
-
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
-    expect(await t.run((ctx) => ctx.db.system.get(fileId))).toBeNull();
-    vi.useRealTimers();
   });
 
   test("clears a team larger than one page over the scheduled runs", async () => {
@@ -932,91 +820,6 @@ describe("admin.clearTeamContent", () => {
     vi.useRealTimers();
   }, 60_000);
 
-  test("clears a team whose issues have more files than one run can look up over the scheduled runs, every run succeeding", async () => {
-    vi.useFakeTimers();
-    const { t, cleared } = await setupTeams();
-    await addIssues(t, cleared.teamId, ISSUES_WITH_FILES);
-    const teamIssues = () =>
-      t.run((ctx) => ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", cleared.teamId)).collect());
-    const issueIds = new Set((await teamIssues()).map((issue) => issue._id));
-    const files: Id<"_storage">[] = [];
-    for (const issueId of issueIds) {
-      files.push(...(await addFiles(t, issueId, FILES_PER_ISSUE)));
-    }
-
-    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-
-    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
-    const left = await t.run(async (ctx) => {
-      const stored = new Set((await ctx.db.system.query("_storage").collect()).map((file) => file._id));
-      const attachments = await ctx.db.query("attachments").collect();
-      return {
-        team: await ctx.db.get(cleared.teamId),
-        files: files.filter((file) => stored.has(file)),
-        attachments: attachments.filter((attachment) => issueIds.has(attachment.issueId)),
-      };
-    });
-    expect(left).toEqual({ team: null, files: [], attachments: [] });
-    expect(await teamIssues()).toEqual([]);
-    vi.useRealTimers();
-  }, 60_000);
-
-  test("clears a team whose files share large rows in the other team over the scheduled runs, every row with its file", async () => {
-    vi.useFakeTimers();
-    const { t, cleared, kept } = await setupTeams();
-    const shared = await addLargeFiles(t, kept.storyId, SHARED_LARGE_FILES, [cleared.storyId]);
-    const leavingOnly = [cleared.storageId, ...(await addFiles(t, cleared.storyId, FILES_PER_ISSUE))];
-    const storedOf = (files: Id<"_storage">[]) =>
-      t.run(async (ctx) => {
-        const stored = await Promise.all(files.map((file) => ctx.db.system.get(file)));
-        return files.filter((_, index) => stored[index] !== null);
-      });
-    const leftOnStory = () =>
-      t.run((ctx) => ctx.db.query("attachments").withIndex("by_issue", (q) => q.eq("issueId", cleared.storyId)).collect());
-
-    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
-
-    const leftAfterOneRun = await leftOnStory();
-    expect(leftAfterOneRun.length).toBeGreaterThan(0);
-    const filesLeft = leftAfterOneRun.map((attachment) => attachment.storageId);
-    expect(await storedOf(filesLeft)).toEqual(filesLeft);
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-
-    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
-    expect(await leftOnStory()).toEqual([]);
-    expect(await t.run((ctx) => ctx.db.get(cleared.teamId))).toBeNull();
-    expect(await storedOf(leavingOnly)).toEqual([]);
-    expect(await storedOf(shared)).toEqual(shared);
-    for (const file of shared) {
-      const owner = await t.run(async (ctx) => {
-        const rows = await ctx.db.query("attachments").withIndex("by_storage", (q) => q.eq("storageId", file)).collect();
-        return rows.map((row) => row.issueId);
-      });
-      expect(owner).toEqual([kept.storyId]);
-    }
-    vi.useRealTimers();
-  }, 60_000);
-
-  test("clears an issue whose own large attachments spend a run's budget, a file a run at least", async () => {
-    vi.useFakeTimers();
-    const { t, cleared } = await setupTeams();
-    const files = await addLargeFiles(t, cleared.storyId, Math.ceil(CLEANUP_BUDGET.bytes / LARGE_FILE_NAME_CHARS), []);
-
-    const counts = await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
-    expect(counts.attachments).toBeGreaterThan(0);
-    expect(counts.attachments).toBeLessThan(files.length);
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-
-    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
-    const left = await t.run(async (ctx) => ({
-      story: await ctx.db.get(cleared.storyId),
-      files: (await Promise.all(files.map((file) => ctx.db.system.get(file)))).filter((file) => file !== null),
-    }));
-    expect(left).toEqual({ story: null, files: [] });
-    vi.useRealTimers();
-  }, 60_000);
-
   test("clears a team whose issue's comments pass the read limit over the scheduled runs, every run succeeding", async () => {
     vi.useFakeTimers();
     const { t, cleared } = await setupTeams();
@@ -1110,27 +913,29 @@ describe("admin.clearTeamContent", () => {
     const foreign = await t.run(async (ctx) => {
       const { orgId, userId } = await seedMirror(ctx, "org_foreign");
       const issueId = cleared.storyId;
-      return [
+      const storageId = await ctx.storage.store(new Blob(["foreign"]));
+      const rows = [
         await ctx.db.insert("comments", { orgId, issueId, authorId: userId, body: "foreign" }),
         await ctx.db.insert("activity", { orgId, issueId, actorId: userId, type: "commented" }),
         await ctx.db.insert("decisions", { orgId, issueId, askedBy: userId, question: "foreign", status: "open" }),
         await ctx.db.insert("attachments", {
           orgId,
           issueId,
-          storageId: cleared.storageId,
+          storageId,
           fileName: "foreign.txt",
           fileType: "text/plain",
           fileSize: 3,
           uploadedBy: userId,
         }),
       ];
+      return { rows, storageId };
     });
 
     await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
 
     const after = await t.run(async (ctx) => ({
-      rows: await Promise.all(foreign.map((id) => ctx.db.get(id))),
-      file: await ctx.db.system.get(cleared.storageId),
+      rows: await Promise.all(foreign.rows.map((id) => ctx.db.get(id))),
+      file: await ctx.db.system.get(foreign.storageId),
     }));
     expect(after.rows.every((row) => row !== null)).toBe(true);
     expect(after.file).not.toBeNull();

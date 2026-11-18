@@ -6,8 +6,6 @@ import { nextSubNumber } from "./levels";
 
 export const TESTING_SUBTASK_TITLE = "Complete testing";
 
-type GuardedAction = "moved";
-
 const PROOF_PROTOCOLS = new Set(["http:", "https:"]);
 
 /** Every new story starts with its Complete testing sub-task, KEY-n.1, logged as created by the story's creator. */
@@ -39,9 +37,9 @@ export async function createTestingSubtask(
   return subtaskId;
 }
 
-export function assertNotTestingSubtask(issue: Doc<"issues">, action: GuardedAction): void {
+export function assertNotTestingSubtask(issue: Doc<"issues">): void {
   if (issue.testing) {
-    refuse(`The ${TESTING_SUBTASK_TITLE} sub-task can't be ${action}`);
+    refuse(`The ${TESTING_SUBTASK_TITLE} sub-task can't be moved`);
   }
 }
 
