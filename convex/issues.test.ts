@@ -28,7 +28,6 @@ async function setup() {
       clerkOrgId: ORG_CLAIM,
       name: "Test Org",
       slug: "test-org",
-      plan: "free",
     });
     await ctx.db.insert("members", {
       orgId,

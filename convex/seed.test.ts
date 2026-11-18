@@ -37,13 +37,11 @@ async function setup() {
       clerkOrgId: SEEDED_ORG,
       name: "Seeded Org",
       slug: "seeded-org",
-      plan: "free",
     });
     const otherOrgId = await ctx.db.insert("organizations", {
       clerkOrgId: OTHER_ORG,
       name: "Other Org",
       slug: "other-org",
-      plan: "free",
     });
     await ctx.db.insert("members", {
       orgId: seededOrgId,

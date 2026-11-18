@@ -3,7 +3,7 @@ import { query } from "./_generated/server";
 import { orgQuery } from "./lib/customFunctions";
 import { getCurrentUserOrNull } from "./lib/auth";
 import { findMembership, findOrgByClerkId } from "./lib/mirror";
-import { planValidator, memberRoleValidator } from "./schema";
+import { memberRoleValidator } from "./schema";
 
 const orgShape = {
   _id: v.id("organizations"),
@@ -12,8 +12,6 @@ const orgShape = {
   name: v.string(),
   slug: v.optional(v.string()),
   imageUrl: v.optional(v.string()),
-  plan: v.optional(planValidator),
-  subscriptionStatus: v.optional(v.string()),
 };
 
 /**

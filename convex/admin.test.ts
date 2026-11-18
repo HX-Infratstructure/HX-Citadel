@@ -55,7 +55,6 @@ async function seedMirror(ctx: MutationCtx, clerkOrgId: string) {
     clerkOrgId,
     name: clerkOrgId,
     slug: clerkOrgId,
-    plan: "free",
   });
   await ctx.db.insert("members", {
     orgId,

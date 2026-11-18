@@ -29,7 +29,6 @@ async function setup() {
     const orgId = await ctx.db.insert("organizations", {
       clerkOrgId: "org_a",
       name: "Org A",
-      plan: "free",
     });
     const memberId = await ctx.db.insert("members", {
       orgId,

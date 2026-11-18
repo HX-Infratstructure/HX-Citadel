@@ -22,12 +22,6 @@ export const issuePriorityValidator = v.union(
   v.literal("low")
 );
 
-export const planValidator = v.union(
-  v.literal("free"),
-  v.literal("pro"),
-  v.literal("enterprise")
-);
-
 export const memberRoleValidator = v.union(
   v.literal("admin"),
   v.literal("member")
@@ -63,8 +57,6 @@ export default defineSchema({
     name: v.string(),
     slug: v.optional(v.string()),
     imageUrl: v.optional(v.string()),
-    plan: v.optional(planValidator),
-    subscriptionStatus: v.optional(v.string()),
   })
     .index("by_clerk_org_id", ["clerkOrgId"])
     .index("by_slug", ["slug"]),
@@ -112,8 +104,6 @@ export default defineSchema({
     dueDate: v.optional(v.number()),
     /** Fractional ranking for board/list ordering */
     sortOrder: v.number(),
-    /** Embedding for semantic duplicate detection (Track D fills this) */
-    embedding: v.optional(v.array(v.float64())),
   })
     .index("by_org", ["orgId"])
     .index("by_team", ["teamId"])
@@ -130,11 +120,6 @@ export default defineSchema({
     .searchIndex("search_description", {
       searchField: "description",
       filterFields: ["orgId", "teamId"],
-    })
-    .vectorIndex("by_embedding", {
-      vectorField: "embedding",
-      dimensions: 1536,
-      filterFields: ["orgId"],
     }),
 
   labels: defineTable({

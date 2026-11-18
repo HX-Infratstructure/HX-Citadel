@@ -22,7 +22,6 @@ import type * as lib_activity from "../lib/activity.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_customFunctions from "../lib/customFunctions.js";
 import type * as lib_mirror from "../lib/mirror.js";
-import type * as migrations from "../migrations.js";
 import type * as mirror from "../mirror.js";
 import type * as organizations from "../organizations.js";
 import type * as presenceFns from "../presenceFns.js";
@@ -55,7 +54,6 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   "lib/customFunctions": typeof lib_customFunctions;
   "lib/mirror": typeof lib_mirror;
-  migrations: typeof migrations;
   mirror: typeof mirror;
   organizations: typeof organizations;
   presenceFns: typeof presenceFns;

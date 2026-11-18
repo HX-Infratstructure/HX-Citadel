@@ -22,7 +22,6 @@ describe("projects.create on a free organization", () => {
         clerkOrgId: ORG_CLAIM,
         name: "Test Org",
         slug: "test-org",
-        plan: "free",
       });
       await ctx.db.insert("members", {
         orgId,
