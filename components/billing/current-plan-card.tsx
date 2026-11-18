@@ -25,6 +25,24 @@ function statusBadgeVariant(
   return "secondary";
 }
 
+function ManageSubscription({ isAdmin }: { isAdmin: boolean }) {
+  if (!isAdmin) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Only workspace admins can manage the subscription.
+      </p>
+    );
+  }
+  return (
+    <SubscriptionDetailsButton
+      for="organization"
+      onSubscriptionCancel={() => toast.success("Subscription cancelled")}
+    >
+      <Button size="sm">Manage subscription</Button>
+    </SubscriptionDetailsButton>
+  );
+}
+
 /**
  * Current-plan summary for the org billing settings page, with Clerk's
  * subscription drawer behind a custom button for admins.
@@ -78,20 +96,7 @@ export function CurrentPlanCard({ org }: { org: Doc<"organizations"> }) {
 
         <div className="mt-4 flex items-center gap-2 border-t pt-3">
           {isPaid ? (
-            isAdmin ? (
-              <SubscriptionDetailsButton
-                for="organization"
-                onSubscriptionCancel={() =>
-                  toast.success("Subscription cancelled")
-                }
-              >
-                <Button size="sm">Manage subscription</Button>
-              </SubscriptionDetailsButton>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Only workspace admins can manage the subscription.
-              </p>
-            )
+            <ManageSubscription isAdmin={isAdmin} />
           ) : (
             <Button size="sm" asChild>
               <Link href="/pricing">

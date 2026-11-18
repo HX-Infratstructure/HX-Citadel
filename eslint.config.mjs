@@ -7,6 +7,8 @@ const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
   ...convexPlugin.configs.recommended,
+  // AGENTS.md "Code standards", rule 5 "Keep code flat".
+  { rules: { "no-nested-ternary": "error" } },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

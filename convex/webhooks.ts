@@ -282,7 +282,9 @@ async function syncSubscription(
       itemPlan !== "free" &&
       (item.status === "active" || item.status === "upcoming")
     ) {
-      plan = itemPlan === "enterprise" ? "enterprise" : plan === "enterprise" ? plan : itemPlan;
+      if (plan !== "enterprise") {
+        plan = itemPlan;
+      }
     }
   }
 

@@ -27,6 +27,16 @@ export function getErrorMessage(error: unknown): string {
   return "";
 }
 
+function limitKind(noun: string): PlanLimitKind {
+  if (noun.startsWith("issue")) {
+    return "issues";
+  }
+  if (noun.startsWith("project")) {
+    return "projects";
+  }
+  return "seats";
+}
+
 /** Match a free-plan limit error message, returning which limit was hit. */
 export function matchPlanLimitMessage(
   message: string
@@ -36,11 +46,7 @@ export function matchPlanLimitMessage(
     return null;
   }
   const noun = match[2].toLowerCase();
-  const kind: PlanLimitKind = noun.startsWith("issue")
-    ? "issues"
-    : noun.startsWith("project")
-      ? "projects"
-      : "seats";
+  const kind = limitKind(noun);
   return { kind, limit: Number(match[1]) };
 }
 

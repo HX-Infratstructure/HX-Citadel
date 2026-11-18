@@ -23,6 +23,22 @@ const TOOL_LABELS: Record<string, string> = {
   standupReport: "Gathering standup data",
 };
 
+function ToolStateIcon({
+  running,
+  failed,
+}: {
+  running: boolean;
+  failed: boolean;
+}) {
+  if (running) {
+    return <Loader2 className="size-3 animate-spin" />;
+  }
+  if (failed) {
+    return <CircleAlert className="size-3 text-destructive" />;
+  }
+  return <CircleCheck className="size-3 text-emerald-500" />;
+}
+
 function ToolChip({
   name,
   state,
@@ -39,13 +55,7 @@ function ToolChip({
       title={failed ? errorText : undefined}
       className="inline-flex w-fit items-center gap-1.5 rounded-md border bg-muted/40 px-2 py-1 text-xs text-muted-foreground"
     >
-      {running ? (
-        <Loader2 className="size-3 animate-spin" />
-      ) : failed ? (
-        <CircleAlert className="size-3 text-destructive" />
-      ) : (
-        <CircleCheck className="size-3 text-emerald-500" />
-      )}
+      <ToolStateIcon running={running} failed={failed} />
       <Wrench className="size-3" />
       {TOOL_LABELS[name] ?? name}
     </span>

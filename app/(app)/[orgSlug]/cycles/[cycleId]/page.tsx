@@ -26,6 +26,7 @@ import {
   cycleStatus,
   daysRemaining,
   daysUntilStart,
+  type CycleStatus,
 } from "@/components/cycles/cycle-meta";
 import { CycleStatusBadge } from "@/components/cycles/cycle-status-badge";
 import { EditCycleDialog } from "@/components/cycles/edit-cycle-dialog";
@@ -65,6 +66,16 @@ export default function CycleDetailPage() {
   }
 
   return <CycleDetail cycle={cycle} team={team} orgSlug={params.orgSlug} />;
+}
+
+function cycleTiming(cycle: Doc<"cycles">, status: CycleStatus): string {
+  if (status === "current") {
+    return `${daysRemaining(cycle)} days left`;
+  }
+  if (status === "upcoming") {
+    return `starts in ${daysUntilStart(cycle)} days`;
+  }
+  return "ended";
 }
 
 function CycleDetail({
@@ -108,12 +119,7 @@ function CycleDetail({
     }
   };
 
-  const timing =
-    status === "current"
-      ? `${daysRemaining(cycle)} days left`
-      : status === "upcoming"
-        ? `starts in ${daysUntilStart(cycle)} days`
-        : "ended";
+  const timing = cycleTiming(cycle, status);
 
   return (
     <>

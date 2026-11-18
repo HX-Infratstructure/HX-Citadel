@@ -60,6 +60,19 @@ function UsageRow({
   );
 }
 
+function limitReachedMessage(
+  issueLimitReached: boolean,
+  seatLimitReached: boolean
+): string {
+  if (issueLimitReached && seatLimitReached) {
+    return "You've reached the Free plan issue and seat limits.";
+  }
+  if (issueLimitReached) {
+    return "You've reached the Free plan issue limit.";
+  }
+  return "You've reached the Free plan seat limit.";
+}
+
 /**
  * Live usage against the free-tier caps enforced by convex/lib/limits.ts.
  * Paid plans show their seat allowance and unlimited usage.
@@ -148,11 +161,7 @@ export function UsageCard({ org }: { org: Doc<"organizations"> }) {
           <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-600 dark:text-amber-400">
             <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
             <span>
-              {issueLimitReached && seatLimitReached
-                ? "You've reached the Free plan issue and seat limits."
-                : issueLimitReached
-                  ? "You've reached the Free plan issue limit."
-                  : "You've reached the Free plan seat limit."}{" "}
+              {limitReachedMessage(issueLimitReached, seatLimitReached)}{" "}
               Upgrade below to keep your team moving.
             </span>
           </div>

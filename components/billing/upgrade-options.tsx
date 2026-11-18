@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import {
   BillingPeriod,
   ENTERPRISE_PLAN,
+  OrgPlan,
   PRO_PLAN,
   PlanDefinition,
   formatPrice,
@@ -20,6 +21,12 @@ import {
 import { cn } from "@/lib/utils";
 import { BillingPeriodToggle } from "./billing-period-toggle";
 
+const UPGRADES_BY_PLAN: Record<OrgPlan, PlanDefinition[]> = {
+  free: [PRO_PLAN, ENTERPRISE_PLAN],
+  pro: [ENTERPRISE_PLAN],
+  enterprise: [],
+};
+
 /**
  * Upgrade paths from the current plan, with Clerk checkout behind custom
  * buttons. Hidden entirely on Enterprise (nothing left to upgrade to).
@@ -27,12 +34,7 @@ import { BillingPeriodToggle } from "./billing-period-toggle";
 export function UpgradeOptions({ org }: { org: Doc<"organizations"> }) {
   const [period, setPeriod] = useState<BillingPeriod>("month");
 
-  const upgrades: PlanDefinition[] =
-    org.plan === "free"
-      ? [PRO_PLAN, ENTERPRISE_PLAN]
-      : org.plan === "pro"
-        ? [ENTERPRISE_PLAN]
-        : [];
+  const upgrades: PlanDefinition[] = UPGRADES_BY_PLAN[org.plan];
 
   if (upgrades.length === 0) {
     return null;

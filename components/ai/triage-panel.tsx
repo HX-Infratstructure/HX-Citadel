@@ -45,6 +45,25 @@ export function AiTriagePanel(props: IssueDetailSlotProps) {
   return <TriagePanelInner {...props} />;
 }
 
+type DuplicatesView = "checking" | "error" | "list" | "none";
+
+function duplicatesViewFor(
+  checking: boolean,
+  error: string | null,
+  duplicates: Duplicate[] | null
+): DuplicatesView {
+  if (checking) {
+    return "checking";
+  }
+  if (error) {
+    return "error";
+  }
+  if (duplicates && duplicates.length > 0) {
+    return "list";
+  }
+  return "none";
+}
+
 function TriagePanelInner({ issue }: IssueDetailSlotProps) {
   const params = useParams<{ orgSlug: string }>();
   const findDuplicates = useAction(api.agent.triage.findDuplicates);
@@ -142,6 +161,12 @@ function TriagePanelInner({ issue }: IssueDetailSlotProps) {
       );
   };
 
+  const duplicatesView = duplicatesViewFor(
+    checkingDuplicates,
+    duplicatesError,
+    duplicates
+  );
+
   return (
     <section className="flex flex-col gap-3 rounded-lg border bg-card/50 p-4">
       <div className="flex items-center gap-2">
@@ -169,16 +194,18 @@ function TriagePanelInner({ issue }: IssueDetailSlotProps) {
           <CopyX className="size-3" />
           Possible duplicates
         </p>
-        {checkingDuplicates ? (
+        {duplicatesView === "checking" && (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Loader2 className="size-3 animate-spin" />
             Scanning for similar issues…
           </p>
-        ) : duplicatesError ? (
+        )}
+        {duplicatesView === "error" && (
           <p className="text-xs text-muted-foreground">{duplicatesError}</p>
-        ) : duplicates && duplicates.length > 0 ? (
+        )}
+        {duplicatesView === "list" && (
           <ul className="flex flex-col">
-            {duplicates.map((duplicate) => (
+            {duplicates?.map((duplicate) => (
               <li key={duplicate.issueId}>
                 <Link
                   href={`/${params.orgSlug}/issue/${duplicate.issueId}`}
@@ -198,7 +225,8 @@ function TriagePanelInner({ issue }: IssueDetailSlotProps) {
               </li>
             ))}
           </ul>
-        ) : (
+        )}
+        {duplicatesView === "none" && (
           <p className="text-xs text-muted-foreground">
             No likely duplicates found.
           </p>
@@ -211,7 +239,8 @@ function TriagePanelInner({ issue }: IssueDetailSlotProps) {
           <Separator />
           {suggestionError ? (
             <p className="text-xs text-muted-foreground">{suggestionError}</p>
-          ) : suggestion ? (
+          ) : null}
+          {!suggestionError && suggestion ? (
             <div className="flex flex-col gap-2">
               <p className="text-xs text-muted-foreground">
                 {suggestion.reasoning}
