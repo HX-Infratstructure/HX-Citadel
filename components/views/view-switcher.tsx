@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import { Bookmark, BookmarkPlus, Check, Trash2, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -97,7 +98,7 @@ export function ViewSwitcher({
       .then(() => toast.success(`Deleted view “${view.name}”`))
       .catch((error: unknown) => {
         toast.error(
-          error instanceof Error ? error.message : "Failed to delete view"
+          errorMessage(error, "Failed to delete view")
         );
       });
   };
@@ -120,7 +121,7 @@ export function ViewSwitcher({
       setShared(false);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to save view"
+        errorMessage(error, "Failed to save view")
       );
     } finally {
       setSaving(false);

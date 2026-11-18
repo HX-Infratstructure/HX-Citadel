@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation } from "convex/react";
 import { ExternalLink } from "lucide-react";
 import { useState } from "react";
@@ -21,7 +22,7 @@ export function TestingProof({ issue }: { issue: Doc<"issues"> }) {
     }
     setProof({ issueId: issue._id, proofUrl: trimmed }).catch((error: unknown) => {
       setProofUrl(issue.proofUrl ?? "");
-      toast.error(error instanceof Error ? error.message : "Failed to save proof");
+      toast.error(errorMessage(error, "Failed to save proof"));
     });
   };
 

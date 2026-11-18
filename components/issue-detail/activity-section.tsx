@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import { FunctionReturnType } from "convex/server";
 import { MoreHorizontal } from "lucide-react";
@@ -303,7 +304,7 @@ function CommentItem({
       setEditing(false);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to update comment"
+        errorMessage(error, "Failed to update comment")
       );
     } finally {
       setSaving(false);
@@ -313,7 +314,7 @@ function CommentItem({
   const handleDelete = () => {
     removeComment({ commentId: comment._id }).catch((error: unknown) => {
       toast.error(
-        error instanceof Error ? error.message : "Failed to delete comment"
+        errorMessage(error, "Failed to delete comment")
       );
     });
   };

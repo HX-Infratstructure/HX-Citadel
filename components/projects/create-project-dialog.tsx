@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import { CalendarDays } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
@@ -87,7 +88,7 @@ export function CreateProjectDialog({
       }
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to create project"
+        errorMessage(error, "Failed to create project")
       );
     } finally {
       setSubmitting(false);

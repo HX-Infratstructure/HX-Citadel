@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
@@ -52,7 +53,7 @@ export function IssueProperties({ issue }: { issue: Doc<"issues"> }) {
   const update = (patch: IssuePatch) => {
     updateIssue({ issueId: issue._id, ...patch }).catch((error: unknown) => {
       toast.error(
-        error instanceof Error ? error.message : "Failed to update issue"
+        errorMessage(error, "Failed to update issue")
       );
     });
   };

@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
@@ -90,7 +91,7 @@ export function CreateIssueDialog({
       }
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to create issue"
+        errorMessage(error, "Failed to create issue")
       );
     } finally {
       setSubmitting(false);

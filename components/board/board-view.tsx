@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import {
   closestCorners,
   DndContext,
@@ -281,7 +282,7 @@ export function BoardView({
       ...(orderChanged ? { sortOrder } : {}),
     }).catch((error: unknown) => {
       toast.error(
-        error instanceof Error ? error.message : "Failed to move issue"
+        errorMessage(error, "Failed to move issue")
       );
     });
   };

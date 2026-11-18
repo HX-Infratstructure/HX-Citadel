@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import { CornerUpLeft, Plus, X } from "lucide-react";
 import Link from "next/link";
@@ -49,7 +50,7 @@ export function SubIssuesPanel({ issue, team }: IssueDetailSlotProps) {
       setTitle("");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to create sub-issue"
+        errorMessage(error, "Failed to create sub-issue")
       );
     } finally {
       setSubmitting(false);
@@ -60,7 +61,7 @@ export function SubIssuesPanel({ issue, team }: IssueDetailSlotProps) {
     setParent({ issueId: issue._id, parentIssueId: null }).catch(
       (error: unknown) => {
         toast.error(
-          error instanceof Error ? error.message : "Failed to remove parent"
+          errorMessage(error, "Failed to remove parent")
         );
       }
     );

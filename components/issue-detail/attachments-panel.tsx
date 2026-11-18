@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import {
   FileText,
@@ -75,7 +76,7 @@ export function AttachmentsPanel({ issue }: IssueDetailSlotProps) {
       }
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to upload attachment"
+        errorMessage(error, "Failed to upload attachment")
       );
     } finally {
       setUploading(false);
@@ -88,7 +89,7 @@ export function AttachmentsPanel({ issue }: IssueDetailSlotProps) {
   const handleRemove = (attachmentId: Id<"attachments">) => {
     removeAttachment({ attachmentId }).catch((error: unknown) => {
       toast.error(
-        error instanceof Error ? error.message : "Failed to delete attachment"
+        errorMessage(error, "Failed to delete attachment")
       );
     });
   };

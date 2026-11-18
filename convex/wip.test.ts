@@ -51,6 +51,25 @@ async function setup() {
   return { t, asMember, teamId, memberId, otherId, story, move };
 }
 
+type Setup = Awaited<ReturnType<typeof setup>>;
+
+/** In Review and Done need the Complete testing sub-task done with its proof (P2.4). */
+async function passDoneGate(t: Setup["t"], asMember: Setup["asMember"], storyId: Id<"issues">) {
+  const testing = await t.run(async (ctx) =>
+    (
+      await ctx.db
+        .query("issues")
+        .withIndex("by_parent", (q) => q.eq("parentIssueId", storyId))
+        .collect()
+    ).find((child) => child.testing)
+  );
+  await asMember.mutation(api.issues.setProof, {
+    issueId: testing!._id,
+    proofUrl: "https://ci.example.com/run/1",
+  });
+  await asMember.mutation(api.issues.update, { issueId: testing!._id, status: "done" });
+}
+
 describe("one story In Progress per person", () => {
   test("a second story moved to In Progress is refused and names the first", async () => {
     const { memberId, story, move } = await setup();
@@ -92,7 +111,7 @@ describe("one story In Progress per person", () => {
     ["Done", "done"],
     ["unassigning", "unassign"],
   ] as const)("%s frees the slot", async (_label, release) => {
-    const { asMember, memberId, story, move } = await setup();
+    const { t, asMember, memberId, story, move } = await setup();
     const first = await story("First", memberId);
     const second = await story("Second", memberId);
     await move(first, "in_progress");
@@ -100,6 +119,7 @@ describe("one story In Progress per person", () => {
     if (release === "unassign") {
       await asMember.mutation(api.issues.update, { issueId: first, assigneeId: null });
     } else {
+      await passDoneGate(t, asMember, first);
       await move(first, release);
     }
 

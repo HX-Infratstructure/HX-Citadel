@@ -3,6 +3,7 @@ import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { assertDoneGate, assertDoneGateAfterUpdate } from "./lib/rules/doneGate";
 import {
   assertValidParent,
   cascadeProject,
@@ -200,6 +201,9 @@ export const create = orgMutation({
     if (created?.kind === "story") {
       await createTestingSubtask(ctx, created);
     }
+    if (created !== null) {
+      await assertDoneGate(ctx, created, status);
+    }
 
     await logActivity(ctx, {
       orgId: ctx.org._id,
@@ -284,6 +288,7 @@ export const update = orgMutation({
     }
 
     await assertWipFreeAfterUpdate(ctx, issue, updates);
+    await assertDoneGateAfterUpdate(ctx, issue, updates);
     await ctx.db.patch(issue._id, updates);
 
     for (const change of changes) {

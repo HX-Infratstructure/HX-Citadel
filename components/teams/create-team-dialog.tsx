@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -60,7 +61,7 @@ export function CreateTeamDialog({
       setKeyTouched(false);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to create team"
+        errorMessage(error, "Failed to create team")
       );
     } finally {
       setSubmitting(false);

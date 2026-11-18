@@ -22,6 +22,7 @@ import type * as lib_activity from "../lib/activity.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_customFunctions from "../lib/customFunctions.js";
 import type * as lib_mirror from "../lib/mirror.js";
+import type * as lib_rules_doneGate from "../lib/rules/doneGate.js";
 import type * as lib_rules_levels from "../lib/rules/levels.js";
 import type * as lib_rules_testing from "../lib/rules/testing.js";
 import type * as lib_rules_wip from "../lib/rules/wip.js";
@@ -57,6 +58,7 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   "lib/customFunctions": typeof lib_customFunctions;
   "lib/mirror": typeof lib_mirror;
+  "lib/rules/doneGate": typeof lib_rules_doneGate;
   "lib/rules/levels": typeof lib_rules_levels;
   "lib/rules/testing": typeof lib_rules_testing;
   "lib/rules/wip": typeof lib_rules_wip;

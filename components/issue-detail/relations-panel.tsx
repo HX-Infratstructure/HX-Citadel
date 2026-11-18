@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import { Plus, X } from "lucide-react";
 import Link from "next/link";
@@ -73,7 +74,7 @@ export function RelationsPanel({ issue }: IssueDetailSlotProps) {
       await createRelation({ issueId: issue._id, relatedIssueId, type });
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to link issues"
+        errorMessage(error, "Failed to link issues")
       );
     }
   };
@@ -81,7 +82,7 @@ export function RelationsPanel({ issue }: IssueDetailSlotProps) {
   const unlink = (relationId: Doc<"issueRelations">["_id"]) => {
     removeRelation({ relationId }).catch((error: unknown) => {
       toast.error(
-        error instanceof Error ? error.message : "Failed to remove relation"
+        errorMessage(error, "Failed to remove relation")
       );
     });
   };

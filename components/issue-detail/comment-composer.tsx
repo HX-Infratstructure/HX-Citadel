@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -36,7 +37,7 @@ export function CommentComposer({ issueId }: { issueId: Id<"issues"> }) {
       trackedMentions.current.clear();
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to post comment"
+        errorMessage(error, "Failed to post comment")
       );
     } finally {
       setSubmitting(false);

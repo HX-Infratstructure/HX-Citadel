@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import { ChevronRight, Loader2, Pencil, Trash2 } from "lucide-react";
 import Link from "next/link";
@@ -102,7 +103,7 @@ function CycleDetail({
   const addIssue = (issueId: Id<"issues">) => {
     updateIssue({ issueId, cycleId: cycle._id }).catch((error: unknown) => {
       toast.error(
-        error instanceof Error ? error.message : "Failed to add issue"
+        errorMessage(error, "Failed to add issue")
       );
     });
   };
@@ -114,7 +115,7 @@ function CycleDetail({
       router.push(`/${orgSlug}/cycles`);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to delete cycle"
+        errorMessage(error, "Failed to delete cycle")
       );
     }
   };

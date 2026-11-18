@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -57,7 +58,7 @@ export function EditCycleDialog({
       onOpenChange(false);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to update cycle"
+        errorMessage(error, "Failed to update cycle")
       );
     } finally {
       setSubmitting(false);

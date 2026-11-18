@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
@@ -76,7 +77,7 @@ export function CreateCycleDialog({
       }
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to create cycle"
+        errorMessage(error, "Failed to create cycle")
       );
     } finally {
       setSubmitting(false);
