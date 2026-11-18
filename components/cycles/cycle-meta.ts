@@ -7,6 +7,9 @@ type CycleLike = {
   endDate: number;
 };
 
+/** Scrum sprint length: a cycle runs 7 days, start and end day inclusive. */
+export const SPRINT_DAYS = 7;
+
 export type CycleStatus = "current" | "upcoming" | "completed";
 
 /** "Cycle 3" or the custom name when one is set. */

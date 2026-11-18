@@ -11,7 +11,7 @@ const GATED_LABELS: Partial<Record<IssueStatus, string>> = {
 };
 
 /** Canceled work is out of scope, so a canceled child never holds its parent back. */
-const CLOSED_STATUSES: ReadonlySet<IssueStatus> = new Set(["done", "canceled"]);
+export const CLOSED_STATUSES: ReadonlySet<IssueStatus> = new Set(["done", "canceled"]);
 
 const NO_PROOF = "(no proof link)";
 

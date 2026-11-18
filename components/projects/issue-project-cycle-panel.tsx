@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { IssueDetailSlotProps } from "@/components/issue-detail/slots";
-import { cycleDisplayName, isCurrentCycle } from "@/components/cycles/cycle-meta";
+import { CycleSelect } from "@/components/cycles/cycle-select";
 import { DEFAULT_PROJECT_COLOR } from "./project-meta";
 
 const NONE = "none";
@@ -92,34 +92,12 @@ export function IssueProjectCyclePanel({ issue, team }: IssueDetailSlotProps) {
       </PropertyRow>
 
       <PropertyRow label="Cycle">
-        <Select
-          value={issue.cycleId ?? NONE}
-          onValueChange={(value) =>
-            update({
-              cycleId: value === NONE ? null : (value as Id<"cycles">),
-            })
-          }
-        >
-          <SelectTrigger
-            size="sm"
-            className="w-36 gap-1.5 border-none shadow-none"
-          >
-            <SelectValue placeholder="No cycle" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={NONE}>
-              <span className="text-muted-foreground">No cycle</span>
-            </SelectItem>
-            {cycles?.map((cycle) => (
-              <SelectItem key={cycle._id} value={cycle._id}>
-                {cycleDisplayName(cycle)}
-                {isCurrentCycle(cycle) && (
-                  <span className="text-xs text-emerald-500">Current</span>
-                )}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <CycleSelect
+          cycles={cycles}
+          value={issue.cycleId}
+          noneLabel="No cycle"
+          onChange={(cycleId) => update({ cycleId })}
+        />
       </PropertyRow>
     </div>
   );

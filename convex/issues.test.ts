@@ -132,3 +132,60 @@ describe("issues.create on a free organization", () => {
     expect(issues.map((issue) => issue._id)).toContain(issueId);
   });
 });
+
+describe("issues.listBacklog", () => {
+  test("lists the team's open stories with no cycle, highest sortOrder first", async () => {
+    const { t, teamId, memberId } = await setup();
+    const asMember = t.withIdentity({
+      subject: MEMBER_CLERK_ID,
+      org_id: ORG_CLAIM,
+    });
+    const cycleId = await t.run(async (ctx) => {
+      const team = await ctx.db.get(teamId);
+      return await ctx.db.insert("cycles", {
+        orgId: team!.orgId,
+        teamId,
+        number: 1,
+        startDate: 0,
+        endDate: 6 * 24 * 60 * 60 * 1000,
+      });
+    });
+    const low = await asMember.mutation(api.issues.create, { teamId, title: "Low" });
+    const high = await asMember.mutation(api.issues.create, { teamId, title: "High" });
+    await asMember.mutation(api.issues.create, { teamId, title: "Planned", cycleId });
+    await t.run(async (ctx) => {
+      const team = await ctx.db.get(teamId);
+      const rows = [
+        { kind: "story", title: "Done", status: "done" },
+        { kind: "story", title: "Dropped", status: "canceled" },
+        { kind: "epic", title: "Epic", status: "todo" },
+      ] as const;
+      for (const row of rows) {
+        await ctx.db.insert("issues", {
+          ...row,
+          orgId: team!.orgId,
+          teamId,
+          creatorId: memberId,
+          priority: "none",
+          sortOrder: 99999,
+        });
+      }
+    });
+    await asMember.mutation(api.issues.update, { issueId: low, sortOrder: -5 });
+
+    const backlog = await asMember.query(api.issues.listBacklog, { teamId });
+
+    expect(backlog.map((issue) => issue._id)).toEqual([high, low]);
+  });
+
+  test("refuses a caller who is not a member of the active organization", async () => {
+    const { t, teamId } = await setup();
+    const asOutsider = t.withIdentity({
+      subject: OUTSIDER_CLERK_ID,
+      org_id: ORG_CLAIM,
+    });
+    await expect(
+      asOutsider.query(api.issues.listBacklog, { teamId })
+    ).rejects.toThrow();
+  });
+});

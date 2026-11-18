@@ -24,6 +24,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DAY_MS, inputDateToMs, msToInputDate } from "@/components/projects/dates";
+import { SPRINT_DAYS } from "./cycle-meta";
+
+function defaultSprintEnd(): string {
+  return msToInputDate(Date.now() + (SPRINT_DAYS - 1) * DAY_MS);
+}
 
 export function CreateCycleDialog({
   open,
@@ -44,7 +49,7 @@ export function CreateCycleDialog({
   >(undefined);
   const [name, setName] = useState("");
   const [start, setStart] = useState(() => msToInputDate(Date.now()));
-  const [end, setEnd] = useState(() => msToInputDate(Date.now() + 13 * DAY_MS));
+  const [end, setEnd] = useState(() => defaultSprintEnd());
   const [submitting, setSubmitting] = useState(false);
 
   // Fall back to the default/first team without needing an effect.
@@ -71,7 +76,7 @@ export function CreateCycleDialog({
       onOpenChange(false);
       setName("");
       setStart(msToInputDate(Date.now()));
-      setEnd(msToInputDate(Date.now() + 13 * DAY_MS));
+      setEnd(defaultSprintEnd());
       if (params.orgSlug) {
         router.push(`/${params.orgSlug}/cycles/${cycleId}`);
       }

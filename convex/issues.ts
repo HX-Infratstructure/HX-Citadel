@@ -5,7 +5,11 @@ import { formatIssueKey } from "../lib/issue-key";
 import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { deleteIssueOwnedRows } from "./lib/issueCleanup";
-import { assertDoneGate, assertDoneGateAfterUpdate } from "./lib/rules/doneGate";
+import {
+  assertDoneGate,
+  assertDoneGateAfterUpdate,
+  CLOSED_STATUSES,
+} from "./lib/rules/doneGate";
 import {
   assertValidParent,
   cascadeProject,
@@ -76,6 +80,30 @@ export const listByTeam = orgQuery({
       .withIndex("by_team", (q) => q.eq("teamId", args.teamId))
       .order("desc")
       .take(500);
+  },
+});
+
+/** The backlog: open stories with no cycle, highest `sortOrder` (owner's rank) first. */
+export const listBacklog = orgQuery({
+  args: { teamId: v.id("teams") },
+  returns: v.array(v.object(issueShape)),
+  handler: async (ctx, args) => {
+    const team = await ctx.db.get(args.teamId);
+    if (!team || team.orgId !== ctx.org._id) {
+      throw new Error("Team not found");
+    }
+    const issues = await ctx.db
+      .query("issues")
+      .withIndex("by_team", (q) => q.eq("teamId", args.teamId))
+      .collect();
+    return issues
+      .filter(
+        (issue) =>
+          issue.kind === "story" &&
+          issue.cycleId === undefined &&
+          !CLOSED_STATUSES.has(issue.status)
+      )
+      .sort((a, b) => b.sortOrder - a.sortOrder);
   },
 });
 
