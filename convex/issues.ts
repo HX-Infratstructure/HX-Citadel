@@ -4,6 +4,7 @@ import { MutationCtx, QueryCtx } from "./_generated/server";
 import { formatIssueKey } from "../lib/issue-key";
 import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { deleteIssueOwnedRows } from "./lib/issueCleanup";
 import { assertDoneGate, assertDoneGateAfterUpdate } from "./lib/rules/doneGate";
 import {
   assertValidParent,
@@ -283,15 +284,9 @@ export const update = orgMutation({
   },
 });
 
-/** Deletes an issue and its label links. */
+/** Deletes an issue and every row that belongs to it. */
 async function deleteIssueRow(ctx: MutationCtx, issueId: Id<"issues">): Promise<void> {
-  const labelLinks = await ctx.db
-    .query("issueLabels")
-    .withIndex("by_issue", (q) => q.eq("issueId", issueId))
-    .collect();
-  for (const link of labelLinks) {
-    await ctx.db.delete(link._id);
-  }
+  await deleteIssueOwnedRows(ctx, issueId);
   await ctx.db.delete(issueId);
 }
 
