@@ -211,6 +211,12 @@ describe("pageFailure, the .paginate error mapping", () => {
     expect((error as ConvexError<{ code: string }>).data.code).toBe("validation");
   });
 
+  test("the self-hosted backend's unstructured bad-cursor error is a validation refusal", () => {
+    const error = thrown(() => pageFailure(new Error("Failed to parse cursor"), "c1"));
+    expect(error).toBeInstanceOf(ConvexError);
+    expect((error as ConvexError<{ code: string }>).data.code).toBe("validation");
+  });
+
   test("an error that only mentions a cursor, without Convex's InvalidCursor name, is rethrown and stays a 500", () => {
     const other = new Error("Too many documents read while following the cursor");
     expect(thrown(() => pageFailure(other, "c1"))).toBe(other);

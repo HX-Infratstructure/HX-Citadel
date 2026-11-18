@@ -183,9 +183,16 @@ async function assigneeFilter(ctx: QueryCtx, orgId: Id<"organizations">, agentNa
 }
 
 /**
+ * The self-hosted backend's whole answer to a cursor it cannot parse, with no data and no `InvalidCursor` name.
+ * Captured on HX-18 at 2026-11-18T20:12Z for `cursor=garbage` and `cursor=["x",1]`.
+ */
+const BACKEND_BAD_CURSOR = "Failed to parse cursor";
+
+/**
  * Convex's own invalid-cursor rule, as its client applies it (`usePaginatedQuery` in convex@1.41.0): a system
  * `ConvexError` with `paginationError: "InvalidCursor"`, or, from a backend that sends no data, that name in the
- * message. No typed error class exists, so the name is the one word match here.
+ * message. The self-hosted backend sends neither, only `BACKEND_BAD_CURSOR`. No typed error class exists, so these
+ * two phrases are the only word matches here.
  */
 function isInvalidCursor(error: unknown): boolean {
   const data: unknown = error instanceof ConvexError ? error.data : null;
@@ -196,7 +203,8 @@ function isInvalidCursor(error: unknown): boolean {
     data.isConvexSystemError === true &&
     "paginationError" in data &&
     data.paginationError === "InvalidCursor";
-  return flagged || (error instanceof Error && error.message.includes("InvalidCursor"));
+  const named = error instanceof Error && (error.message.includes("InvalidCursor") || error.message.includes(BACKEND_BAD_CURSOR));
+  return flagged || named;
 }
 
 /** A failed `.paginate` is the client's only when it sent a cursor and Convex calls it invalid; anything else stays a 500. */
