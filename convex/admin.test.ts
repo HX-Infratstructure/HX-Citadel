@@ -4,6 +4,7 @@ import { StorageActionWriter } from "convex/server";
 import { describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
 import { PAGE_SIZE } from "./admin";
+import { ISSUE_OWNED_TABLES, IssueOwnedCounts, ROW_BUDGET } from "./lib/issueCleanup";
 import { Doc, Id, TableNames } from "./_generated/dataModel";
 import { MutationCtx } from "./_generated/server";
 import { createTestingSubtask } from "./lib/rules/testing";
@@ -151,7 +152,7 @@ async function seedOrg(ctx: MutationCtx & { storage: StorageActionWriter }, cler
 }
 
 async function setup() {
-  const t = convexTest(schema, modules);
+  const t = convexTest({ schema, modules, transactionLimits: true });
   const seeded = await t.run(async (ctx) => ({
     cleared: await seedOrg(ctx, CLEARED_ORG),
     kept: await seedOrg(ctx, KEPT_ORG),
@@ -192,6 +193,26 @@ async function addIssues(t: TestConvex, teamId: Id<"teams">, count: number) {
       await ctx.db.insert("activity", { orgId: team.orgId, issueId, actorId: creator._id, type: "created" });
     }
   });
+}
+
+/** Activity rows on one issue: more than one run deletes, and more than one Convex mutation can write. */
+const HEAVY_ACTIVITY = 20_000;
+
+/** Gives the issue `count` more activity rows, `TEST_BATCH` a transaction. */
+async function addActivity(t: TestConvex, issueId: Id<"issues">, count: number) {
+  for (let start = 0; start < count; start += TEST_BATCH) {
+    await t.run(async (ctx) => {
+      const issue = (await ctx.db.get(issueId))!;
+      for (let index = start; index < Math.min(start + TEST_BATCH, count); index++) {
+        await ctx.db.insert("activity", { orgId: issue.orgId, issueId, actorId: issue.creatorId, type: "updated" });
+      }
+    });
+  }
+}
+
+/** Owned rows a run's counts say it deleted. */
+function ownedRowsDeleted(counts: IssueOwnedCounts) {
+  return ISSUE_OWNED_TABLES.reduce((sum, table) => sum + counts[table], 0);
 }
 
 /** Gives the team `count` more cycles. */
@@ -340,6 +361,34 @@ describe("admin.clearOrgContent", () => {
     expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
     vi.useRealTimers();
   });
+
+  test("clears an issue that owns more rows than one run deletes over the scheduled runs, every run succeeding", async () => {
+    vi.useFakeTimers();
+    const { t, cleared } = await setup();
+    const heavyId = await t.run(async (ctx) => {
+      const first = await ctx.db.query("issues").withIndex("by_org", (q) => q.eq("orgId", cleared.orgId)).first();
+      return first!._id;
+    });
+    await addActivity(t, heavyId, HEAVY_ACTIVITY);
+    const contentBefore = await snapshot(t, CONTENT_TABLES);
+    const clearedIssueIds = new Set(
+      contentBefore.issues.filter((issue) => issue.orgId === cleared.orgId).map((issue) => issue._id)
+    );
+    const isCleared = belongsTo(cleared.orgId, clearedIssueIds);
+
+    const counts = await t.mutation(internal.admin.clearOrgContent, { clerkOrgId: CLEARED_ORG });
+
+    expect(ownedRowsDeleted(counts)).toBe(ROW_BUDGET);
+    expect(counts).toMatchObject({ issues: 0, teams: 0 });
+    expect(await t.run((ctx) => ctx.db.get(heavyId))).not.toBeNull();
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const contentAfter = await snapshot(t, CONTENT_TABLES);
+    for (const table of CONTENT_TABLES) {
+      expect(contentAfter[table], table).toEqual(contentBefore[table].filter((doc) => !isCleared(doc)));
+    }
+    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
+    vi.useRealTimers();
+  }, 60_000);
 
   test("a queued run leaves the workspace once its mirror is created again under the same Clerk id", async () => {
     vi.useFakeTimers();
@@ -728,6 +777,57 @@ describe("admin.clearTeamContent", () => {
     expect(await left()).toEqual({ team: null, issues: [] });
     vi.useRealTimers();
   });
+
+  test("clears a team whose issue owns more rows than one run deletes over the scheduled runs, every run succeeding", async () => {
+    vi.useFakeTimers();
+    const { t, cleared, kept } = await setupTeams();
+    await addActivity(t, cleared.storyId, HEAVY_ACTIVITY);
+    const contentBefore = await snapshot(t, CONTENT_TABLES);
+    const clearedIssueIds = new Set(
+      contentBefore.issues.filter((issue) => issue.teamId === cleared.teamId).map((issue) => issue._id)
+    );
+    const isCleared = belongsToTeam(cleared.teamId, clearedIssueIds);
+
+    const counts = await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+
+    expect(ownedRowsDeleted(counts)).toBe(ROW_BUDGET);
+    expect(counts).toMatchObject({ issues: 0, cycles: 0, teams: 0 });
+    expect(await t.run((ctx) => ctx.db.get(cleared.storyId))).not.toBeNull();
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const contentAfter = await snapshot(t, CONTENT_TABLES);
+    for (const table of CONTENT_TABLES) {
+      expect(contentAfter[table], table).toEqual(contentBefore[table].filter((doc) => !isCleared(doc)));
+    }
+    expect(await t.run((ctx) => ctx.db.get(kept.teamId))).not.toBeNull();
+    expect(await t.run((ctx) => ctx.db.system.get(cleared.storageId))).toBeNull();
+    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
+    vi.useRealTimers();
+  }, 60_000);
+
+  test("a rerun after a scheduled run failed partway through a heavy issue finishes the clear", async () => {
+    vi.useFakeTimers();
+    const { t, cleared } = await setupTeams();
+    await addActivity(t, cleared.storyId, HEAVY_ACTIVITY);
+    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+    await cancelScheduledRuns(t);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = () =>
+      t.run(async (ctx) => ({
+        team: await ctx.db.get(cleared.teamId),
+        story: await ctx.db.get(cleared.storyId),
+        activity: (
+          await ctx.db.query("activity").withIndex("by_issue", (q) => q.eq("issueId", cleared.storyId)).take(1)
+        ).length,
+      }));
+    expect(await left()).toMatchObject({ activity: 1 });
+    expect((await left()).story).not.toBeNull();
+
+    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await left()).toEqual({ team: null, story: null, activity: 0 });
+    vi.useRealTimers();
+  }, 60_000);
 
   test("a queued run for a team that is already gone stops without error", async () => {
     vi.useFakeTimers();

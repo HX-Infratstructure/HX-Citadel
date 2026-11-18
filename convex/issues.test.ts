@@ -88,7 +88,7 @@ describe("issues.create", () => {
 
     await expect(
       asOutsider.mutation(api.issues.create, { teamId, title: "Intrusion" })
-    ).rejects.toThrow("Not a member of this organization");
+    ).rejects.toMatchObject({ data: { code: "not_found", message: "Not a member of this organization" } });
 
     const team = await t.run((ctx) => ctx.db.get(teamId));
     expect(team?.nextIssueNumber).toBe(FIRST_NUMBER);
