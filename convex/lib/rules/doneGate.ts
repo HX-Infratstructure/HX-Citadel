@@ -1,11 +1,12 @@
 import { formatIssueKey } from "../../../lib/issue-key";
+import { GatedStatus, isGatedStatus } from "../../../lib/issue-status";
 import { Doc } from "../../_generated/dataModel";
 import { MutationCtx } from "../../_generated/server";
 import { TESTING_SUBTASK_TITLE } from "./testing";
 
 type IssueStatus = Doc<"issues">["status"];
 
-const GATED_LABELS: Partial<Record<IssueStatus, string>> = {
+const GATED_LABELS: Record<GatedStatus, string> = {
   in_review: "In Review",
   done: "Done",
 };
@@ -56,10 +57,10 @@ export async function assertDoneGate(
   issue: Doc<"issues">,
   nextStatus: IssueStatus
 ): Promise<void> {
-  const target = GATED_LABELS[nextStatus];
-  if (target === undefined) {
+  if (!isGatedStatus(nextStatus)) {
     return;
   }
+  const target = GATED_LABELS[nextStatus];
   const children = await ctx.db
     .query("issues")
     .withIndex("by_parent", (q) => q.eq("parentIssueId", issue._id))

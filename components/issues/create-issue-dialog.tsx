@@ -1,6 +1,7 @@
 "use client";
 
 import { errorMessage } from "@/lib/error-message";
+import { statusesFor } from "@/lib/issue-status";
 import { useMutation, useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
@@ -64,6 +65,14 @@ export function CreateIssueDialog({
 
   // Fall back to the default/first team without needing an effect.
   const teamId = selectedTeamId ?? defaultTeamId ?? teams?.[0]?._id;
+  const offeredStatuses = statusesFor(STATUSES, level.kind);
+
+  const changeLevel = (next: LevelChoice) => {
+    setLevel(next);
+    if (!statusesFor(STATUSES, next.kind).some((s) => s.value === status)) {
+      setStatus("todo");
+    }
+  };
 
   const handleSubmit = async () => {
     if (!teamId || !title.trim()) {
@@ -144,7 +153,7 @@ export function CreateIssueDialog({
                 ))}
               </SelectContent>
             </Select>
-            <LevelPickers teamId={teamId} value={level} onChange={setLevel} />
+            <LevelPickers teamId={teamId} value={level} onChange={changeLevel} />
             <Select
               value={status}
               onValueChange={(value) => setStatus(value as IssueStatus)}
@@ -154,7 +163,7 @@ export function CreateIssueDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {STATUSES.map((s) => (
+                {offeredStatuses.map((s) => (
                   <SelectItem key={s.value} value={s.value}>
                     {s.label}
                   </SelectItem>
