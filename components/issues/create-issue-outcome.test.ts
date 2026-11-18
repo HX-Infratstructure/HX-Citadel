@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import type { Id } from "@/convex/_generated/dataModel";
 import { createIssueOutcome, IssueDraft } from "./create-issue-outcome";
 
 const submitted: IssueDraft = {
@@ -6,7 +7,7 @@ const submitted: IssueDraft = {
   description: "",
   status: "todo",
   priority: "none",
-  level: { kind: "story", type: "story" },
+  level: { kind: "story", type: "story", parentIssueId: undefined, projectId: undefined },
 };
 
 describe("createIssueOutcome", () => {
@@ -18,7 +19,7 @@ describe("createIssueOutcome", () => {
 
   test("a stale success clears the form when it still holds the submitted draft", () => {
     expect(
-      createIssueOutcome(false, submitted, { ...submitted, level: { kind: "story", type: "story" } })
+      createIssueOutcome(false, submitted, { ...submitted, level: { ...submitted.level } })
     ).toBe("clear");
   });
 
@@ -28,9 +29,14 @@ describe("createIssueOutcome", () => {
     );
   });
 
-  test("a stale success keeps a new level", () => {
+  test.each([
+    ["level", { kind: "epic" }],
+    ["story type", { type: "bug" }],
+    ["parent", { parentIssueId: "issue1" as Id<"issues"> }],
+    ["project", { projectId: "project1" as Id<"projects"> }],
+  ] as const)("a stale success keeps a new %s", (_, change) => {
     expect(
-      createIssueOutcome(false, submitted, { ...submitted, level: { kind: "epic", type: "story" } })
+      createIssueOutcome(false, submitted, { ...submitted, level: { ...submitted.level, ...change } })
     ).toBe("keep");
   });
 });

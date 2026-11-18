@@ -5,7 +5,7 @@ import { statusesFor } from "@/lib/issue-status";
 import { missingPlacement } from "@/lib/level-placement";
 import { useMutation, useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
@@ -69,14 +69,24 @@ export function CreateIssueDialog({
   const [submitting, setSubmitting] = useState(false);
   const inFlight = useRef(false);
   const session = useRef(0);
-  const draft: IssueDraft = { title, description, status, priority, level };
+  const draft: IssueDraft = {
+    title,
+    description,
+    status,
+    priority,
+    level: levelFields(level),
+  };
+  // handleSubmit closes over the draft it submitted; the resolved create compares
+  // it with this latest committed draft to tell whether the user changed the form.
   const currentDraft = useRef(draft);
 
   useEffect(() => {
     session.current += 1;
   }, [open]);
 
-  useEffect(() => {
+  // A layout effect runs during commit, so the ref never lags a rendered edit
+  // when the create resolves before passive effects flush.
+  useLayoutEffect(() => {
     currentDraft.current = draft;
   });
 
@@ -100,14 +110,13 @@ export function CreateIssueDialog({
     inFlight.current = true;
     setSubmitting(true);
     const submittedIn = session.current;
+    const { level: submittedLevel, ...fields } = draft;
     try {
       const issueId = await createIssue({
         teamId,
-        title,
-        description: description.trim() || undefined,
-        status,
-        priority,
-        ...levelFields(level),
+        ...fields,
+        description: fields.description.trim() || undefined,
+        ...submittedLevel,
       });
       toast.success("Issue created");
       const outcome = createIssueOutcome(

@@ -1,12 +1,15 @@
 import type { IssuePriority, IssueStatus } from "@/components/shared/issue-meta";
-import type { LevelChoice } from "./create-issue-level";
+import type { levelFields } from "./create-issue-level";
 
+type LevelFields = ReturnType<typeof levelFields>;
+
+/** The fields a create sends, apart from the team; `level` is `levelFields()` of the choice. */
 export type IssueDraft = {
   title: string;
   description: string;
   status: IssueStatus;
   priority: IssuePriority;
-  level: LevelChoice;
+  level: LevelFields;
 };
 
 /** After a successful create: finish the dialog, clear the submitted draft, or keep a newer draft. */
@@ -24,14 +27,11 @@ export function createIssueOutcome(
 }
 
 function sameDraft(a: IssueDraft, b: IssueDraft) {
-  return (
-    a.title === b.title &&
-    a.description === b.description &&
-    a.status === b.status &&
-    a.priority === b.priority &&
-    a.level.kind === b.level.kind &&
-    a.level.type === b.level.type &&
-    a.level.parentIssueId === b.level.parentIssueId &&
-    a.level.projectId === b.level.projectId
-  );
+  const { level: aLevel, ...aFields } = a;
+  const { level: bLevel, ...bFields } = b;
+  return sameFields(aFields, bFields) && sameFields(aLevel, bLevel);
+}
+
+function sameFields<T extends object>(a: T, b: T) {
+  return (Object.keys(a) as (keyof T)[]).every((key) => a[key] === b[key]);
 }
