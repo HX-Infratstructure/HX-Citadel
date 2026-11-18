@@ -3,7 +3,7 @@ import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx } from "../_generated/server";
 import { notFound, refusal } from "./refusals";
 
-export const FIRST_VERSION = 1;
+const FIRST_VERSION = 1;
 
 /** Rows written before `version` existed read as the first version. */
 export function issueVersion(issue: Doc<"issues">): number {

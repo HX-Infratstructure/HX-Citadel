@@ -2,7 +2,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { convexTest } from "convex-test";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { patchIssue } from "./lib/issueVersion";
@@ -213,14 +213,11 @@ async function asMemberSetup() {
   return { t, asMember, storyId, testingId, version, ...ids };
 }
 
-describe("a story written before its sub-task counter", () => {
-  async function legacyStory() {
+describe("a story's sub-task counter", () => {
+  async function storyWithLeaving() {
     const setup = await asMemberSetup();
     const { t, asMember, storyId, teamId } = setup;
     const leavingId = await asMember.mutation(api.issues.create, { teamId, title: "Leaving", kind: "subtask", parentIssueId: storyId });
-    await t.run(async (ctx) => {
-      await ctx.db.patch(storyId, { nextSubNumber: undefined });
-    });
     const nextSubtask = async () => {
       const id = await asMember.mutation(api.issues.create, { teamId, title: "Next", kind: "subtask", parentIssueId: storyId });
       return await t.run(async (ctx) => (await ctx.db.get(id))?.subNumber);
@@ -229,7 +226,7 @@ describe("a story written before its sub-task counter", () => {
   }
 
   test("its highest sub-task moving to another story never hands that key out again", async () => {
-    const { asMember, teamId, storyId, leavingId, nextSubtask, version } = await legacyStory();
+    const { asMember, teamId, storyId, leavingId, nextSubtask, version } = await storyWithLeaving();
     const otherId = await asMember.mutation(api.issues.create, { teamId, title: "Other story", kind: "story" });
     await asMember.mutation(api.issueRelations.setParent, { issueId: leavingId, parentIssueId: otherId });
     expect(await nextSubtask()).toBe(3);
@@ -237,10 +234,31 @@ describe("a story written before its sub-task counter", () => {
   });
 
   test("its highest sub-task being deleted never hands that key out again", async () => {
-    const { asMember, storyId, leavingId, nextSubtask, version } = await legacyStory();
+    const { asMember, storyId, leavingId, nextSubtask, version } = await storyWithLeaving();
     await asMember.mutation(api.issues.remove, { issueId: leavingId });
     expect(await nextSubtask()).toBe(3);
     expect(await version(storyId)).toBe(1);
+  });
+
+  test("a story without its counter refuses a new sub-task as a 500 and writes no sub-task", async () => {
+    const t = await setup();
+    const storyId = await t.run(async (ctx) => {
+      const story = (await ctx.db.query("issues").collect()).find((issue) => issue.kind === "story")!;
+      await ctx.db.patch(story._id, { nextSubNumber: undefined });
+      return story._id;
+    });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = await send(t, "POST", "/ENG-1/subtasks", { title: "Sub" });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ code: "server_error", message: "Internal error" });
+    } finally {
+      logged.mockRestore();
+    }
+    const children = await t.run((ctx) =>
+      ctx.db.query("issues").withIndex("by_parent", (q) => q.eq("parentIssueId", storyId)).collect()
+    );
+    expect(children.map((child) => child.title)).toEqual(["Complete testing"]);
   });
 });
 

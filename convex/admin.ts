@@ -3,9 +3,7 @@ import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, MutationCtx, QueryCtx } from "./_generated/server";
 import { countTables, deleteIssuesWithOwnedRows, deleteRows, ISSUE_OWNED_TABLES } from "./lib/issueCleanup";
-import { patchIssue } from "./lib/issueVersion";
 import { existedBeforeRead, getOrgByClerkIdOrThrow } from "./lib/mirror";
-import { subCounter } from "./lib/rules/levels";
 import { inOrg, orgRow } from "./lib/orgRows";
 import { findTeamByKey } from "./lib/teams";
 
@@ -253,28 +251,5 @@ export const deleteOrgMirror = internalMutation({
     await deleteRows(ctx, members);
     await ctx.db.delete(org._id);
     return { organizations: 1, members: members.length };
-  },
-});
-
-/**
- * One-time: give every story written before the subtask counter its counter, so a subtask that
- * leaves it later cannot free its key for reuse. Each run reads one page of issues and schedules
- * the next page. Returns how many stories this run set; a rerun sets none.
- */
-export const backfillSubCounters = internalMutation({
-  args: { after: v.optional(v.string()) },
-  returns: v.number(),
-  handler: async (ctx, args): Promise<number> => {
-    const { page, isDone, continueCursor } = await ctx.db
-      .query("issues")
-      .paginate({ cursor: args.after ?? null, numItems: PAGE_SIZE });
-    const stories = page.filter((issue) => issue.kind === "story" && issue.nextSubNumber === undefined);
-    for (const story of stories) {
-      await patchIssue(ctx, story, { nextSubNumber: await subCounter(ctx, story) });
-    }
-    if (!isDone) {
-      await ctx.scheduler.runAfter(0, internal.admin.backfillSubCounters, { after: continueCursor });
-    }
-    return stories.length;
   },
 });

@@ -5,11 +5,11 @@ import { isGatedStatus } from "../lib/issue-status";
 import { DAY_MS, SPRINT_DAYS, sprintEnd } from "../lib/sprint";
 import { Doc, Id } from "./_generated/dataModel";
 import { logActivity } from "./lib/activity";
-import { FIRST_VERSION, patchIssue } from "./lib/issueVersion";
+import { patchIssue } from "./lib/issueVersion";
 import { internalMutation } from "./_generated/server";
 import { storyType } from "./issues";
 import { getMembershipOrThrow, getOrgByClerkIdOrThrow, getUserByClerkIdOrThrow } from "./lib/mirror";
-import { nextSubNumber } from "./lib/rules/levels";
+import { FIRST_SUB_NUMBER, nextSubNumber } from "./lib/rules/levels";
 import { createTestingSubtask } from "./lib/rules/testing";
 
 /**
@@ -359,7 +359,7 @@ export const demoData = internalMutation({
             orgId,
             teamId,
             kind: "subtask",
-            subNumber: await nextSubNumber(ctx, story._id),
+            subNumber: await nextSubNumber(ctx, orgId, story._id),
             title: subtask.title,
             status: subtask.status,
             priority: "none",
@@ -368,7 +368,6 @@ export const demoData = internalMutation({
             projectId: story.projectId,
             parentIssueId: story._id,
             sortOrder: story.sortOrder,
-            version: FIRST_VERSION,
           });
           issueCount++;
           await logSeededState(subtaskId, subtask.status);
@@ -377,7 +376,7 @@ export const demoData = internalMutation({
 
       const insertIssue = async (spec: IssueSpec, parent?: Doc<"issues">): Promise<void> => {
         const kind = spec.kind ?? "story";
-        const number = kind === "story" ? nextNumber++ : undefined;
+        const numbering = kind === "story" ? { number: nextNumber++, nextSubNumber: FIRST_SUB_NUMBER } : {};
         const ownProject = spec.project === undefined ? undefined : projectIds[spec.project];
         position++;
         const issueId = await ctx.db.insert("issues", {
@@ -385,7 +384,7 @@ export const demoData = internalMutation({
           teamId,
           kind,
           type: storyType(kind, spec.type),
-          number,
+          ...numbering,
           title: spec.title,
           description: spec.description,
           status: spec.status,
@@ -398,7 +397,6 @@ export const demoData = internalMutation({
           estimate: spec.estimate,
           dueDate: spec.dueInDays !== undefined ? now + spec.dueInDays * DAY_MS : undefined,
           sortOrder: position * 1024,
-          version: FIRST_VERSION,
         });
         issueCount++;
 

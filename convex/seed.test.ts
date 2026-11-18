@@ -149,6 +149,9 @@ describe("seed.demoData", () => {
         );
         expect(testing, `${story.title} has one Complete testing sub-task`).toHaveLength(1);
         expect(story.type, `${story.title} has a type`).toBeDefined();
+        const subNumbers = issues.filter((issue) => issue.parentIssueId === story._id).map((issue) => issue.subNumber!);
+        expect(new Set(subNumbers).size, `${story.title}'s sub-task keys are unique`).toBe(subNumbers.length);
+        expect(story.nextSubNumber, `${story.title}'s counter is past every sub-task`).toBe(Math.max(...subNumbers) + 1);
       }
 
       for (const issue of issues.filter((row) => row.status === "in_progress")) {

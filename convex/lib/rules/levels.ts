@@ -1,5 +1,5 @@
 import { Doc, Id } from "../../_generated/dataModel";
-import { notFound, refuse } from "../refusals";
+import { refuse } from "../refusals";
 import { MutationCtx, QueryCtx } from "../../_generated/server";
 import {
   childKindOf,
@@ -129,53 +129,27 @@ export async function assertParentOpen(
   );
 }
 
-/** A story written before its counter existed resumes after its highest current subtask. */
-async function legacySubNumber(ctx: { db: QueryCtx["db"] }, story: Doc<"issues">): Promise<number> {
-  const subtasks = await orgChildren(ctx, story.orgId, story._id);
-  return Math.max(0, ...subtasks.map((subtask) => subtask.subNumber ?? 0)) + 1;
-}
-
-/** The subtask number a story hands out next. */
-export async function subCounter(ctx: { db: QueryCtx["db"] }, story: Doc<"issues">): Promise<number> {
-  return story.nextSubNumber ?? (await legacySubNumber(ctx, story));
-}
+/** The counter every story is inserted with, so its first subtask (Complete testing) is KEY-n.1. */
+export const FIRST_SUB_NUMBER = 1;
 
 /**
  * Claim the next subtask number under a story. The story keeps a counter, so a key a moved or
- * deleted subtask held is never handed out again. The counter is a bookkeeping field, so claiming
- * a number does not move the story's version.
+ * deleted subtask held is never handed out again. The story is read here, inside the workspace,
+ * so two claims in one mutation never get the same number. The counter is a bookkeeping field,
+ * so claiming a number does not move the story's version.
  */
 export async function nextSubNumber(
   ctx: { db: MutationCtx["db"] },
+  orgId: Id<"organizations">,
   storyId: Id<"issues">
 ): Promise<number> {
-  const story = await ctx.db.get(storyId);
-  if (story === null) {
-    notFound("Parent issue not found");
+  const story = await requireOrgRow(ctx, orgId, storyId, "Parent issue");
+  const subNumber = story.nextSubNumber;
+  if (subNumber === undefined) {
+    throw new Error(`Story ${storyId} has no subtask counter; every story is inserted with one`);
   }
-  const subNumber = await subCounter(ctx, story);
   await patchIssue(ctx, story, { nextSubNumber: subNumber + 1 });
   return subNumber;
-}
-
-/**
- * A subtask leaving its story, moved or deleted, retires its number there. A story written before
- * its counter existed would otherwise resume after its highest remaining subtask and reuse the key.
- * The caller passes the parent it already loaded.
- */
-export async function retireSubNumber(
-  ctx: { db: MutationCtx["db"] },
-  leaving: Doc<"issues">,
-  story: Doc<"issues"> | null
-): Promise<void> {
-  if (leaving.subNumber === undefined || story === null) {
-    return;
-  }
-  if (story.orgId !== leaving.orgId || story.kind !== "story") {
-    return;
-  }
-  const next = Math.max(await subCounter(ctx, story), leaving.subNumber + 1);
-  await patchIssue(ctx, story, { nextSubNumber: next });
 }
 
 /** Every descendant of an issue, found by walking by_parent; leaf kinds are not queried. */

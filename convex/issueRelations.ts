@@ -13,7 +13,6 @@ import {
   assertValidParent,
   cascadeProject,
   nextSubNumber,
-  retireSubNumber,
 } from "./lib/rules/levels";
 import { assertNotTestingSubtask } from "./lib/rules/testing";
 import {
@@ -281,13 +280,13 @@ export const hierarchy = orgQuery({
 /** A subtask moved to another story takes the next number there, so keys stay unique. */
 async function renumberedSubtask(
   ctx: { db: MutationCtx["db"] },
-  kind: Doc<"issues">["kind"],
+  issue: Doc<"issues">,
   parentIssueId: Id<"issues"> | null
 ): Promise<Pick<Doc<"issues">, "subNumber">> {
-  if (kind !== "subtask" || parentIssueId === null) {
+  if (issue.kind !== "subtask" || parentIssueId === null) {
     return {};
   }
-  return { subNumber: await nextSubNumber(ctx, parentIssueId) };
+  return { subNumber: await nextSubNumber(ctx, issue.orgId, parentIssueId) };
 }
 
 export const setParent = orgMutation({
@@ -340,11 +339,10 @@ export const setParent = orgMutation({
     const oldParent = issue.parentIssueId ? await orgRow(ctx, ctx.org._id, issue.parentIssueId) : null;
     const oldParentIdentifier = oldParent ? await keys.name(oldParent) : undefined;
 
-    await retireSubNumber(ctx, issue, oldParent);
     const moved = {
       parentIssueId: args.parentIssueId ?? undefined,
       projectId: placement.projectId,
-      ...(await renumberedSubtask(ctx, issue.kind, args.parentIssueId)),
+      ...(await renumberedSubtask(ctx, issue, args.parentIssueId)),
     };
     const actor = { orgId: ctx.org._id, actorId: ctx.user._id };
     await patchIssue(ctx, issue._id, moved);

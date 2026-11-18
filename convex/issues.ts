@@ -9,7 +9,7 @@ import { changedFields, fieldText, FieldLogOptions, logActivity, logFieldChanges
 import { orgAdminMutation, orgMutation, orgQuery } from "./lib/customFunctions";
 import { deleteIssueOwnedRows } from "./lib/issueCleanup";
 import { IssueKeys } from "./lib/issueKeys";
-import { FIRST_VERSION, patchIssue } from "./lib/issueVersion";
+import { patchIssue } from "./lib/issueVersion";
 import { findMembership } from "./lib/mirror";
 import { inOrg, orgChildren, orgRow, requireOrgRow } from "./lib/orgRows";
 import { OrgScope } from "./lib/orgScope";
@@ -24,8 +24,8 @@ import {
   assertParentOpen,
   assertValidParent,
   cascadeProject,
+  FIRST_SUB_NUMBER,
   nextSubNumber,
-  retireSubNumber,
 } from "./lib/rules/levels";
 import {
   assertNotTestingSubtask,
@@ -194,20 +194,23 @@ export function storyType(
   return kind === "story" ? (type ?? "story") : undefined;
 }
 
-/** Stories take the next team number (ENG-1, ENG-2, ...); subtasks the next number under their story. */
+/**
+ * Stories take the next team number (ENG-1, ENG-2, ...) and start their own subtask counter;
+ * subtasks take the next number under their story.
+ */
 async function claimNumbering(
   ctx: MutationCtx,
   team: Doc<"teams">,
   kind: Doc<"issues">["kind"],
   parentIssueId: Id<"issues"> | undefined
-): Promise<Pick<Doc<"issues">, "number" | "subNumber">> {
+): Promise<Pick<Doc<"issues">, "number" | "subNumber" | "nextSubNumber">> {
   if (kind === "story") {
     const number = team.nextIssueNumber;
     await ctx.db.patch(team._id, { nextIssueNumber: number + 1 });
-    return { number };
+    return { number, nextSubNumber: FIRST_SUB_NUMBER };
   }
   if (kind === "subtask" && parentIssueId) {
-    return { subNumber: await nextSubNumber(ctx, parentIssueId) };
+    return { subNumber: await nextSubNumber(ctx, team.orgId, parentIssueId) };
   }
   return {};
 }
@@ -284,7 +287,6 @@ export async function createIssue(
     estimate: args.estimate,
     dueDate: args.dueDate,
     sortOrder,
-    version: FIRST_VERSION,
   });
   const created = await ctx.db.get(issueId);
   if (created?.kind === "story") {
@@ -614,7 +616,6 @@ export const remove = orgMutation({
     await assertNoChildren(ctx, issue);
     const parent = issue.parentIssueId ? await orgRow(ctx, ctx.org._id, issue.parentIssueId) : null;
     await deleteStorySubtasks(ctx, issue);
-    await retireSubNumber(ctx, issue, parent);
     await deleteIssueRow(ctx, issue);
     await logChildDeleted(ctx, issue, parent, ctx.user._id);
     return null;
