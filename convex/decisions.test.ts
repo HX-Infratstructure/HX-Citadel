@@ -4,7 +4,7 @@ import { Id } from "./_generated/dataModel";
 import { QueryCtx } from "./_generated/server";
 import { LIST_LIMIT } from "./issues";
 import { answerDecision, askDecision, DECISION_PAGE_MAX, listIssueDecisions, pageIssueDecisions } from "./lib/decisions";
-import { AGENT, freshKey, ORG, registerWorkspaceEnv, workspaceTest, type WorkspaceTest } from "./workspace.fixture";
+import { AGENT, ORG, registerWorkspaceEnv, workspaceTest, writeHeaders, type WorkspaceTest } from "./workspace.fixture";
 
 const ADMIN = "user_admin";
 const MEMBER = "user_member";
@@ -36,8 +36,6 @@ async function issueState(t: WorkspaceTest, issueId: Id<"issues">) {
     return { status: issue?.status, version: issue?.version, activity };
   });
 }
-
-const writeHeaders = () => ({ ...AGENT, ...freshKey() });
 
 describe("asking a decision", () => {
   test("creates an open decision and one decision_asked row, and leaves the issue alone", async () => {

@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import { ConvexError, type Value } from "convex/values";
 import { internal } from "./_generated/api";
 import { pageFailure } from "./agentApi";
-import { AGENT, freshKey, registerWorkspaceEnv, workspaceTest, type WorkspaceTest } from "./workspace.fixture";
+import { AGENT, freshKey, registerWorkspaceEnv, workspaceTest, writeHeaders, type WorkspaceTest } from "./workspace.fixture";
 
 const WIP_REFUSAL = "cc1 already has ENG-1 In Progress; move it to In Review or Done first";
 
@@ -53,7 +53,7 @@ describe("internal.agentApi.createIssue", () => {
     const t = await workspaceTest();
     const response = await t.fetch("/api/v1/issues", {
       method: "POST",
-      headers: { ...AGENT, "If-Match": '"1"', ...freshKey() },
+      headers: { ...writeHeaders(), "If-Match": '"1"' },
       body: JSON.stringify({ teamKey: "ENG", title: "Story" }),
     });
     expect(response.status).toBe(400);
@@ -87,7 +87,7 @@ describe("internal.agentApi.listIssues past the newest 500 issues", () => {
     await fill(t, 501);
     await t.fetch("/api/v1/issues/ENG-1/subtasks", {
       method: "POST",
-      headers: { ...AGENT, ...freshKey() },
+      headers: writeHeaders(),
       body: JSON.stringify({ title: "Recent sub-task" }),
     });
     const { issues } = await t.query(internal.agentApi.listIssues, { agentName: "cc1", teamKey: "ENG" });
@@ -349,7 +349,7 @@ describe("REST refusals (DSH gates, 10:11Z)", () => {
 
   test("a bad JSON body is 400 validation", async () => {
     const t = await workspaceTest();
-    const response = await t.fetch("/api/v1/issues", { method: "POST", headers: { ...AGENT, ...freshKey() }, body: "{not json" });
+    const response = await t.fetch("/api/v1/issues", { method: "POST", headers: writeHeaders(), body: "{not json" });
     expect(await failure(response)).toEqual({ status: 400, code: "validation" });
   });
 

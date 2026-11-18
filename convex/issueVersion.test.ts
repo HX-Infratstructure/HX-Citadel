@@ -7,7 +7,7 @@ import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { patchIssue } from "./lib/issueVersion";
 import schema from "./schema";
-import { AGENT, ORG, freshKey, registerWorkspaceEnv, workspaceTest, type WorkspaceTest } from "./workspace.fixture";
+import { AGENT, ORG, freshKey, registerWorkspaceEnv, workspaceTest, writeHeaders, type WorkspaceTest } from "./workspace.fixture";
 
 const modules = import.meta.glob("./**/*.*s");
 
@@ -15,7 +15,7 @@ registerWorkspaceEnv();
 
 async function setup() {
   const t = await workspaceTest();
-  await t.fetch("/api/v1/issues", { method: "POST", headers: { ...AGENT, ...freshKey() }, body: JSON.stringify({ teamKey: "ENG", title: "Story" }) });
+  await t.fetch("/api/v1/issues", { method: "POST", headers: writeHeaders(), body: JSON.stringify({ teamKey: "ENG", title: "Story" }) });
   return t;
 }
 

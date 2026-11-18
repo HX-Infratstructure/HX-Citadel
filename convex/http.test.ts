@@ -1,9 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { AGENT, freshKey, registerWorkspaceEnv, workspaceTest, type WorkspaceTest } from "./workspace.fixture";
+import { AGENT, registerWorkspaceEnv, workspaceTest, writeHeaders, type WorkspaceTest } from "./workspace.fixture";
 
 registerWorkspaceEnv();
-
-const writeHeaders = () => ({ ...AGENT, ...freshKey() });
 
 const send = async (t: WorkspaceTest, method: string, path: string, body?: string) => {
   const response = await t.fetch(`/api/v1/issues${path}`, {

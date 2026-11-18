@@ -16,6 +16,9 @@ let keyCount = 0;
 /** A new Idempotency-Key header. The counter only increases, so a key never repeats in one test file. */
 export const freshKey = () => ({ "Idempotency-Key": `test-${++keyCount}` });
 
+/** The agent header plus a new Idempotency-Key, for a write. */
+export const writeHeaders = () => ({ ...AGENT, ...freshKey() });
+
 /** Sets HX_WORKSPACE_ORG_ID to ORG before each test and deletes it after. Call it once, at the top of the file. */
 export function registerWorkspaceEnv(): void {
   beforeEach(() => {
@@ -26,7 +29,7 @@ export function registerWorkspaceEnv(): void {
   });
 }
 
-export type Member = { clerkId: string; role: Infer<typeof memberRoleValidator> };
+type Member = { clerkId: string; role: Infer<typeof memberRoleValidator> };
 
 /** A convexTest instance with the HX organization, the ENG team and one user and membership per entry in members. */
 export async function workspaceTest(options: { members?: readonly Member[]; transactionLimits?: boolean } = {}) {
