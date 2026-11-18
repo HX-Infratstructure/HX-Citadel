@@ -1,6 +1,7 @@
 import { ConvexError } from "convex/values";
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx } from "../_generated/server";
+import { notFound } from "./refusals";
 
 export const FIRST_VERSION = 1;
 
@@ -26,7 +27,7 @@ export async function patchIssue(
 ): Promise<number> {
   const issue = typeof issueOrId === "string" ? await ctx.db.get(issueOrId) : issueOrId;
   if (issue === null) {
-    throw new Error(`Issue ${issueOrId} not found`);
+    notFound(`Issue ${issueOrId} not found`);
   }
   const keys = Object.keys(fields) as (keyof IssueFields)[];
   const changed = keys.filter((key) => fields[key] !== issue[key]);

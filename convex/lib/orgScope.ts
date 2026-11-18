@@ -2,6 +2,7 @@ import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { agentClerkId, ensureAgent, normalizeAgentName } from "./agents";
 import { findMembership, findUserByClerkId, getOrgByClerkIdOrThrow } from "./mirror";
+import { notFound } from "./refusals";
 
 /** Who acts and in which workspace; the Clerk session and agent calls both resolve to it. */
 export type OrgScope = { org: Doc<"organizations">; actorId: Id<"users"> };
@@ -52,7 +53,7 @@ export async function resolveAgentAssignee(
 ): Promise<Id<"users">> {
   const userId = await findAgentMember(ctx, orgId, name);
   if (userId === null) {
-    throw new Error(`Assignee ${name} not found`);
+    notFound(`Assignee ${name} not found`);
   }
   return userId;
 }

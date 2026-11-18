@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { notFound } from "./lib/refusals";
 
 const viewShape = {
   _id: v.id("views"),
@@ -78,7 +79,7 @@ export const update = orgMutation({
   handler: async (ctx, args) => {
     const view = await ctx.db.get(args.viewId);
     if (!view || view.orgId !== ctx.org._id) {
-      throw new Error("View not found");
+      notFound("View not found");
     }
     if (view.creatorId !== ctx.user._id && ctx.membership.role !== "admin") {
       throw new Error("Only the view's creator or an admin can edit it");
@@ -110,7 +111,7 @@ export const remove = orgMutation({
   handler: async (ctx, args) => {
     const view = await ctx.db.get(args.viewId);
     if (!view || view.orgId !== ctx.org._id) {
-      throw new Error("View not found");
+      notFound("View not found");
     }
     if (view.creatorId !== ctx.user._id && ctx.membership.role !== "admin") {
       throw new Error("Only the view's creator or an admin can delete it");
@@ -137,7 +138,7 @@ export const teamIssueLabels = orgQuery({
   handler: async (ctx, args) => {
     const team = await ctx.db.get(args.teamId);
     if (!team || team.orgId !== ctx.org._id) {
-      throw new Error("Team not found");
+      notFound("Team not found");
     }
     const issues = await ctx.db
       .query("issues")

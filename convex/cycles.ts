@@ -8,6 +8,7 @@ import { getOrgCycle } from "./lib/cycles";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { patchIssue } from "./lib/issueVersion";
 import { progressShape } from "./projects";
+import { notFound } from "./lib/refusals";
 
 export const cycleShape = {
   _id: v.id("cycles"),
@@ -28,7 +29,7 @@ async function getOrgTeam(
 ): Promise<Doc<"teams">> {
   const team = await ctx.db.get(teamId);
   if (!team || team.orgId !== orgId) {
-    throw new Error("Team not found");
+    notFound("Team not found");
   }
   return team;
 }

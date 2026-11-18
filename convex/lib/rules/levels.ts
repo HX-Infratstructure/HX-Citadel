@@ -1,5 +1,5 @@
 import { Doc, Id } from "../../_generated/dataModel";
-import { refuse } from "../refusals";
+import { notFound, refuse } from "../refusals";
 import { MutationCtx, QueryCtx } from "../../_generated/server";
 import {
   childKindOf,
@@ -85,7 +85,7 @@ async function assertProjectInOrg(
   const team = await ctx.db.get(teamId);
   const project = await ctx.db.get(projectId);
   if (!team || !project || project.orgId !== team.orgId) {
-    throw new Error("Project not found");
+    notFound("Project not found");
   }
 }
 
@@ -116,7 +116,7 @@ export async function assertValidParent(
   }
   const parent = await ctx.db.get(placement.parentIssueId);
   if (!parent) {
-    throw new Error("Parent issue not found");
+    notFound("Parent issue not found");
   }
   assertParentKind(kind, parent.kind);
   return {
@@ -169,7 +169,7 @@ export async function nextSubNumber(
 ): Promise<number> {
   const story = await ctx.db.get(storyId);
   if (story === null) {
-    throw new Error("Parent issue not found");
+    notFound("Parent issue not found");
   }
   const subNumber = await subCounter(ctx, story);
   await patchIssue(ctx, story, { nextSubNumber: subNumber + 1 });

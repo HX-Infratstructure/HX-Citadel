@@ -1,6 +1,7 @@
 import { normalizeTeamKey } from "../../lib/issue-key";
 import { Doc, Id } from "../_generated/dataModel";
 import { QueryCtx } from "../_generated/server";
+import { notFound } from "./refusals";
 
 /** The org's team for a typed key, normalized as teams.create stores it. */
 export async function findTeamByKey(
@@ -14,7 +15,7 @@ export async function findTeamByKey(
     .withIndex("by_org_and_key", (q) => q.eq("orgId", orgId).eq("key", key))
     .unique();
   if (team === null) {
-    throw new Error(`Team ${key} not found`);
+    notFound(`Team ${key} not found`);
   }
   return team;
 }

@@ -1,5 +1,5 @@
 import { Infer, v } from "convex/values";
-import { refuse } from "./refusals";
+import { invalid, notFound, refuse } from "./refusals";
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { formatIssueKey } from "../../lib/issue-key";
@@ -31,25 +31,25 @@ export type ListedDecision = Infer<typeof listedDecisionValidator>;
 
 type Db = { db: QueryCtx["db"] };
 
-function invalid(message: string): Error {
-  return new Error(`Invalid decision: ${message}`);
+function invalidDecision(message: string): never {
+  return invalid(`Invalid decision: ${message}`);
 }
 
 function boundedText(value: string, max: number, what: string): string {
   const text = value.trim();
   if (text.length === 0 || text.length > max) {
-    throw invalid(`${what} must be 1 to ${max} characters`);
+    invalidDecision(`${what} must be 1 to ${max} characters`);
   }
   return text;
 }
 
 function parseChoices(choices: string[]): string[] {
   if (choices.length < CHOICES_MIN || choices.length > CHOICES_MAX) {
-    throw invalid(`give ${CHOICES_MIN} to ${CHOICES_MAX} choices, not ${choices.length}`);
+    invalidDecision(`give ${CHOICES_MIN} to ${CHOICES_MAX} choices, not ${choices.length}`);
   }
   const parsed = choices.map((choice) => boundedText(choice, CHOICE_MAX, "each choice"));
   if (new Set(parsed).size !== parsed.length) {
-    throw invalid("the choices must all be different");
+    invalidDecision("the choices must all be different");
   }
   return parsed;
 }
@@ -57,7 +57,7 @@ function parseChoices(choices: string[]): string[] {
 function pickChoice(choices: string[] | undefined, choice: string): string {
   const picked = choice.trim();
   if (!(choices ?? []).includes(picked)) {
-    throw invalid(`"${picked}" is not one of the choices`);
+    invalidDecision(`"${picked}" is not one of the choices`);
   }
   return picked;
 }
@@ -73,7 +73,7 @@ function parseAsk({ question, choices, recommended }: DecisionAsk) {
 
 function parseAnswer(decision: Doc<"decisions">, { choice, text }: DecisionAnswer): Answer {
   if (choice === undefined && text === undefined) {
-    throw invalid("answer with a choice, a text, or both");
+    invalidDecision("answer with a choice, a text, or both");
   }
   return {
     choice: choice === undefined ? undefined : pickChoice(decision.choices, choice),
@@ -115,7 +115,7 @@ async function openDecision(ctx: Db, issueId: Id<"issues">): Promise<Doc<"decisi
 async function getOrgDecision(ctx: Db, orgId: Id<"organizations">, decisionId: Id<"decisions">): Promise<Doc<"decisions">> {
   const decision = await ctx.db.get(decisionId);
   if (decision === null || decision.orgId !== orgId) {
-    throw new Error("Decision not found");
+    notFound("Decision not found");
   }
   return decision;
 }

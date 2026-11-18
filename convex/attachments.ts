@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { refuse } from "./lib/refusals";
+import { notFound, refuse } from "./lib/refusals";
 import { getOrgIssue } from "./issues";
 import { logActivity } from "./lib/activity";
 import { deleteAttachmentFiles } from "./lib/issueCleanup";
@@ -115,7 +115,7 @@ export const remove = orgMutation({
   handler: async (ctx, args) => {
     const attachment = await ctx.db.get(args.attachmentId);
     if (!attachment || attachment.orgId !== ctx.org._id) {
-      throw new Error("Attachment not found");
+      notFound("Attachment not found");
     }
     const isUploader = attachment.uploadedBy === ctx.user._id;
     const isAdmin = ctx.membership.role === "admin";

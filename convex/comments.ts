@@ -5,6 +5,7 @@ import { getOrgIssue } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { OrgScope } from "./lib/orgScope";
+import { invalid, notFound } from "./lib/refusals";
 
 /** Comment enriched with author + mention display info for the feed. */
 const enrichedCommentValidator = v.object({
@@ -30,7 +31,7 @@ async function getOrgComment(
 ): Promise<Doc<"comments">> {
   const comment = await ctx.db.get(commentId);
   if (!comment || comment.orgId !== orgId) {
-    throw new Error("Comment not found");
+    notFound("Comment not found");
   }
   return comment;
 }
@@ -120,7 +121,7 @@ export async function createComment(
 
   const body = args.body.trim();
   if (!body) {
-    throw new Error("Comment cannot be empty");
+    invalid("Comment cannot be empty");
   }
 
   const mentions = await filterToOrgMembers(ctx, org._id, args.mentions ?? []);
@@ -160,7 +161,7 @@ export const update = orgMutation({
 
     const body = args.body.trim();
     if (!body) {
-      throw new Error("Comment cannot be empty");
+      invalid("Comment cannot be empty");
     }
 
     const mentions =

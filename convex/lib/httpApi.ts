@@ -2,7 +2,7 @@ import { ConvexError } from "convex/values";
 import { errorMessage } from "../../lib/error-message";
 import { ActionCtx, httpAction } from "../_generated/server";
 import { hashRequest, Idempotency, IDEMPOTENCY_HEADER, isValidKey } from "./idempotency";
-import { RULE_REFUSED } from "./refusals";
+import { NOT_FOUND, RULE_REFUSED, VALIDATION } from "./refusals";
 
 export type ErrorBody = { code: string; message: string };
 export type HttpFailure = { status: number; body: ErrorBody };
@@ -101,16 +101,20 @@ export function parseIssuePath(pathname: string): IssuePath {
   return { key, action: known ?? null };
 }
 
+/** Errors with no typed code, matched by their words: the runtime's argument validation and a missing workspace setting. */
 const ERROR_MAP: { pattern: RegExp; status: number; code: string }[] = [
   { pattern: /HX_WORKSPACE_ORG_ID/, status: 500, code: "server_error" },
   { pattern: /ArgumentValidationError|Validator error/, status: 400, code: "validation" },
-  { pattern: /invalid (agent name|issue key|decision)/i, status: 400, code: "validation" },
-  { pattern: /must be an absolute http|cannot be empty/i, status: 400, code: "validation" },
-  { pattern: /not found/i, status: 404, code: "not_found" },
 ];
 
 /** Typed `ConvexError` codes the shared write logic throws, by HTTP status. */
-const TYPED_ERRORS: Record<string, number> = { validation: 400, stale: 412, idempotency_key_reused: 409, [RULE_REFUSED]: 409 };
+const TYPED_ERRORS: Record<string, number> = {
+  [VALIDATION]: 400,
+  [NOT_FOUND]: 404,
+  stale: 412,
+  idempotency_key_reused: 409,
+  [RULE_REFUSED]: 409,
+};
 
 function typedFailure(error: unknown): HttpFailure | null {
   if (!(error instanceof ConvexError)) {

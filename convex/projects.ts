@@ -7,6 +7,7 @@ import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { patchIssue } from "./lib/issueVersion";
 import { assertNoEpics } from "./lib/rules/levels";
 import { projectStatusValidator } from "./schema";
+import { notFound } from "./lib/refusals";
 
 export const projectShape = {
   _id: v.id("projects"),
@@ -39,7 +40,7 @@ async function getOrgProject(
 ): Promise<Doc<"projects">> {
   const project = await ctx.db.get(projectId);
   if (!project || project.orgId !== orgId) {
-    throw new Error("Project not found");
+    notFound("Project not found");
   }
   return project;
 }

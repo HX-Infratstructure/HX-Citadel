@@ -55,9 +55,9 @@ Every response that returns one issue carries its version as the `ETag` header, 
 Every error is JSON: `{code, message}` (`toHttpError` in `convex/lib/httpApi.ts`). The status is set in that file, in this order:
 
 - The routes throw `HttpError` for `actor_required`, `idempotency_key_required`, and `validation` (400), and for `not_found` (404) on an unknown route.
-- `TYPED_ERRORS` maps typed errors: `validation` to 400, `stale` to 412, `idempotency_key_reused` to 409, and `rule_refused` to 409. A rule refusal is thrown by `refuse` (`convex/lib/refusals.ts`), and its `message` says which rule refused the write and why.
-- `ERROR_MAP` maps known messages to `validation` (400), `not_found` (404), and `server_error` (500).
-- Anything else is a bug, not a rule: `500 server_error` with the message `Internal error`. The server logs the real error.
+- `TYPED_ERRORS` maps typed errors by their code: `validation` to 400, `not_found` to 404, `stale` to 412, `idempotency_key_reused` to 409, and `rule_refused` to 409. `convex/lib/refusals.ts` throws three of them: `invalid` for `validation`, `notFound` for `not_found`, and `refuse` for `rule_refused`. The `message` is the server's own words. A rule refusal says which rule refused the write and why.
+- `ERROR_MAP` maps two errors that have no code by their words. A Convex argument validation error (`ArgumentValidationError` or `Validator error`) is `400 validation`. A missing or unmatched `HX_WORKSPACE_ORG_ID` setting is `500 server_error`.
+- Anything else is a bug, not a rule: `500 server_error` with the message `Internal error`. An error is in this group even when its message says "not found" or "invalid". The server logs the real error.
 
 ## Connect through MCP
 

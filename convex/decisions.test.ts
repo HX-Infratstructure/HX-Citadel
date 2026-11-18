@@ -97,7 +97,9 @@ describe("asking a decision", () => {
     [{ recommended: "A" }, '"A" is not one of the choices'],
   ])("refuses invalid input %o", async (fields, message) => {
     const { t } = await setup();
-    await expect(ask(t, fields)).rejects.toThrow(`Invalid decision: ${message}`);
+    await expect(ask(t, fields)).rejects.toMatchObject({
+      data: { code: "validation", message: expect.stringContaining(`Invalid decision: ${message}`) },
+    });
   });
 });
 
@@ -145,7 +147,9 @@ describe("answering a decision", () => {
   test("a choice that is not among the choices is refused", async () => {
     const { t } = await setup();
     const { decision } = await ask(t, { choices: ["Yes", "No"] });
-    await expect(answer(t, decision._id, { choice: "Maybe" })).rejects.toThrow('"Maybe" is not one of the choices');
+    await expect(answer(t, decision._id, { choice: "Maybe" })).rejects.toMatchObject({
+      data: { code: "validation", message: 'Invalid decision: "Maybe" is not one of the choices' },
+    });
   });
 
   test("an empty answer is refused", async () => {

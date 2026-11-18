@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { getOrgIssue } from "./issues";
 import { logActivity } from "./lib/activity";
+import { notFound } from "./lib/refusals";
 
 const labelShape = {
   _id: v.id("labels"),
@@ -61,7 +62,7 @@ export const toggleOnIssue = orgMutation({
     await getOrgIssue(ctx, ctx.org._id, args.issueId);
     const label = await ctx.db.get(args.labelId);
     if (!label || label.orgId !== ctx.org._id) {
-      throw new Error("Label not found");
+      notFound("Label not found");
     }
 
     const links = await ctx.db

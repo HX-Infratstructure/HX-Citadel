@@ -1,4 +1,4 @@
-import { ConvexError, v } from "convex/values";
+import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, MutationCtx, QueryCtx } from "./_generated/server";
 import { formatIssueKey, parseIssueKey } from "../lib/issue-key";
@@ -26,6 +26,7 @@ import {
   listedDecisionValidator,
   listIssueDecisions,
 } from "./lib/decisions";
+import { invalid, notFound } from "./lib/refusals";
 import { findTeamByKey } from "./lib/teams";
 import {
   issueKindValidator,
@@ -76,7 +77,7 @@ type FoundIssue = { issue: Doc<"issues">; team: Doc<"teams">; parentNumber?: num
 async function findIssueByKey(ctx: Db, orgId: Id<"organizations">, key: string): Promise<FoundIssue> {
   const parsed = parseIssueKey(key);
   if (parsed === null) {
-    throw new Error(`invalid issue key ${key}; use KEY-12 or KEY-12.3`);
+    invalid(`invalid issue key ${key}; use KEY-12 or KEY-12.3`);
   }
   const team = await findTeamByKey(ctx, orgId, parsed.teamKey);
   const story = await ctx.db
@@ -84,14 +85,14 @@ async function findIssueByKey(ctx: Db, orgId: Id<"organizations">, key: string):
     .withIndex("by_team_and_number", (q) => q.eq("teamId", team._id).eq("number", parsed.number))
     .unique();
   if (story === null || story.kind !== "story") {
-    throw new Error(`Issue ${key} not found`);
+    notFound(`Issue ${key} not found`);
   }
   if (parsed.subNumber === undefined) {
     return { issue: story, team };
   }
   const subtask = (await subtasksOf(ctx, orgId, story._id)).find((sub) => sub.subNumber === parsed.subNumber);
   if (subtask === undefined) {
-    throw new Error(`Issue ${key} not found`);
+    notFound(`Issue ${key} not found`);
   }
   return { issue: subtask, team, parentNumber: story.number };
 }
@@ -116,7 +117,7 @@ export const createIssue = internalMutation({
     agentWrite(ctx, agentName, idempotency, async (scope) => {
       const team = await findTeamByKey(ctx, scope.org._id, teamKey);
       if (ifMatch !== undefined && parentKey === undefined) {
-        throw new ConvexError({ code: "validation", message: "If-Match applies only with parentKey" });
+        invalid("If-Match applies only with parentKey");
       }
       const parent = parentKey === undefined ? null : (await findIssueByKey(ctx, scope.org._id, parentKey)).issue;
       if (parent !== null && parentKey !== undefined) {

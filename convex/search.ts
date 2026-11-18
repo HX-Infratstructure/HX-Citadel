@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { issueShape } from "./issues";
 import { orgQuery } from "./lib/customFunctions";
+import { notFound } from "./lib/refusals";
 
 const RESULTS_PER_INDEX = 20;
 const MAX_RESULTS = 25;
@@ -33,7 +34,7 @@ export const issues = orgQuery({
     if (args.teamId) {
       const team = await ctx.db.get(args.teamId);
       if (!team || team.orgId !== ctx.org._id) {
-        throw new Error("Team not found");
+        notFound("Team not found");
       }
     }
 

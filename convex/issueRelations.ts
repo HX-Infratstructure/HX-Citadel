@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { refuse } from "./lib/refusals";
+import { notFound, refuse } from "./lib/refusals";
 import { formatIssueKey } from "../lib/issue-key";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
@@ -251,7 +251,7 @@ export const remove = orgMutation({
   handler: async (ctx, args) => {
     const relation = await ctx.db.get(args.relationId);
     if (!relation) {
-      throw new Error("Relation not found");
+      notFound("Relation not found");
     }
     // Both ends must belong to the caller's org.
     const fromIssue = await getOrgIssue(ctx, ctx.org._id, relation.issueId);

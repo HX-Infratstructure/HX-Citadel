@@ -1,5 +1,5 @@
 import { Doc, Id } from "../../_generated/dataModel";
-import { refuse } from "../refusals";
+import { invalid, refuse } from "../refusals";
 import { MutationCtx } from "../../_generated/server";
 import { logActivity } from "../activity";
 import { FIRST_VERSION } from "../issueVersion";
@@ -73,6 +73,6 @@ function isAbsoluteHttpUrl(url: string): boolean {
 /** A proof is an absolute http(s) URL with a host; anything else is refused. */
 export function assertProofUrl(url: string): void {
   if (!isAbsoluteHttpUrl(url)) {
-    throw new Error("The proof must be an absolute http:// or https:// URL");
+    invalid("The proof must be an absolute http:// or https:// URL");
   }
 }

@@ -1,5 +1,5 @@
 import { ObjectType, v } from "convex/values";
-import { refuse } from "./lib/refusals";
+import { notFound, refuse } from "./lib/refusals";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
 import { formatIssueKey, PARENT_KIND } from "../lib/issue-key";
@@ -73,7 +73,7 @@ export async function getOrgIssue(
 ): Promise<Doc<"issues">> {
   const issue = await ctx.db.get(issueId);
   if (!issue || issue.orgId !== orgId) {
-    throw new Error("Issue not found");
+    notFound("Issue not found");
   }
   return issue;
 }
@@ -89,7 +89,7 @@ export async function listTeamIssues(
 ): Promise<Doc<"issues">[]> {
   const team = await ctx.db.get(teamId);
   if (!team || team.orgId !== orgId) {
-    throw new Error("Team not found");
+    notFound("Team not found");
   }
   return await ctx.db
     .query("issues")
@@ -118,7 +118,7 @@ export const listBacklog = orgQuery({
   handler: async (ctx, args) => {
     const team = await ctx.db.get(args.teamId);
     if (!team || team.orgId !== ctx.org._id) {
-      throw new Error("Team not found");
+      notFound("Team not found");
     }
     const byStatus = await Promise.all(
       OPEN_STATUSES.map((status) =>
@@ -148,7 +148,7 @@ export const listParentCandidates = orgQuery({
   handler: async (ctx, args) => {
     const team = await ctx.db.get(args.teamId);
     if (!team || team.orgId !== ctx.org._id) {
-      throw new Error("Team not found");
+      notFound("Team not found");
     }
     const parentKind = PARENT_KIND[args.kind];
     if (parentKind === null) {
@@ -252,7 +252,7 @@ export async function createIssue(
   const { org, actorId } = scope;
   const team = await ctx.db.get(args.teamId);
   if (!team || team.orgId !== org._id) {
-    throw new Error("Team not found");
+    notFound("Team not found");
   }
 
   const kind = args.kind ?? "story";
@@ -524,7 +524,7 @@ export const revertChange = orgAdminMutation({
   handler: async (ctx, { activityId }) => {
     const change = await ctx.db.get(activityId);
     if (!change || change.orgId !== ctx.org._id || !change.field) {
-      throw new Error("Change not found");
+      notFound("Change not found");
     }
     const toArgs = REVERT_ARGS[change.field];
     if (!toArgs) {

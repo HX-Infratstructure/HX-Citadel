@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { HttpError, parseIssuePath, readAgentId, toHttpError } from "./httpApi";
-import { refuse } from "./refusals";
+import { invalid, notFound, refuse } from "./refusals";
 
 const withAgent = (value?: string) =>
   new Request("http://x/api/v1/issues", value === undefined ? {} : { headers: { "X-Agent-Id": value } });
@@ -39,8 +39,6 @@ describe("toHttpError", () => {
   test.each([
     ["ArgumentValidationError: Value does not match validator.", 400, "validation"],
     ["Validator error: Expected `string`, got `1`", 400, "validation"],
-    ["invalid agent name", 400, "validation"],
-    ["Team not found", 404, "not_found"],
   ])("%s maps to %i %s", (message, status, code) => {
     expect(toHttpError(new Error(message))).toMatchObject({ status, body: { code } });
   });
@@ -58,8 +56,17 @@ describe("toHttpError", () => {
   });
 
   test.each([
+    ["notFound", () => notFound("Issue ENG-9 not found"), 404, "not_found", "Issue ENG-9 not found"],
+    ["invalid", () => invalid("invalid agent name"), 400, "validation", "invalid agent name"],
+  ])("a typed %s is %i %s with its own words", (_label, raise, status, code, message) => {
+    expect(toHttpError(captured(raise))).toEqual({ status, body: { code, message } });
+  });
+
+  test.each([
     ["a plain Error", new Error("Uncaught Error: Member already has ENG-1 In Progress; move it to In Review or Done first")],
     ["a TypeError", new TypeError("Cannot read properties of null (reading 'teamId')")],
+    ["a plain Error whose words say not found", new Error("Database index not found")],
+    ["a plain Error whose words say invalid", new Error("invalid agent name")],
     ["a non-error", "boom"],
   ])("%s nobody expected is a logged 500 server_error that keeps its words out of the body", (_label, error) => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});

@@ -1,5 +1,6 @@
 import { Doc, Id } from "../_generated/dataModel";
 import { QueryCtx } from "../_generated/server";
+import { notFound } from "./refusals";
 
 /** Verify a cycle belongs to the caller's org before any read/write. */
 export async function getOrgCycle(
@@ -9,7 +10,7 @@ export async function getOrgCycle(
 ): Promise<Doc<"cycles">> {
   const cycle = await ctx.db.get(cycleId);
   if (!cycle || cycle.orgId !== orgId) {
-    throw new Error("Cycle not found");
+    notFound("Cycle not found");
   }
   return cycle;
 }

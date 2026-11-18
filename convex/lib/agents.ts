@@ -1,6 +1,7 @@
 import { Id } from "../_generated/dataModel";
 import { MutationCtx } from "../_generated/server";
 import { findMembership, findUserByClerkId } from "./mirror";
+import { invalid } from "./refusals";
 
 const AGENT_NAME = /^[a-z0-9._-]{1,64}$/;
 
@@ -11,7 +12,7 @@ const SELF_SELECTOR = "me";
 export function normalizeAgentName(raw: string): string {
   const name = raw.trim().toLowerCase();
   if (!AGENT_NAME.test(name) || name === SELF_SELECTOR) {
-    throw new Error("invalid agent name");
+    invalid("invalid agent name");
   }
   return name;
 }

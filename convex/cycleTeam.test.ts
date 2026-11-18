@@ -78,7 +78,7 @@ describe("an issue's cycle belongs to the issue's team", () => {
     const { asMember, teamId, foreignCycleId } = await setup();
     await expect(
       asMember.mutation(api.issues.create, { teamId, title: "Story", cycleId: foreignCycleId })
-    ).rejects.toThrow(/^Cycle not found$/);
+    ).rejects.toMatchObject({ data: { code: "not_found", message: "Cycle not found" } });
   });
 
   test("updating to another team's cycle is refused and the cycle is unchanged", async () => {
