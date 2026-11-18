@@ -1,8 +1,10 @@
 import { v } from "convex/values";
+import { cycleName } from "../lib/sprint";
 import { Doc, Id } from "./_generated/dataModel";
 import { QueryCtx } from "./_generated/server";
 import { issueShape } from "./issues";
 import { logActivity } from "./lib/activity";
+import { getOrgCycle } from "./lib/cycles";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { patchIssue } from "./lib/issueVersion";
 import { progressShape } from "./projects";
@@ -17,19 +19,6 @@ export const cycleShape = {
   startDate: v.number(),
   endDate: v.number(),
 };
-
-/** Verify a cycle belongs to the caller's org before any read/write. */
-async function getOrgCycle(
-  ctx: { db: QueryCtx["db"] },
-  orgId: Id<"organizations">,
-  cycleId: Id<"cycles">
-): Promise<Doc<"cycles">> {
-  const cycle = await ctx.db.get(cycleId);
-  if (!cycle || cycle.orgId !== orgId) {
-    throw new Error("Cycle not found");
-  }
-  return cycle;
-}
 
 /** Verify a team belongs to the caller's org. */
 async function getOrgTeam(
@@ -286,7 +275,7 @@ export const remove = orgMutation({
         actorId: ctx.user._id,
         type: "cycle_changed",
         field: "cycle",
-        oldValue: cycle.name ?? `Cycle ${cycle.number}`,
+        oldValue: cycleName(cycle),
         newValue: undefined,
       });
     }

@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { cycleName as formatCycleName } from "../lib/sprint";
 import { Doc, Id } from "./_generated/dataModel";
 import { getOrgIssue } from "./issues";
 import { orgQuery } from "./lib/customFunctions";
@@ -47,7 +48,7 @@ export const listByIssue = orgQuery({
     const cycleName = async (value: string): Promise<string | undefined> => {
       const cycleId = ctx.db.normalizeId("cycles", value);
       const cycle = cycleId ? await ctx.db.get(cycleId) : null;
-      return cycle ? (cycle.name ?? `Cycle ${cycle.number}`) : undefined;
+      return cycle ? formatCycleName(cycle) : undefined;
     };
     const userName = async (value: string): Promise<string | undefined> => {
       const userId = ctx.db.normalizeId("users", value);

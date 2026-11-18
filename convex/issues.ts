@@ -7,6 +7,7 @@ import { orgAdminMutation, orgMutation, orgQuery } from "./lib/customFunctions";
 import { deleteIssueOwnedRows } from "./lib/issueCleanup";
 import { FIRST_VERSION, patchIssue } from "./lib/issueVersion";
 import { OrgScope } from "./lib/orgScope";
+import { assertCycleInTeam } from "./lib/rules/cycles";
 import {
   assertDoneGate,
   assertDoneGateAfterUpdate,
@@ -216,6 +217,9 @@ export async function createIssue(
   if (parent !== null) {
     await assertParentOpen(ctx, parent, kind);
   }
+  if (args.cycleId !== undefined) {
+    await assertCycleInTeam(ctx, org._id, args.cycleId, placement.teamId);
+  }
   const status = args.status ?? "todo";
   await assertWipFree(ctx, { orgId: org._id, assigneeId: args.assigneeId, kind, status });
   const numbering = await claimNumbering(ctx, team, kind, args.parentIssueId);
@@ -321,6 +325,9 @@ export async function updateIssue(
     await cascadeProject(ctx, issue._id, placement.projectId, actor);
   }
   if (args.cycleId !== undefined) {
+    if (args.cycleId !== null) {
+      await assertCycleInTeam(ctx, scope.org._id, args.cycleId, issue.teamId);
+    }
     updates.cycleId = args.cycleId ?? undefined;
   }
   if (args.estimate !== undefined) {

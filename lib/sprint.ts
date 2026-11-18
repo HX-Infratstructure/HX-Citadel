@@ -7,3 +7,8 @@ export const SPRINT_DAYS = 7;
 export function sprintEnd(startMs: number): number {
   return startMs + (SPRINT_DAYS - 1) * DAY_MS;
 }
+
+/** A cycle's display name; unnamed cycles are "Cycle <n>". */
+export function cycleName(cycle: { name?: string; number: number }): string {
+  return cycle.name ?? `Cycle ${cycle.number}`;
+}
