@@ -1,4 +1,5 @@
 import { ObjectType, v } from "convex/values";
+import { refuse } from "./lib/refusals";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
 import { formatIssueKey, PARENT_KIND } from "../lib/issue-key";
@@ -403,7 +404,7 @@ export async function updateIssue(
     });
     if (args.projectId === null && placement.projectId !== undefined) {
       const parentKind = PARENT_KIND[issue.kind];
-      throw new Error(
+      refuse(
         `This ${issue.kind}'s project comes from its ${parentKind}; move it out of the ${parentKind} to clear the project`
       );
     }
@@ -495,14 +496,14 @@ export const revertChange = orgAdminMutation({
     }
     const toArgs = REVERT_ARGS[change.field];
     if (!toArgs) {
-      throw new Error("Only status, assignee, priority and title changes can be reverted");
+      refuse("Only status, assignee, priority and title changes can be reverted");
     }
     const issue = await getOrgIssue(ctx, ctx.org._id, change.issueId);
     const latest = await latestFieldChange(ctx, issue._id, change.field);
     if (latest?._id !== change._id || fieldText(issue, change.field) !== change.newValue) {
       const team = await ctx.db.get(issue.teamId);
       const key = team ? formatIssueKey(team.key, issue) : null;
-      throw new Error(`${key ?? issue.title} ${change.field} has changed since; revert the latest change instead`);
+      refuse(`${key ?? issue.title} ${change.field} has changed since; revert the latest change instead`);
     }
     await updateIssue(
       ctx,

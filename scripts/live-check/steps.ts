@@ -1,6 +1,7 @@
 import { errorLine } from "../../cli/commands";
 import type { Infer } from "convex/values";
-import { AGENT_HEADER, RULE_REFUSED } from "../../convex/lib/httpApi";
+import { AGENT_HEADER } from "../../convex/lib/httpApi";
+import { RULE_REFUSED } from "../../convex/lib/refusals";
 import type { ReusedData } from "../../convex/lib/idempotency";
 import type { StaleData } from "../../convex/lib/issueVersion";
 import type { issuePriorityValidator, issueStatusValidator } from "../../convex/schema";

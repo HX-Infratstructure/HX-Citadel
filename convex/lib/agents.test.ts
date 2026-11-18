@@ -124,8 +124,8 @@ describe("one story In Progress per agent", () => {
     const second = await story("Second");
     await start(first);
 
-    await expect(start(second)).rejects.toThrow(
-      /^cc1 already has ENG-1 In Progress; move it to In Review or Done first$/
-    );
+    await expect(start(second)).rejects.toMatchObject({
+      data: { code: "rule_refused", message: "cc1 already has ENG-1 In Progress; move it to In Review or Done first" },
+    });
   });
 });

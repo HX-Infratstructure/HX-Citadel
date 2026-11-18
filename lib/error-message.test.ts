@@ -68,4 +68,25 @@ describe("errorMessage", () => {
     (error as ConvexError<Value>).data = { code: "TEAM_KEY_TAKEN" };
     expect(errorMessage(error, "Failed to create team")).toBe("Team key ENG is taken");
   });
+
+  /** What the Convex client throws for a `ConvexError`: its header and the data as JSON, with the data forwarded. */
+  function forwardedConvexError(data: Value): ConvexError<Value> {
+    const error = new ConvexError(
+      `[CONVEX M(issues:update)] [Request ID: 9f3c] Server Error\nUncaught ConvexError: ${JSON.stringify(data)}\n\n  Called by client`
+    );
+    (error as ConvexError<Value>).data = data;
+    return error as ConvexError<Value>;
+  }
+
+  test.each([
+    [
+      "a rule refusal, the rule's own words",
+      { code: "rule_refused", message: 'Team key "ENG" is already in use' },
+      'Team key "ENG" is already in use',
+    ],
+    ["a string, as is", "Team key ENG is taken", "Team key ENG is taken"],
+    ["a blank message, the fallback", { code: "rule_refused", message: "  " }, "Failed to move issue"],
+  ])("a ConvexError whose data holds %s", (_label, data, expected) => {
+    expect(errorMessage(forwardedConvexError(data), "Failed to move issue")).toBe(expected);
+  });
 });

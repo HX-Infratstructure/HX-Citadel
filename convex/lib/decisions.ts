@@ -1,11 +1,11 @@
-import { ConvexError, Infer, v } from "convex/values";
+import { Infer, v } from "convex/values";
+import { refuse } from "./refusals";
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { formatIssueKey } from "../../lib/issue-key";
 import { getOrgIssue } from "../issues";
 import { decisionAnswerValidator, decisionFields, decisionViaValidator } from "../schema";
 import { logActivity } from "./activity";
-import { ErrorBody, RULE_REFUSED } from "./httpApi";
 import { OrgScope } from "./orgScope";
 
 export const QUESTION_MAX = 500;
@@ -33,11 +33,6 @@ type Db = { db: QueryCtx["db"] };
 
 function invalid(message: string): Error {
   return new Error(`Invalid decision: ${message}`);
-}
-
-/** Typed, so the asker's own words in the message never change how the HTTP layer maps it. */
-function refused(message: string): ConvexError<ErrorBody> {
-  return new ConvexError({ code: RULE_REFUSED, message });
 }
 
 function boundedText(value: string, max: number, what: string): string {
@@ -105,9 +100,9 @@ async function assertStory(ctx: Db, issue: Doc<"issues">): Promise<void> {
   }
   const parent = issue.parentIssueId === undefined ? null : await ctx.db.get(issue.parentIssueId);
   if (issue.kind === "subtask" && parent !== null) {
-    throw refused(`Decisions are asked on stories: ask on ${await displayKey(ctx, parent)}`);
+    refuse(`Decisions are asked on stories: ask on ${await displayKey(ctx, parent)}`);
   }
-  throw refused("Decisions are asked on stories");
+  refuse("Decisions are asked on stories");
 }
 
 async function openDecision(ctx: Db, issueId: Id<"issues">): Promise<Doc<"decisions"> | null> {
@@ -132,7 +127,7 @@ export async function askDecision(ctx: MutationCtx, scope: OrgScope, ask: Decisi
   const fields = parseAsk(ask);
   const waiting = await openDecision(ctx, issue._id);
   if (waiting !== null) {
-    throw refused(`${await displayKey(ctx, issue)} is already waiting on the owner: ${waiting.question}`);
+    refuse(`${await displayKey(ctx, issue)} is already waiting on the owner: ${waiting.question}`);
   }
   const decisionId = await ctx.db.insert("decisions", {
     ...fields,
@@ -155,7 +150,7 @@ export async function askDecision(ctx: MutationCtx, scope: OrgScope, ask: Decisi
 export async function answerDecision(ctx: MutationCtx, scope: OrgScope, answer: DecisionAnswer, via: AnswerVia): Promise<void> {
   const decision = await getOrgDecision(ctx, scope.org._id, answer.decisionId);
   if (decision.status !== "open") {
-    throw new Error("This decision was already answered");
+    refuse("This decision was already answered");
   }
   const parsed = parseAnswer(decision, answer);
   await ctx.db.patch(decision._id, {

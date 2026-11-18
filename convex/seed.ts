@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { refuse } from "./lib/refusals";
 import { formatIssueKey } from "../lib/issue-key";
 import { isGatedStatus } from "../lib/issue-status";
 import { DAY_MS, SPRINT_DAYS, sprintEnd } from "../lib/sprint";
@@ -253,7 +254,7 @@ export const demoData = internalMutation({
       .withIndex("by_org", (q) => q.eq("orgId", org._id))
       .collect();
     if (existingTeams.length > 0) {
-      throw new Error("This workspace already has teams — demo data can only seed an empty workspace.");
+      refuse("This workspace already has teams — demo data can only seed an empty workspace.");
     }
 
     const now = Date.now();

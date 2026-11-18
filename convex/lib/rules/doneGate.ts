@@ -1,4 +1,5 @@
 import { formatIssueKey } from "../../../lib/issue-key";
+import { refuse } from "../refusals";
 import { GATED_LABELS, isGatedStatus } from "../../../lib/issue-status";
 import { Doc } from "../../_generated/dataModel";
 import { MutationCtx } from "../../_generated/server";
@@ -76,7 +77,7 @@ export async function assertDoneGate(
   const open = blockers(teamKey, issue, children);
   if (open.length > 0) {
     const name = formatIssueKey(teamKey, issue) ?? issue.title;
-    throw new Error(`Can't move ${name} to ${target}: open — ${open.join(", ")}`);
+    refuse(`Can't move ${name} to ${target}: open — ${open.join(", ")}`);
   }
 }
 

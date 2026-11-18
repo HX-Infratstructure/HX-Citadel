@@ -1,5 +1,6 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { HttpError, parseIssuePath, readAgentId, toHttpError } from "./httpApi";
+import { refuse } from "./refusals";
 
 const withAgent = (value?: string) =>
   new Request("http://x/api/v1/issues", value === undefined ? {} : { headers: { "X-Agent-Id": value } });
@@ -40,24 +41,30 @@ describe("toHttpError", () => {
     ["Validator error: Expected `string`, got `1`", 400, "validation"],
     ["invalid agent name", 400, "validation"],
     ["Team not found", 404, "not_found"],
-    ["Uncaught Error: Member already has ENG-1 In Progress; move it to In Review or Done first", 409, "rule_refused"],
   ])("%s maps to %i %s", (message, status, code) => {
     expect(toHttpError(new Error(message))).toMatchObject({ status, body: { code } });
   });
 
-  test("a rule refusal carries the rule's message without the Convex wrapper", () => {
-    const wrapped = new Error("[Request ID: 1] Server Error\nUncaught Error: Cannot close: tests pending");
-    expect(toHttpError(wrapped).body).toEqual({ code: "rule_refused", message: "Cannot close: tests pending" });
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  test("a rule refusal thrown inside the HTTP action carries the rule's message without the thrown-line prefix", () => {
-    const thrown = new Error(
-      "Uncaught Error: live-check already has LCK-7 In Progress; move it to In Review or Done first\n    at assertWip (../convex/lib/rules/wip.ts:1:1)\n"
-    );
-    expect(toHttpError(thrown)).toEqual({
+  test("a rule refusal is 409 rule_refused with the rule's own words", () => {
+    const refusal = captured(() => refuse('live-check already has "LCK-7" In Progress; move it to In Review or Done first'));
+    expect(toHttpError(refusal)).toEqual({
       status: 409,
-      body: { code: "rule_refused", message: "live-check already has LCK-7 In Progress; move it to In Review or Done first" },
+      body: { code: "rule_refused", message: 'live-check already has "LCK-7" In Progress; move it to In Review or Done first' },
     });
+  });
+
+  test.each([
+    ["a plain Error", new Error("Uncaught Error: Member already has ENG-1 In Progress; move it to In Review or Done first")],
+    ["a TypeError", new TypeError("Cannot read properties of null (reading 'teamId')")],
+    ["a non-error", "boom"],
+  ])("%s nobody expected is a logged 500 server_error that keeps its words out of the body", (_label, error) => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(toHttpError(error)).toEqual({ status: 500, body: { code: "server_error", message: "Internal error" } });
+    expect(logged).toHaveBeenCalledWith(expect.any(String), error);
   });
 
   test("a missing or unmatched workspace setting maps to 500 server_error", () => {

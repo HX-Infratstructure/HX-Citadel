@@ -199,7 +199,9 @@ describe("Done gate: every status write path", () => {
     const { teamId, t, move, storyWithWork } = await setup();
     if (path === "update") {
       const { story } = await storyWithWork();
-      await expect(move(story, "done")).rejects.toThrow(/^Can't move ENG-1 to Done: open — /);
+      await expect(move(story, "done")).rejects.toMatchObject({
+        data: { code: "rule_refused", message: expect.stringMatching(/^Can't move ENG-1 to Done: open — /) },
+      });
       return;
     }
     const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });

@@ -2,10 +2,9 @@ import { ConvexError } from "convex/values";
 import { errorMessage } from "../../lib/error-message";
 import { ActionCtx, httpAction } from "../_generated/server";
 import { hashRequest, Idempotency, IDEMPOTENCY_HEADER, isValidKey } from "./idempotency";
+import { RULE_REFUSED } from "./refusals";
 
 export type ErrorBody = { code: string; message: string };
-/** The code for a refusal by a business rule (WIP, the Done gate); any unmapped rule `Error`. */
-export const RULE_REFUSED = "rule_refused";
 export type HttpFailure = { status: number; body: ErrorBody };
 
 /** A refusal the HTTP layer raises itself, before any Convex function runs. */
@@ -126,7 +125,7 @@ function typedFailure(error: unknown): HttpFailure | null {
   return status === undefined ? null : { status, body: { code, message } };
 }
 
-/** Any thrown error as a status and a JSON `{code, message}`; an unmapped rule `Error` is a 409 refusal. */
+/** Any thrown error as a status and a JSON `{code, message}`; an unexpected error is logged here and leaves as a bare 500. */
 export function toHttpError(error: unknown): HttpFailure {
   if (error instanceof HttpError) {
     return { status: error.status, body: { code: error.code, message: error.message } };
@@ -135,15 +134,12 @@ export function toHttpError(error: unknown): HttpFailure {
   if (typed !== null) {
     return typed;
   }
-  const message = errorMessage(error, "Request failed");
-  if (!(error instanceof Error)) {
-    return { status: 500, body: { code: "server_error", message } };
-  }
-  const mapped = ERROR_MAP.find((entry) => entry.pattern.test(error.message));
+  const mapped = error instanceof Error ? ERROR_MAP.find((entry) => entry.pattern.test(error.message)) : undefined;
   if (mapped === undefined) {
-    return { status: 409, body: { code: RULE_REFUSED, message } };
+    console.error("Unexpected error in an agent route", error);
+    return { status: 500, body: { code: "server_error", message: "Internal error" } };
   }
-  return { status: mapped.status, body: { code: mapped.code, message } };
+  return { status: mapped.status, body: { code: mapped.code, message: errorMessage(error, "Request failed") } };
 }
 
 /** An agent route: the header is required, and every error leaves as JSON. */

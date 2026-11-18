@@ -71,7 +71,7 @@ describe("an issue's cycle belongs to the issue's team", () => {
     const { asMember, teamId, otherCycleId } = await setup();
     await expect(
       asMember.mutation(api.issues.create, { teamId, title: "Story", cycleId: otherCycleId })
-    ).rejects.toThrow(REFUSED);
+    ).rejects.toMatchObject({ data: { code: "rule_refused", message: expect.stringMatching(REFUSED) } });
   });
 
   test("creating with another org's cycle is refused as not found", async () => {
@@ -86,7 +86,7 @@ describe("an issue's cycle belongs to the issue's team", () => {
     const issueId = await asMember.mutation(api.issues.create, { teamId, title: "Story", cycleId: ownCycleId });
     await expect(
       asMember.mutation(api.issues.update, { issueId, cycleId: otherCycleId })
-    ).rejects.toThrow(REFUSED);
+    ).rejects.toMatchObject({ data: { code: "rule_refused", message: expect.stringMatching(REFUSED) } });
     expect(await cycleOf(issueId)).toBe(ownCycleId);
   });
 

@@ -54,7 +54,10 @@ The owner set these rules on 2026-11-17.
 
 ### Clear test data
 
-- After a live gate, clear test data one team at a time with `admin:clearTeamContent` (`convex/admin.ts`), with `convex-admin.env` loaded: `npx convex run admin:clearTeamContent '{"clerkOrgId":"…","teamKey":"…"}'`. It deletes the team's issues, their owned rows, its cycles, and the team itself.
+- After a live gate, clear test data one team at a time with `admin:clearTeamContent` (`convex/admin.ts`), with `convex-admin.env` loaded: `npx convex run admin:clearTeamContent '{"clerkOrgId":"…","teamKey":"…"}'`. It deletes the whole team: every issue with the rows it owns, such as comments and decisions (`deleteIssueOwnedRows` in `convex/lib/issueCleanup.ts`), every cycle, and then the team itself.
+- Run `admin:clearTeamContent` only on a team that holds nothing but test data. If a team holds both test and real work, cancel or delete the test stories one by one in the app instead.
+- A team of about 585 issues or more is too large for one clear. Convex refuses it with `Too many index ranges read in a single function execution`, and nothing changes (`convex/admin.test.ts`, "refuses a team too large for one transaction and changes nothing").
+- If you create the team again with the same key, its issue numbers start at 1 again (`nextIssueNumber: 1` in `convex/teams.ts`), so an old key can name a new story. Don't reuse a story key or an [`If-Match`](docs/AGENT-API.md#send-the-three-headers) version you held from before the clear. Read the issue again.
 - Never run `admin:clearOrgContent` once real work exists. It deletes the content of the whole workspace.
 - Keep the `LCK` team. `pnpm live-check -- --team LCK` uses it (`docs/AGENT-API.md`). Clearing `LCK` deletes it, so create it again before the next check.
 

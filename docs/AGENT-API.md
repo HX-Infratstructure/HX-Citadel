@@ -35,23 +35,29 @@ The routes are in `convex/http.ts`, under `ISSUES_PATH` (`/api/v1/issues`). The 
 | `POST /api/v1/issues/{key}/comments` | `body` | `201 {comment}` |
 | `POST /api/v1/issues/{key}/proof` | `proofUrl` | `200 {issue}` |
 
-An issue key is a story key such as `HX-12` or a sub-task key such as `HX-12.1` (`parseIssueKey` in `lib/issue-key.ts`). Epics and features have no display key, so their `key` is `null` (`hasDisplayKey`). The allowed values of `kind`, `type`, `status`, and `priority` are the validators in `convex/schema.ts`.
+An issue key is a story key such as `HX-12` or a sub-task key such as `HX-12.1` (`parseIssueKey` in `lib/issue-key.ts`). Each story keeps its own sub-task counter, so the key of a moved or deleted sub-task is never handed out again (`nextSubNumber` in `convex/lib/rules/levels.ts`). A request for that old key returns `404 not_found`. Epics and features have no display key, so their `key` is `null` (`hasDisplayKey`). The allowed values of `kind`, `type`, `status`, and `priority` are the validators in `convex/schema.ts`.
 
 ### Send the three headers
 
 - `X-Agent-Id` names the agent. It is required on every route. Without it, the call fails with `400 actor_required`.
-- `Idempotency-Key` is required on every write (`readIdempotencyKey` in `convex/lib/httpApi.ts`). The format is `KEY_PATTERN` in `convex/lib/idempotency.ts`: 1 to 200 visible ASCII characters. A repeat with the same key and the same request returns the stored result. The same key with a different request fails with `409 idempotency_key_reused`. Keys expire after `IDEMPOTENCY_TTL_MS`. An hourly cron in `convex/crons.ts` deletes expired keys.
+- `Idempotency-Key` is required on every write (`readIdempotencyKey` in `convex/lib/httpApi.ts`). The format is `KEY_PATTERN` in `convex/lib/idempotency.ts`: 1 to 200 visible ASCII characters.
+  - A repeat from the same agent with the same key and the same request returns the stored result. The request is the method, the path, and the body (`hashRequest`). `If-Match` is not part of it, so a repeat with a different `If-Match` still returns the stored result.
+  - The same key from another agent, or with a different request, fails with `409 idempotency_key_reused`.
+  - The server keeps a key for at least 24 hours (`IDEMPOTENCY_TTL_MS`). After that, an hourly cron in `convex/crons.ts` deletes it. A request with the same key and body then writes again.
+  - If a write commits but you lose its response, retry with the same key and the same body. Use the key the CLI printed on stderr, or a key you chose before the first attempt. A request with a new key writes again, so a retried create can make a second story.
 - `If-Match` is optional on writes (`readIfMatch`). Send the issue version you last read, as `"2"` or `2`. If the issue changed since then, the write fails with `412 stale` (`assertIfMatch` in `convex/lib/issueVersion.ts`). Without `If-Match`, the server does not check the version.
+  - On a create (`POST /api/v1/issues`), `If-Match` is the version of the `parentKey` issue. A create with `If-Match` but no `parentKey` fails with `400 validation` (`createIssue` in `convex/agentApi.ts`).
 
 Every response that returns one issue carries its version as the `ETag` header, such as `"3"` (`issueJson`). The body also has `issue.version`. Every change to an issue adds 1 to the version, and a write that changes nothing keeps it (`patchIssue`).
 
 ### Read an error
 
-Every error is JSON: `{code, message}` (`toHttpError` in `convex/lib/httpApi.ts`). The status comes from three places in that file:
+Every error is JSON: `{code, message}` (`toHttpError` in `convex/lib/httpApi.ts`). The status is set in that file, in this order:
 
 - The routes throw `HttpError` for `actor_required`, `idempotency_key_required`, and `validation` (400), and for `not_found` (404) on an unknown route.
-- `TYPED_ERRORS` maps `stale` to 412 and `idempotency_key_reused` to 409.
-- `ERROR_MAP` maps known messages to `validation` (400), `not_found` (404), and `server_error` (500). Any other refused write is `409 rule_refused` (`RULE_REFUSED`). Its `message` says which rule refused it and why.
+- `TYPED_ERRORS` maps typed errors: `validation` to 400, `stale` to 412, `idempotency_key_reused` to 409, and `rule_refused` to 409. A rule refusal is thrown by `refuse` (`convex/lib/refusals.ts`), and its `message` says which rule refused the write and why.
+- `ERROR_MAP` maps known messages to `validation` (400), `not_found` (404), and `server_error` (500).
+- Anything else is a bug, not a rule: `500 server_error` with the message `Internal error`. The server logs the real error.
 
 ## Connect through MCP
 
@@ -71,7 +77,7 @@ For Claude Code, add the server to `.mcp.json`. Use your own agent name:
 }
 ```
 
-The tools are `MCP_TOOL` in `lib/mcp/tools.ts`, one REST call each. Every write tool takes `idempotencyKey`, which goes out as `Idempotency-Key`. The write tools that name an existing issue by `key` also take an optional `ifMatch`, which goes out as `If-Match`. A refusal comes back as a tool error (`isError`) with the REST `{code, message}` (`toolResult` in `lib/citadel-api.ts`).
+The tools are `MCP_TOOL` in `lib/mcp/tools.ts`, one REST call each. Every write tool takes `idempotencyKey`, which goes out as `Idempotency-Key`. `create_issue` and the write tools that name an existing issue by `key` also take an optional `ifMatch`, which goes out as `If-Match`. A refusal comes back as a tool error (`isError`) with the REST `{code, message}` (`toolResult` in `lib/citadel-api.ts`).
 
 ## Use the CLI
 
@@ -88,9 +94,9 @@ pnpm citadel --help
 - The commands and their flags are `SPECS` in `cli/hx-citadel.ts`. `--help` prints them.
 - The exit codes are `EXIT_CODES` in `cli/commands.ts`. `--help` prints them too. A refusal prints the REST `code: message` on stderr.
 
-Each write sends a random `Idempotency-Key` unless you pass `--idempotency-key K`. Pass your own key when you retry a write, so the retry replays instead of writing twice.
+Each write sends a random `Idempotency-Key` unless you pass `--idempotency-key K`. The CLI prints the key it sends on stderr as `Idempotency-Key: K` (`idempotencyKey` in `cli/commands.ts`). To retry a write whose response you lost, run the same command with `--idempotency-key` set to that key. The rules for a retry are in [Send the three headers](#send-the-three-headers).
 
-Before a write to an existing issue, the CLI reads the issue and sends its version as `If-Match`. If another writer changed the issue in between, the CLI exits with the `stale` code. Run the command again. To skip the version check, pass `--no-if-match`.
+Before a write to an existing issue, the CLI reads the issue and sends its version as `If-Match`. `create --parent KEY` reads the parent the same way. If another writer changed the issue in between, the CLI exits with the `stale` code. Run the command again. To skip the version check, pass `--no-if-match`.
 
 ## Install the push hook
 
@@ -104,9 +110,10 @@ pnpm citadel hook install --repo /path/to/repo
 
 - The hook goes to `<repo>/.git/hooks/pre-push`, which every worktree of that repository shares (`hookPath` in `cli/git.ts`). If a hook is already there, the command refuses. Pass `--force` to replace it.
 - The hook runs the CLI from this checkout. It reads `HX_CITADEL_API` and `HX_CITADEL_AGENT` from the environment of the `git push`.
-- For each new commit, the hook finds the keys in the message as the tracker shows them (`storyKeys`). It posts `commit <short sha> <subject> <commit URL>` (`commentText`, `commitUrl`). A GitHub origin gives the commit URL.
-- The idempotency key is `commit-<sha>-<key>` (`commitIdempotencyKey`), so a second push of the same commit adds no second comment.
-- The hook never blocks a push. Every failure prints a warning and the push continues.
+- For each new commit, the hook finds the keys in the message as the tracker shows them (`storyKeys`). It posts `commit <short sha> <subject> <commit URL>` (`commentText`, `commitUrl`). `commitUrl` builds it from the URL Git is pushing to, or from `origin` when Git passes none.
+- The hook posts when the push starts, before the remote accepts it. If the remote then rejects the push, the comments stay.
+- The idempotency key is `commit-<sha>-<key>` (`commitIdempotencyKey`), so a second push of the same commit inside the [idempotency window](#send-the-three-headers) adds no second comment.
+- The hook never blocks a push. It waits at most 5 seconds in total for the tracker (`HOOK_DEADLINE_MS`). It prints a warning for each comment it could not post and for any other failure. The push continues.
 
 ## Follow the rules agents meet
 
@@ -133,10 +140,11 @@ pnpm live-check -- --team LCK
 ```
 
 - `--team` is required. Use the `LCK` team, which is kept for the checker.
+- Run one checker at a time. Every run acts as the agent `live-check`, and that agent can have only one story In Progress ([One story In Progress per agent](#follow-the-rules-agents-meet)). If two runs overlap, the server refuses one run's move to In Progress, and that run fails.
 - The app address is `HX_CITADEL_APP`. If it is not set, the checker uses `DEFAULT_APP` in `scripts/live-check.ts`.
 - The checker checks the app, the MCP tool list, agent creation, idempotent replay, key reuse, a stale `If-Match`, the WIP refusal, and the Done gate.
 - At the end, the `tidy-up` step cancels the issues the run created. The issues stay in `LCK` until you clear them. See "Clear test data" in `AGENTS.md`.
 
 ## Revert an agent's change (owner)
 
-A workspace admin can undo one change from a story's activity log. The revert control is in `components/issue-detail/revert-change.tsx`. It calls `revertChange` in `convex/issues.ts`, which only admins can run (`orgAdminMutation`). A revert writes the old value back through `updateIssue` and logs one `reverted` row. A revert can undo a change to `title`, `status`, `priority`, or `assignee` (`REVERT_ARGS`).
+A workspace admin can undo one change from a story's activity log. The revert control is in `components/issue-detail/revert-change.tsx`. It calls `revertChange` in `convex/issues.ts`, which only admins can run (`orgAdminMutation`). A revert writes the old value back through `updateIssue` and logs one `reverted` row. A revert can undo a change to `title`, `status`, `priority`, or `assignee` (`REVERT_ARGS`). It undoes only the latest change to a field. If the field changed after the change you pick, `revertChange` refuses with `<key> <field> has changed since; revert the latest change instead`.

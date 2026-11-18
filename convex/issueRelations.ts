@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { refuse } from "./lib/refusals";
 import { formatIssueKey } from "../lib/issue-key";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
@@ -182,7 +183,7 @@ export const create = orgMutation({
   returns: v.id("issueRelations"),
   handler: async (ctx, args) => {
     if (args.issueId === args.relatedIssueId) {
-      throw new Error("An issue cannot be related to itself");
+      refuse("An issue cannot be related to itself");
     }
     const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
     const related = await getOrgIssue(ctx, ctx.org._id, args.relatedIssueId);
@@ -210,7 +211,7 @@ export const create = orgMutation({
       existingOutgoing.some((r) => r.relatedIssueId === related._id) ||
       existingIncoming.some((r) => r.issueId === related._id);
     if (alreadyLinked) {
-      throw new Error("These issues are already linked");
+      refuse("These issues are already linked");
     }
 
     const relationId = await ctx.db.insert("issueRelations", {
@@ -351,7 +352,7 @@ export const setParent = orgMutation({
     let projectId = issue.projectId;
     if (args.parentIssueId !== null) {
       if (args.parentIssueId === issue._id) {
-        throw new Error("An issue cannot be its own parent");
+        refuse("An issue cannot be its own parent");
       }
       const parent = await getOrgIssue(ctx, ctx.org._id, args.parentIssueId);
       newParent = parent;
@@ -360,7 +361,7 @@ export const setParent = orgMutation({
       let ancestorId: Id<"issues"> | undefined = parent.parentIssueId;
       for (let depth = 0; ancestorId && depth < 100; depth++) {
         if (ancestorId === issue._id) {
-          throw new Error(
+          refuse(
             "Cannot set a sub-issue of this issue as its parent"
           );
         }

@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { refuse } from "./lib/refusals";
 import { getOrgIssue } from "./issues";
 import { logActivity } from "./lib/activity";
 import { deleteAttachmentFiles } from "./lib/issueCleanup";
@@ -51,7 +52,7 @@ export const create = orgMutation({
       .withIndex("by_storage", (q) => q.eq("storageId", args.storageId))
       .first();
     if (existing) {
-      throw new Error("This file is already attached");
+      refuse("This file is already attached");
     }
 
     const fileName = args.fileName.trim() || "Untitled";

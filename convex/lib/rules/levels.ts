@@ -1,4 +1,5 @@
 import { Doc, Id } from "../../_generated/dataModel";
+import { refuse } from "../refusals";
 import { MutationCtx, QueryCtx } from "../../_generated/server";
 import {
   childKindOf,
@@ -36,21 +37,19 @@ function assertParentKind(kind: IssueKind, parentKind: IssueKind): void {
   const allowed = PARENT_KIND[kind];
   const subject = capitalize(article(kind));
   if (allowed === null) {
-    throw new Error(
+    refuse(
       `${subject} ${kind} cannot have a parent (got ${article(parentKind)} ${parentKind})`
     );
   }
   if (parentKind !== allowed) {
-    throw new Error(
+    refuse(
       `${subject} ${kind}'s parent must be ${article(allowed)} ${allowed}, not ${article(parentKind)} ${parentKind}`
     );
   }
 }
 
-function mismatch(kind: IssueKind, parentKind: IssueKind, field: string): Error {
-  return new Error(
-    `${capitalize(article(kind))} ${kind}'s ${field} must match its ${parentKind}'s ${field}`
-  );
+function mismatch(kind: IssueKind, parentKind: IssueKind, field: string): never {
+  refuse(`${capitalize(article(kind))} ${kind}'s ${field} must match its ${parentKind}'s ${field}`);
 }
 
 /** A child carries its parent's team; a different one is refused. */
@@ -60,7 +59,7 @@ function inheritedTeam(
   teamId: Id<"teams">
 ): Id<"teams"> {
   if (teamId !== parent.teamId) {
-    throw mismatch(kind, parent.kind, "team");
+    mismatch(kind, parent.kind, "team");
   }
   return parent.teamId;
 }
@@ -72,7 +71,7 @@ function inheritedProject(
   projectId: Id<"projects"> | undefined
 ): Id<"projects"> | undefined {
   if (projectId && projectId !== parent.projectId) {
-    throw mismatch(kind, parent.kind, "project");
+    mismatch(kind, parent.kind, "project");
   }
   return parent.projectId;
 }
@@ -102,11 +101,11 @@ export async function assertValidParent(
   const parentKind = PARENT_KIND[kind];
   const subject = capitalize(article(kind));
   if (PROJECT_REQUIRED[kind] && !placement.projectId) {
-    throw new Error(`${subject} ${kind} needs a project`);
+    refuse(`${subject} ${kind} needs a project`);
   }
   if (!placement.parentIssueId) {
     if (PARENT_REQUIRED[kind] && parentKind) {
-      throw new Error(
+      refuse(
         `${subject} ${kind} needs ${article(parentKind)} ${parentKind} as its parent`
       );
     }
@@ -140,7 +139,7 @@ export async function assertParentOpen(
   }
   const team = await ctx.db.get(parent.teamId);
   const name = formatIssueKey(team?.key ?? "", parent) ?? parent.title;
-  throw new Error(
+  refuse(
     `${name} is ${GATED_LABELS[parent.status]}; reopen it before adding ${article(childKind)} ${childKind}`
   );
 }
@@ -213,7 +212,7 @@ export function assertNoEpics(issues: Doc<"issues">[]): void {
   const epicCount = issues.filter((issue) => issue.kind === "epic").length;
   if (epicCount > 0) {
     const noun = epicCount === 1 ? "epic" : "epics";
-    throw new Error(
+    refuse(
       `This project still has ${epicCount} ${noun}; move or delete them first`
     );
   }
@@ -240,7 +239,7 @@ export async function assertNoChildren(
     .withIndex("by_parent", (q) => q.eq("parentIssueId", issue._id))
     .collect();
   if (children.length > 0) {
-    throw new Error(
+    refuse(
       `This ${issue.kind} still has ${countOf(childKind, children.length)}; move or delete them first`
     );
   }

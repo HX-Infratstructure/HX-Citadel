@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
 import schema from "./schema";
 
@@ -234,6 +234,26 @@ describe("REST refusals (DSH gates, 10:11Z)", () => {
     const unmatched = await t.fetch("/api/v1/issues/ENG-1", { headers: { "X-Agent-Id": "cc1" } });
     expect(unmatched.status).toBe(500);
     expect(await unmatched.json()).toEqual({ code: "server_error", message: "HX_WORKSPACE_ORG_ID matches no workspace" });
+  });
+
+  test("a failure no rule names is a logged 500 server_error, never a rule refusal, and its words stay on the server", async () => {
+    const t = await setup();
+    await post(t, { teamKey: "ENG", title: "Twice" }, "cc1");
+    await t.run(async (ctx) => {
+      const story = await ctx.db.query("issues").order("asc").first();
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { _id, _creationTime, ...copy } = story!;
+      await ctx.db.insert("issues", copy);
+    });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = await t.fetch("/api/v1/issues/ENG-1", { headers: { "X-Agent-Id": "cc1" } });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ code: "server_error", message: "Internal error" });
+      expect(logged).toHaveBeenCalledWith(expect.any(String), expect.any(Error));
+    } finally {
+      logged.mockRestore();
+    }
   });
 });
 

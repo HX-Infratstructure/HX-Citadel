@@ -77,7 +77,7 @@ describe("one story In Progress per person", () => {
     const second = await story("Second", memberId);
     await move(first, "in_progress");
 
-    await expect(move(second, "in_progress")).rejects.toThrow(REFUSED);
+    await expect(move(second, "in_progress")).rejects.toMatchObject({ data: { code: "rule_refused", message: expect.stringMatching(REFUSED) } });
   });
 
   test("assigning an In Progress story to someone who holds one is refused", async () => {
@@ -89,7 +89,7 @@ describe("one story In Progress per person", () => {
 
     await expect(
       asMember.mutation(api.issues.update, { issueId: second, assigneeId: memberId })
-    ).rejects.toThrow(REFUSED);
+    ).rejects.toMatchObject({ data: { code: "rule_refused", message: expect.stringMatching(REFUSED) } });
   });
 
   test("creating a story In Progress for someone who holds one is refused", async () => {
@@ -103,7 +103,7 @@ describe("one story In Progress per person", () => {
         status: "in_progress",
         assigneeId: memberId,
       })
-    ).rejects.toThrow(REFUSED);
+    ).rejects.toMatchObject({ data: { code: "rule_refused", message: expect.stringMatching(REFUSED) } });
   });
 
   test.each([

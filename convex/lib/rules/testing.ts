@@ -1,4 +1,5 @@
 import { Doc, Id } from "../../_generated/dataModel";
+import { refuse } from "../refusals";
 import { MutationCtx } from "../../_generated/server";
 import { logActivity } from "../activity";
 import { FIRST_VERSION } from "../issueVersion";
@@ -42,13 +43,13 @@ export async function createTestingSubtask(
 
 export function assertNotTestingSubtask(issue: Doc<"issues">, action: GuardedAction): void {
   if (issue.testing) {
-    throw new Error(`The ${TESTING_SUBTASK_TITLE} sub-task can't be ${action}`);
+    refuse(`The ${TESTING_SUBTASK_TITLE} sub-task can't be ${action}`);
   }
 }
 
 export function assertTestingSubtask(issue: Doc<"issues">): void {
   if (!issue.testing) {
-    throw new Error(`Only the ${TESTING_SUBTASK_TITLE} sub-task holds a proof URL`);
+    refuse(`Only the ${TESTING_SUBTASK_TITLE} sub-task holds a proof URL`);
   }
 }
 

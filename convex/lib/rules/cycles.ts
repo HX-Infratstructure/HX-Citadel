@@ -1,4 +1,5 @@
 import { Id } from "../../_generated/dataModel";
+import { refuse } from "../refusals";
 import { MutationCtx } from "../../_generated/server";
 import { cycleName } from "../../../lib/sprint";
 import { getOrgCycle } from "../cycles";
@@ -20,5 +21,5 @@ export async function assertCycleInTeam(
   }
   const owner = await teamKey(ctx, cycle.teamId);
   const wanted = await teamKey(ctx, teamId);
-  throw new Error(`${cycleName(cycle)} belongs to team ${owner}; pick a cycle from team ${wanted}`);
+  refuse(`${cycleName(cycle)} belongs to team ${owner}; pick a cycle from team ${wanted}`);
 }

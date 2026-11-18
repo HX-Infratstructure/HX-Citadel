@@ -1,4 +1,5 @@
 import { formatIssueKey, IssueKind } from "../../../lib/issue-key";
+import { refuse } from "../refusals";
 import { Doc, Id } from "../../_generated/dataModel";
 import { MutationCtx } from "../../_generated/server";
 
@@ -51,7 +52,7 @@ export async function assertWipFree(ctx: MutationCtx, candidate: WipCandidate): 
   }
   const holder = await otherStoryInProgress(ctx, { ...candidate, assigneeId });
   if (holder !== null) {
-    throw new Error(await refusal(ctx, assigneeId, holder));
+    refuse(await refusal(ctx, assigneeId, holder));
   }
 }
 

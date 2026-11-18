@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { refuse } from "./lib/refusals";
 import { isValidTeamKey, normalizeTeamKey, TEAM_KEY_RULE } from "../lib/issue-key";
 import { orgAdminMutation, orgQuery } from "./lib/customFunctions";
 
@@ -45,7 +46,7 @@ export const create = orgAdminMutation({
   handler: async (ctx, args) => {
     const key = normalizeTeamKey(args.key);
     if (!isValidTeamKey(key)) {
-      throw new Error(TEAM_KEY_RULE);
+      refuse(TEAM_KEY_RULE);
     }
     const existing = await ctx.db
       .query("teams")
@@ -54,7 +55,7 @@ export const create = orgAdminMutation({
       )
       .unique();
     if (existing) {
-      throw new Error(`Team key "${key}" is already in use`);
+      refuse(`Team key "${key}" is already in use`);
     }
     return await ctx.db.insert("teams", {
       orgId: ctx.org._id,
