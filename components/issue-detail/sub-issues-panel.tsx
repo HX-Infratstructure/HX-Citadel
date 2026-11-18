@@ -13,6 +13,7 @@ import { IssueDetailSlotProps } from "@/components/issue-detail/slots";
 import { PriorityIcon } from "@/components/shared/priority-icon";
 import { StatusIcon } from "@/components/shared/status-icon";
 import { UserAvatar } from "@/components/shared/user-avatar";
+import { childKindOf } from "@/lib/issue-key";
 
 /** Parent link + sub-issue list with inline creation, under the description. */
 export function SubIssuesPanel({ issue, team }: IssueDetailSlotProps) {
@@ -28,12 +29,13 @@ export function SubIssuesPanel({ issue, team }: IssueDetailSlotProps) {
   const [title, setTitle] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  const childKind = childKindOf(issue.kind);
   const subIssues = hierarchy?.subIssues ?? [];
   const doneCount = subIssues.filter((sub) => sub.status === "done").length;
 
   const addSubIssue = async () => {
     const trimmed = title.trim();
-    if (!trimmed || submitting) {
+    if (!trimmed || submitting || !childKind) {
       return;
     }
     setSubmitting(true);
@@ -41,6 +43,7 @@ export function SubIssuesPanel({ issue, team }: IssueDetailSlotProps) {
       await createIssue({
         teamId: team._id,
         title: trimmed,
+        kind: childKind,
         parentIssueId: issue._id,
       });
       setTitle("");
@@ -97,15 +100,17 @@ export function SubIssuesPanel({ issue, team }: IssueDetailSlotProps) {
             {doneCount}/{subIssues.length} done
           </span>
         )}
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setAdding((value) => !value)}
-          aria-label="Add sub-issue"
-          className="size-6 text-muted-foreground"
-        >
-          <Plus className="size-3.5" />
-        </Button>
+        {childKind && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setAdding((value) => !value)}
+            aria-label="Add sub-issue"
+            className="size-6 text-muted-foreground"
+          >
+            <Plus className="size-3.5" />
+          </Button>
+        )}
       </div>
 
       {subIssues.length > 0 && (
@@ -140,7 +145,7 @@ export function SubIssuesPanel({ issue, team }: IssueDetailSlotProps) {
         </div>
       )}
 
-      {adding && (
+      {adding && childKind && (
         <div className="-mx-2 flex h-9 items-center gap-2 rounded-md border border-dashed px-2">
           <StatusIcon status="todo" className="opacity-50" />
           <Input

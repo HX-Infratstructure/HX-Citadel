@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PriorityIcon } from "@/components/shared/priority-icon";
+import { IssueKey } from "@/components/issues/issue-key";
 import { StatusIcon } from "@/components/shared/status-icon";
 
 const ALL_TEAMS = "all";
@@ -163,9 +164,11 @@ export default function SearchPage() {
                     className="group flex h-10 items-center gap-3 border-b px-2 text-sm transition-colors hover:bg-accent/50"
                   >
                     <PriorityIcon priority={issue.priority} />
-                    <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">
-                      {issue.teamKey}-{issue.number}
-                    </span>
+                    <IssueKey
+                      teamKey={issue.teamKey}
+                      issue={issue}
+                      className="w-16 shrink-0 font-mono text-xs text-muted-foreground"
+                    />
                     <StatusIcon status={issue.status} />
                     <span className="min-w-0 flex-1 truncate font-medium">
                       {issue.title}

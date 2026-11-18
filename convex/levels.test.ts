@@ -229,17 +229,20 @@ describe("issue levels", () => {
     ).rejects.toThrow("A story's project must match its feature's project");
   });
 
-  test("refuses a reparent that would mismatch the project", async () => {
-    const { asMember, create, insertOtherProject, tree } = await setup();
+  test("a reparent moves a story and its subtask into the new feature's project in one step", async () => {
+    const { asMember, create, insertOtherProject, projectId, tree } = await setup();
     const { feature } = await tree();
     const looseStory = await create("story", { projectId: await insertOtherProject() });
+    const looseSubtask = await create("subtask", { parentIssueId: looseStory });
 
-    await expect(
-      asMember.mutation(api.issueRelations.setParent, {
-        issueId: looseStory,
-        parentIssueId: feature,
-      })
-    ).rejects.toThrow("A story's project must match its feature's project");
+    await asMember.mutation(api.issueRelations.setParent, {
+      issueId: looseStory,
+      parentIssueId: feature,
+    });
+
+    for (const issueId of [looseStory, looseSubtask]) {
+      expect((await asMember.query(api.issues.get, { issueId }))?.projectId).toBe(projectId);
+    }
   });
 
   test.each<[Kind, "epic" | "feature" | "story", string]>([

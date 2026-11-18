@@ -12,6 +12,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { IssueKey, useIssueKeyText } from "@/components/issues/issue-key";
 import { StatusIcon } from "@/components/shared/status-icon";
 
 /**
@@ -47,25 +48,40 @@ export function AddIssuesPopover({
           <CommandInput placeholder="Add existing issues…" />
           <CommandList>
             <CommandEmpty>{emptyText}</CommandEmpty>
-            {candidates?.map((issue) => {
-              const identifier = `${teamKeyFor(issue.teamId)}-${issue.number}`;
-              return (
-                <CommandItem
-                  key={issue._id}
-                  value={`${identifier} ${issue.title}`}
-                  onSelect={() => onAdd(issue._id)}
-                >
-                  <StatusIcon status={issue.status} />
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {identifier}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{issue.title}</span>
-                </CommandItem>
-              );
-            })}
+            {candidates?.map((issue) => (
+              <CandidateItem
+                key={issue._id}
+                issue={issue}
+                teamKey={teamKeyFor(issue.teamId)}
+                onAdd={onAdd}
+              />
+            ))}
           </CommandList>
         </Command>
       </PopoverContent>
     </Popover>
+  );
+}
+
+function CandidateItem({
+  issue,
+  teamKey,
+  onAdd,
+}: {
+  issue: Doc<"issues">;
+  teamKey: string;
+  onAdd: (issueId: Id<"issues">) => void;
+}) {
+  const keyText = useIssueKeyText(teamKey, issue);
+  return (
+    <CommandItem value={`${keyText} ${issue.title}`} onSelect={() => onAdd(issue._id)}>
+      <StatusIcon status={issue.status} />
+      <IssueKey
+        teamKey={teamKey}
+        issue={issue}
+        className="font-mono text-xs text-muted-foreground"
+      />
+      <span className="min-w-0 flex-1 truncate">{issue.title}</span>
+    </CommandItem>
   );
 }

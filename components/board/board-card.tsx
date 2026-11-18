@@ -4,6 +4,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { CalendarDays } from "lucide-react";
 import { Doc } from "@/convex/_generated/dataModel";
+import { IssueKey } from "@/components/issues/issue-key";
 import { LabelChip } from "@/components/shared/label-chip";
 import { PriorityIcon } from "@/components/shared/priority-icon";
 import { UserAvatar } from "@/components/shared/user-avatar";
@@ -51,8 +52,12 @@ export function BoardCardContent({
       )}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-[11px] text-muted-foreground">
-          {teamKey}-{issue.number}
+        <span className="flex items-center gap-1.5">
+          <IssueKey
+            teamKey={teamKey}
+            issue={issue}
+            className="font-mono text-[11px] text-muted-foreground"
+          />
         </span>
         {assignee ? (
           <UserAvatar name={assignee.name} imageUrl={assignee.imageUrl} />

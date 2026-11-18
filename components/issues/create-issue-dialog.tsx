@@ -30,6 +30,12 @@ import {
 } from "@/components/shared/issue-meta";
 import { PriorityIcon } from "@/components/shared/priority-icon";
 import { StatusIcon } from "@/components/shared/status-icon";
+import {
+  DEFAULT_LEVEL,
+  LevelChoice,
+  LevelPickers,
+  levelFields,
+} from "@/components/issues/create-issue-level";
 
 export function CreateIssueDialog({
   open,
@@ -52,6 +58,7 @@ export function CreateIssueDialog({
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<IssueStatus>("todo");
   const [priority, setPriority] = useState<IssuePriority>("none");
+  const [level, setLevel] = useState<LevelChoice>(DEFAULT_LEVEL);
   const [submitting, setSubmitting] = useState(false);
 
   // Fall back to the default/first team without needing an effect.
@@ -69,6 +76,7 @@ export function CreateIssueDialog({
         description: description.trim() || undefined,
         status,
         priority,
+        ...levelFields(level),
       });
       toast.success("Issue created");
       onOpenChange(false);
@@ -76,6 +84,7 @@ export function CreateIssueDialog({
       setDescription("");
       setStatus("todo");
       setPriority("none");
+      setLevel(DEFAULT_LEVEL);
       if (params.orgSlug) {
         router.push(`/${params.orgSlug}/issue/${issueId}`);
       }
@@ -118,7 +127,10 @@ export function CreateIssueDialog({
           <div className="flex flex-wrap items-center gap-2">
             <Select
               value={teamId ?? ""}
-              onValueChange={(value) => setSelectedTeamId(value as Id<"teams">)}
+              onValueChange={(value) => {
+                setSelectedTeamId(value as Id<"teams">);
+                setLevel({ ...level, parentIssueId: undefined });
+              }}
             >
               <SelectTrigger size="sm" className="w-auto gap-1.5">
                 <SelectValue placeholder="Team" />
@@ -131,6 +143,7 @@ export function CreateIssueDialog({
                 ))}
               </SelectContent>
             </Select>
+            <LevelPickers teamId={teamId} value={level} onChange={setLevel} />
             <Select
               value={status}
               onValueChange={(value) => setStatus(value as IssueStatus)}

@@ -12,6 +12,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { IssueProperties } from "@/components/issue-detail/issue-properties";
+import { IssueKey } from "@/components/issues/issue-key";
 import {
   issueDetailMainSlots,
   issueDetailSidebarSlots,
@@ -71,8 +72,6 @@ function IssueDetail({
   const [title, setTitle] = useState(issue.title);
   const [description, setDescription] = useState(issue.description ?? "");
 
-  const identifier = `${team.key}-${issue.number}`;
-
   const saveTitle = () => {
     const trimmed = title.trim();
     if (!trimmed || trimmed === issue.title) {
@@ -103,9 +102,11 @@ function IssueDetail({
           {team.name}
         </Link>
         <ChevronRight className="size-3.5 text-muted-foreground" />
-        <span className="font-mono text-xs text-muted-foreground">
-          {identifier}
-        </span>
+        <IssueKey
+          teamKey={team.key}
+          issue={issue}
+          className="font-mono text-xs text-muted-foreground"
+        />
       </header>
       <div className="flex min-h-0 flex-1">
         <ScrollArea className="flex-1">

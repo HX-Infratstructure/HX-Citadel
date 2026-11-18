@@ -335,6 +335,7 @@ export const setParent = orgMutation({
     const teamCache: TeamCache = new Map();
 
     let newParentIdentifier: string | undefined;
+    let projectId = issue.projectId;
     if (args.parentIssueId !== null) {
       if (args.parentIssueId === issue._id) {
         throw new Error("An issue cannot be its own parent");
@@ -356,11 +357,12 @@ export const setParent = orgMutation({
             : undefined;
       }
       newParentIdentifier = await issueIdentifier(ctx, parent, teamCache);
+      projectId = parent.projectId;
     }
     const placement = await assertValidParent(ctx, issue.kind, {
       teamId: issue.teamId,
       parentIssueId: args.parentIssueId ?? undefined,
-      projectId: issue.projectId,
+      projectId,
     });
 
     let oldParentIdentifier: string | undefined;

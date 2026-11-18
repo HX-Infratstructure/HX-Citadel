@@ -1,6 +1,6 @@
 import { Doc, Id } from "../../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../../_generated/server";
-import { IssueKind } from "../../../lib/issue-key";
+import { IssueKind, PARENT_KIND } from "../../../lib/issue-key";
 
 type Placement = {
   teamId: Id<"teams">;
@@ -21,10 +21,10 @@ type ParentRule = {
 };
 
 const PARENT_RULES: Record<IssueKind, ParentRule> = {
-  epic: { parent: null, parentRequired: false, projectRequired: true },
-  feature: { parent: "epic", parentRequired: true, projectRequired: false },
-  story: { parent: "feature", parentRequired: false, projectRequired: false },
-  subtask: { parent: "story", parentRequired: true, projectRequired: false },
+  epic: { parent: PARENT_KIND.epic, parentRequired: false, projectRequired: true },
+  feature: { parent: PARENT_KIND.feature, parentRequired: true, projectRequired: false },
+  story: { parent: PARENT_KIND.story, parentRequired: false, projectRequired: false },
+  subtask: { parent: PARENT_KIND.subtask, parentRequired: true, projectRequired: false },
 };
 
 function article(kind: IssueKind): string {
