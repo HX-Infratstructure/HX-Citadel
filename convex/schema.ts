@@ -40,6 +40,9 @@ export const memberRoleValidator = v.union(
   v.literal("member")
 );
 
+/** Absent means human. Agents are created by convex/lib/agents.ts, not Clerk. */
+export const userKindValidator = v.union(v.literal("human"), v.literal("agent"));
+
 export const projectStatusValidator = v.union(
   v.literal("backlog"),
   v.literal("planned"),
@@ -63,6 +66,7 @@ export default defineSchema({
     name: v.string(),
     email: v.string(),
     imageUrl: v.optional(v.string()),
+    kind: v.optional(userKindValidator),
   }).index("by_clerk_id", ["clerkId"]),
 
   organizations: defineTable({

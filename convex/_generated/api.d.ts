@@ -19,6 +19,7 @@ import type * as issueRelations from "../issueRelations.js";
 import type * as issues from "../issues.js";
 import type * as labels from "../labels.js";
 import type * as lib_activity from "../lib/activity.js";
+import type * as lib_agents from "../lib/agents.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_customFunctions from "../lib/customFunctions.js";
 import type * as lib_issueCleanup from "../lib/issueCleanup.js";
@@ -56,6 +57,7 @@ declare const fullApi: ApiFromModules<{
   issues: typeof issues;
   labels: typeof labels;
   "lib/activity": typeof lib_activity;
+  "lib/agents": typeof lib_agents;
   "lib/auth": typeof lib_auth;
   "lib/customFunctions": typeof lib_customFunctions;
   "lib/issueCleanup": typeof lib_issueCleanup;

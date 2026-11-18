@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
+import { ensureAgent } from "./lib/agents";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -355,6 +356,22 @@ describe("mirror.reconcileAll", () => {
     expect(counts.members).toEqual({ added: 0, changed: 0, removed: 1 });
     const rows = await mirrorRows(t);
     expect(rows.users.map((u) => u.clerkId)).toEqual(["user_a"]);
+  });
+
+  test("keeps an agent and its membership that Clerk does not know, and does not count them", async () => {
+    const t = convexTest(schema, modules);
+    await reconcile(t, baseState());
+    const agentId = await t.run(async (ctx) => {
+      const org = await ctx.db.query("organizations").first();
+      return await ensureAgent(ctx, org!._id, "cc1");
+    });
+
+    const counts = await reconcile(t, baseState());
+
+    expect(counts).toEqual(zeroCounts);
+    const rows = await mirrorRows(t);
+    expect(rows.users.map((u) => u.clerkId).sort()).toEqual(["agent:cc1", "user_a", "user_b"]);
+    expect(rows.members.filter((m) => m.userId === agentId)).toHaveLength(1);
   });
 
   test.each(["/users", "/organizations", `/organizations/${ORG_ID}/memberships`])(

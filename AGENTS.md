@@ -5,6 +5,7 @@ HX-Citadel is the HX team's work tracker for agentic and agile development, with
 ## Architecture rules
 
 - **Clerk is the source of truth** for users, organizations and memberships. Webhooks mirror them into the Convex `users`, `organizations` and `members` tables (`convex/http.ts` calls `convex/webhooks.ts`). Feature code never writes to those tables.
+  - The one exception: `ensureAgent` in `convex/lib/agents.ts` creates agent users and their HX workspace membership (owner and DSH approved, phase 3).
 - **Every Convex function uses a wrapper** from `convex/lib/customFunctions.ts`:
   - `orgQuery` and `orgMutation` resolve `ctx.user`, `ctx.org` and `ctx.membership` through `getAuthContext` in `convex/lib/auth.ts`. The JWT `subject` selects the user by `clerkId`, the `org_id` claim selects the organization, and the caller must have a `members` row in it.
   - `orgAdminMutation` does the same and also requires `ctx.membership.role === "admin"`.

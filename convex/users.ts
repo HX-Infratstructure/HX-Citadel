@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
 import { getCurrentUserOrNull } from "./lib/auth";
+import { userKindValidator } from "./schema";
 
 /**
  * The signed-in user's synced doc, or null while the Clerk webhook sync is
@@ -16,6 +17,7 @@ export const current = query({
       name: v.string(),
       email: v.string(),
       imageUrl: v.optional(v.string()),
+      kind: v.optional(userKindValidator),
     }),
     v.null()
   ),
