@@ -39,6 +39,10 @@ import {
   LevelPickers,
   levelFields,
 } from "@/components/issues/create-issue-level";
+import {
+  createIssueOutcome,
+  IssueDraft,
+} from "@/components/issues/create-issue-outcome";
 
 export function CreateIssueDialog({
   open,
@@ -65,10 +69,16 @@ export function CreateIssueDialog({
   const [submitting, setSubmitting] = useState(false);
   const inFlight = useRef(false);
   const session = useRef(0);
+  const draft: IssueDraft = { title, description, status, priority, level };
+  const currentDraft = useRef(draft);
 
   useEffect(() => {
     session.current += 1;
   }, [open]);
+
+  useEffect(() => {
+    currentDraft.current = draft;
+  });
 
   // Fall back to the default/first team without needing an effect.
   const teamId = selectedTeamId ?? defaultTeamId ?? teams?.[0]?._id;
@@ -100,12 +110,20 @@ export function CreateIssueDialog({
         ...levelFields(level),
       });
       toast.success("Issue created");
+      const outcome = createIssueOutcome(
+        submittedIn === session.current,
+        draft,
+        currentDraft.current
+      );
+      if (outcome === "keep") {
+        return;
+      }
       setTitle("");
       setDescription("");
       setStatus("todo");
       setPriority("none");
       setLevel(DEFAULT_LEVEL);
-      if (submittedIn !== session.current) {
+      if (outcome === "clear") {
         return;
       }
       onOpenChange(false);
