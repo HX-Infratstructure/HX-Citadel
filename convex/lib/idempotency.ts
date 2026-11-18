@@ -1,13 +1,11 @@
 import { getDocumentSize, v } from "convex/values";
-import { IDEMPOTENCY_HEADER, IDEMPOTENCY_KEY_REUSED, type Refusal } from "../../lib/api-contract";
+import { IDEMPOTENCY_HEADER, IDEMPOTENCY_KEY_REUSED } from "../../lib/api-contract";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { MutationCtx } from "../_generated/server";
 import { OrgScope } from "./orgScope";
 import { refusal } from "./refusals";
 
-/** The clients still import this from here; this line goes once they import `lib/api-contract`. */
-export { IDEMPOTENCY_HEADER };
 export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 /**
  * Receipts hold whole write results of any size, so one cleanup run stops after `rows` receipts or once the
@@ -19,9 +17,6 @@ const KEY_PATTERN = /^[\x21-\x7e]{1,200}$/;
 /** What a REST write passes to its internal mutation; MCP passes the same. */
 export const idempotencyValidator = v.object({ key: v.string(), requestHash: v.string() });
 export type Idempotency = { key: string; requestHash: string };
-
-/** The clients still read the reused code through this type; it goes once they import `lib/api-contract`. */
-export type ReusedData = Refusal & { code: typeof IDEMPOTENCY_KEY_REUSED };
 
 /** Whether a header value can be a key: 1 to 200 visible ASCII characters. */
 export function isValidKey(key: string): boolean {

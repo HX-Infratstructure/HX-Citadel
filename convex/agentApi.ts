@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, MutationCtx, QueryCtx } from "./_generated/server";
 import { formatIssueKey, parseIssueKey } from "../lib/issue-key";
@@ -95,10 +95,18 @@ async function findIssueByKey(ctx: Db, orgId: Id<"organizations">, key: string):
   return { issue: subtask, team, parentNumber: story.number };
 }
 
+/** The issue a write names, by key, checked against If-Match before any write. */
+async function findWriteTarget(ctx: Db, orgId: Id<"organizations">, key: string, ifMatch: number | undefined): Promise<FoundIssue> {
+  const found = await findIssueByKey(ctx, orgId, key);
+  assertIfMatch(found.issue, key, ifMatch);
+  return found;
+}
+
 export const createIssue = internalMutation({
   args: {
     agentName: v.string(),
-    teamKey: v.string(),
+    /** Required for a root issue; a child takes its parent's team, and a different one is refused. */
+    teamKey: v.optional(v.string()),
     title: v.string(),
     description: v.optional(v.string()),
     kind: v.optional(issueKindValidator),
@@ -113,23 +121,24 @@ export const createIssue = internalMutation({
   returns: v.object({ issue: keyedIssue }),
   handler: (ctx, { agentName, idempotency, teamKey, parentKey, assignee, ifMatch, ...fields }) =>
     agentWrite(ctx, agentName, idempotency, async (scope) => {
-      const team = await findTeamByKey(ctx, scope.org._id, teamKey);
+      const namedTeam = teamKey === undefined ? undefined : await findTeamByKey(ctx, scope.org._id, teamKey);
       if (ifMatch !== undefined && parentKey === undefined) {
         invalid("If-Match applies only with parentKey");
       }
-      const parent = parentKey === undefined ? null : (await findIssueByKey(ctx, scope.org._id, parentKey)).issue;
-      if (parent !== null && parentKey !== undefined) {
-        assertIfMatch(parent, parentKey, ifMatch);
+      const parent = parentKey === undefined ? undefined : await findWriteTarget(ctx, scope.org._id, parentKey, ifMatch);
+      const team = namedTeam ?? parent?.team;
+      if (team === undefined) {
+        invalid("teamKey is required when there is no parentKey");
       }
       const assigneeId = assignee === undefined ? undefined : await resolveAgentAssignee(ctx, scope.org._id, assignee);
       const issueId = await createIssueWithRules(ctx, scope, {
         ...fields,
         teamId: team._id,
-        parentIssueId: parent?._id,
+        parentIssueId: parent?.issue._id,
         assigneeId,
       });
       const issue = await getOrgIssue(ctx, scope.org._id, issueId);
-      return { issue: withKey(issue, team.key, parent?.number) };
+      return { issue: withKey(issue, team.key, parent?.issue.number) };
     }),
 });
 
@@ -149,8 +158,7 @@ export const getIssue = internalQuery({
 
 /** The issue a write names, by key, checked against If-Match before any write and re-read after it. */
 async function resolveKeyedWrite(ctx: MutationCtx, scope: OrgScope, key: string, ifMatch: number | undefined) {
-  const found = await findIssueByKey(ctx, scope.org._id, key);
-  assertIfMatch(found.issue, key, ifMatch);
+  const found = await findWriteTarget(ctx, scope.org._id, key, ifMatch);
   const reread = async () => withKey(await getOrgIssue(ctx, scope.org._id, found.issue._id), found.team.key, found.parentNumber);
   return { issueId: found.issue._id, reread };
 }
@@ -174,9 +182,26 @@ async function assigneeFilter(ctx: QueryCtx, orgId: Id<"organizations">, agentNa
   return await resolveAgentAssignee(ctx, orgId, assignee);
 }
 
-/** A failed `.paginate` is the client's only when it sent a cursor and Convex names the cursor (`InvalidCursor`); anything else stays a 500. */
+/**
+ * Convex's own invalid-cursor rule, as its client applies it (`usePaginatedQuery` in convex@1.41.0): a system
+ * `ConvexError` with `paginationError: "InvalidCursor"`, or, from a backend that sends no data, that name in the
+ * message. No typed error class exists, so the name is the one word match here.
+ */
+function isInvalidCursor(error: unknown): boolean {
+  const data: unknown = error instanceof ConvexError ? error.data : null;
+  const flagged =
+    typeof data === "object" &&
+    data !== null &&
+    "isConvexSystemError" in data &&
+    data.isConvexSystemError === true &&
+    "paginationError" in data &&
+    data.paginationError === "InvalidCursor";
+  return flagged || (error instanceof Error && error.message.includes("InvalidCursor"));
+}
+
+/** A failed `.paginate` is the client's only when it sent a cursor and Convex calls it invalid; anything else stays a 500. */
 export function pageFailure(error: unknown, cursor: string | undefined): never {
-  if (cursor !== undefined && error instanceof Error && /cursor/i.test(error.message)) {
+  if (cursor !== undefined && isInvalidCursor(error)) {
     invalid("cursor must be the nextCursor of an earlier page of this list");
   }
   throw error;

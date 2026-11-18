@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { type CitadelApi, issuePath } from "../lib/citadel-api";
+import type { CitadelApi } from "../lib/citadel-api";
 import { formatIssueKey, parseIssueKey, type ParsedIssueKey } from "../lib/issue-key";
 import { connect, type Env, errorLine, EXIT_CODES, type Io, UsageError } from "./commands";
 import { GitRepo, isZeroSha } from "./git";
@@ -95,7 +95,7 @@ function pushedComments(git: GitRepo, refs: PushedRef[], remoteUrl: string, io: 
 
 async function post(api: CitadelApi, { key, sha, body }: CommitComment, deadline: AbortSignal, io: Io): Promise<void> {
   try {
-    await api.write("POST", issuePath(key, "comments"), { body }, { idempotencyKey: commitIdempotencyKey(sha, key), signal: deadline });
+    await api.addComment(key, { body }, { idempotencyKey: commitIdempotencyKey(sha, key), signal: deadline });
     io.err(`hx-citadel hook: ${key} <- commit ${sha.slice(0, SHORT_SHA_LENGTH)}`);
   } catch (error) {
     io.err(`${WARNING} ${key} commit ${sha.slice(0, SHORT_SHA_LENGTH)}: ${errorLine(error)}`);

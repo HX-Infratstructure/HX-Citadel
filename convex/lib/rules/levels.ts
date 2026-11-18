@@ -12,7 +12,7 @@ import {
 import { GATED_LABELS, isGatedStatus } from "../../../lib/issue-status";
 import { ActivityActor, changedFields, logFieldChanges } from "../activity";
 import { patchIssue } from "../issueVersion";
-import { orgChildren, orgRow } from "../orgRows";
+import { orgChildren, orgRow, requireOrgRow } from "../orgRows";
 
 type Placement = {
   teamId: Id<"teams">;
@@ -77,17 +77,6 @@ function inheritedProject(
   return parent.projectId;
 }
 
-/** A root issue's project must exist in the caller's workspace. */
-async function assertProjectInOrg(
-  ctx: { db: QueryCtx["db"] },
-  orgId: Id<"organizations">,
-  projectId: Id<"projects">
-): Promise<void> {
-  if ((await orgRow(ctx, orgId, projectId)) === null) {
-    notFound("Project not found");
-  }
-}
-
 /**
  * Enforce the level matrix (epic → project, feature → epic, story → feature or none,
  * subtask → story) and return the team and project the issue must carry.
@@ -110,14 +99,11 @@ export async function assertValidParent(
       );
     }
     if (placement.projectId) {
-      await assertProjectInOrg(ctx, orgId, placement.projectId);
+      await requireOrgRow(ctx, orgId, placement.projectId, "Project");
     }
     return { teamId: placement.teamId, projectId: placement.projectId };
   }
-  const parent = await orgRow(ctx, orgId, placement.parentIssueId);
-  if (parent === null) {
-    notFound("Parent issue not found");
-  }
+  const parent = await requireOrgRow(ctx, orgId, placement.parentIssueId, "Parent issue");
   assertParentKind(kind, parent.kind);
   return {
     teamId: inheritedTeam(kind, parent, placement.teamId),

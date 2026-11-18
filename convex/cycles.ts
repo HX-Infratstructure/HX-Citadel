@@ -4,12 +4,10 @@ import { Doc, Id } from "./_generated/dataModel";
 import { QueryCtx } from "./_generated/server";
 import { issueShape } from "./issues";
 import { logActivity } from "./lib/activity";
-import { getOrgCycle } from "./lib/cycles";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
-import { inOrg } from "./lib/orgRows";
+import { inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
 import { patchIssue } from "./lib/issueVersion";
 import { progressShape } from "./projects";
-import { notFound } from "./lib/refusals";
 
 export const cycleShape = {
   _id: v.id("cycles"),
@@ -21,19 +19,6 @@ export const cycleShape = {
   startDate: v.number(),
   endDate: v.number(),
 };
-
-/** Verify a team belongs to the caller's org. */
-async function getOrgTeam(
-  ctx: { db: QueryCtx["db"] },
-  orgId: Id<"organizations">,
-  teamId: Id<"teams">
-): Promise<Doc<"teams">> {
-  const team = await ctx.db.get(teamId);
-  if (!team || team.orgId !== orgId) {
-    notFound("Team not found");
-  }
-  return team;
-}
 
 async function countProgress(
   ctx: { db: QueryCtx["db"] },
@@ -65,7 +50,7 @@ export const listByTeam = orgQuery({
   args: { teamId: v.id("teams") },
   returns: v.array(v.object(cycleShape)),
   handler: async (ctx, args) => {
-    await getOrgTeam(ctx, ctx.org._id, args.teamId);
+    await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
     return await inOrg(
       ctx.db.query("cycles").withIndex("by_team_and_number", (q) => q.eq("teamId", args.teamId)).order("desc"),
       ctx.org._id
@@ -114,13 +99,7 @@ export const listWithProgress = orgQuery({
 export const get = orgQuery({
   args: { cycleId: v.id("cycles") },
   returns: v.union(v.object(cycleShape), v.null()),
-  handler: async (ctx, args) => {
-    const cycle = await ctx.db.get(args.cycleId);
-    if (!cycle || cycle.orgId !== ctx.org._id) {
-      return null;
-    }
-    return cycle;
-  },
+  handler: async (ctx, args) => await orgRow(ctx, ctx.org._id, args.cycleId),
 });
 
 /**
@@ -131,7 +110,7 @@ export const currentForTeam = orgQuery({
   args: { teamId: v.id("teams") },
   returns: v.union(v.object(cycleShape), v.null()),
   handler: async (ctx, args) => {
-    await getOrgTeam(ctx, ctx.org._id, args.teamId);
+    await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
     const cycles = await inOrg(
       ctx.db.query("cycles").withIndex("by_team", (q) => q.eq("teamId", args.teamId)),
       ctx.org._id
@@ -149,7 +128,7 @@ export const listIssues = orgQuery({
   args: { cycleId: v.id("cycles") },
   returns: v.array(v.object(issueShape)),
   handler: async (ctx, args) => {
-    await getOrgCycle(ctx, ctx.org._id, args.cycleId);
+    await requireOrgRow(ctx, ctx.org._id, args.cycleId, "Cycle");
     return await inOrg(
       ctx.db.query("issues").withIndex("by_cycle", (q) => q.eq("cycleId", args.cycleId)),
       ctx.org._id
@@ -166,7 +145,7 @@ export const candidateIssues = orgQuery({
   args: { cycleId: v.id("cycles") },
   returns: v.array(v.object(issueShape)),
   handler: async (ctx, args) => {
-    const cycle = await getOrgCycle(ctx, ctx.org._id, args.cycleId);
+    const cycle = await requireOrgRow(ctx, ctx.org._id, args.cycleId, "Cycle");
     const issues = await inOrg(
       ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", cycle.teamId)).order("desc"),
       ctx.org._id
@@ -185,7 +164,7 @@ export const create = orgMutation({
   },
   returns: v.id("cycles"),
   handler: async (ctx, args) => {
-    await getOrgTeam(ctx, ctx.org._id, args.teamId);
+    await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
     if (args.endDate <= args.startDate) {
       throw new Error("Cycle end date must be after its start date");
     }
@@ -218,7 +197,7 @@ export const update = orgMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const cycle = await getOrgCycle(ctx, ctx.org._id, args.cycleId);
+    const cycle = await requireOrgRow(ctx, ctx.org._id, args.cycleId, "Cycle");
 
     const startDate = args.startDate ?? cycle.startDate;
     const endDate = args.endDate ?? cycle.endDate;
@@ -248,7 +227,7 @@ export const remove = orgMutation({
   args: { cycleId: v.id("cycles") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const cycle = await getOrgCycle(ctx, ctx.org._id, args.cycleId);
+    const cycle = await requireOrgRow(ctx, ctx.org._id, args.cycleId, "Cycle");
 
     const issues = await inOrg(
       ctx.db.query("issues").withIndex("by_cycle", (q) => q.eq("cycleId", cycle._id)),

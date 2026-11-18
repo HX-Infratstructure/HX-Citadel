@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { IDEMPOTENCY_HEADER } from "../convex/lib/idempotency";
-import type { StaleData } from "../convex/lib/issueVersion";
-import { type ApiBody, CitadelApi, CitadelApiError, issuePath, SITE_URL_ENV, type WriteOptions } from "../lib/citadel-api";
+import { IDEMPOTENCY_HEADER, STALE } from "../lib/api-contract";
+import { CitadelApi, CitadelApiError, SITE_URL_ENV, type WriteOptions } from "../lib/citadel-api";
 
 /** Output lines, and stdin for the commands that read it (the pre-push hook). */
 export type Io = { out: (line: string) => void; err: (line: string) => void; input?: () => Promise<string> };
@@ -19,7 +18,6 @@ export const EXIT_CODES = {
   stale: { code: 3, meaning: "stale: the issue changed since it was read; re-run" },
 } as const;
 
-const STALE: StaleData["code"] = "stale";
 const API_ENV = "HX_CITADEL_API";
 const AGENT_ENV = "HX_CITADEL_AGENT";
 const NO_ASSIGNEE = "none";
@@ -59,7 +57,7 @@ export function connect(agentFlag: string | undefined, env: Env): CitadelApi {
 /** How a write identifies itself: a caller's Idempotency-Key, and whether to read the version for If-Match first. */
 export type WriteFlags = { idempotencyKey?: string; ifMatch: boolean };
 export type Context = { api: CitadelApi; io: Io; write: WriteFlags };
-export type Command = (context: Context, args: Args) => Promise<ApiBody>;
+export type Command = (context: Context, args: Args) => Promise<unknown>;
 
 export function required(args: Args, name: string, label: string): string {
   const value = args[name];
@@ -75,28 +73,14 @@ function idempotencyKey({ io, write }: Context): string {
   return key;
 }
 
-type ReadIssue = { version?: unknown; issue?: { version?: unknown } };
-
-function isVersion(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
-}
-
-/** Read-modify-write: the issue's current version (the ETag, else the body's) goes out as If-Match, unless `--no-if-match`. */
+/** Read-modify-write: the issue's current `issue.version` goes out as If-Match, unless `--no-if-match`. */
 async function editOptions(context: Context, key: string): Promise<WriteOptions> {
   const options: WriteOptions = { idempotencyKey: idempotencyKey(context) };
   if (!context.write.ifMatch) {
     return options;
   }
-  const read = (await context.api.get(issuePath(key))) as ReadIssue;
-  const version = isVersion(read.version) ? read.version : read.issue?.version;
-  if (!isVersion(version)) {
-    throw new Error(`${key} returned no version to send as If-Match; nothing was written. Pass --no-if-match to write without it`);
-  }
-  return { ...options, ifMatch: version };
-}
-
-async function edit(context: Context, key: string, method: "POST" | "PATCH", path: string, body: ApiBody): Promise<ApiBody> {
-  return context.api.write(method, path, body, await editOptions(context, key));
+  const { issue } = await context.api.getIssue(key);
+  return { ...options, ifMatch: issue.version };
 }
 
 function assigneeValue(assignee: string | undefined): string | null | undefined {
@@ -105,9 +89,9 @@ function assigneeValue(assignee: string | undefined): string | null | undefined 
 
 export const commands = {
   list: ({ api }, args) =>
-    api.get(issuePath(), { team: required(args, "team", "--team KEY"), status: args.status, assignee: args.assignee, cursor: args.cursor }),
+    api.listIssues({ team: required(args, "team", "--team KEY"), status: args.status, assignee: args.assignee, cursor: args.cursor }),
 
-  get: ({ api }, args) => api.get(issuePath(required(args, "key", "KEY"))),
+  get: ({ api }, args) => api.getIssue(required(args, "key", "KEY")),
 
   create: async (context, args) => {
     const body = {
@@ -121,28 +105,31 @@ export const commands = {
       assignee: args.assignee,
     };
     const options = args.parent ? await editOptions(context, args.parent) : { idempotencyKey: idempotencyKey(context) };
-    return context.api.write("POST", issuePath(), body, options);
+    return context.api.createIssue(body, options);
   },
 
-  update: (context, args) => {
+  update: async (context, args) => {
     const key = required(args, "key", "KEY");
     const body = { status: args.status, assignee: assigneeValue(args.assignee), priority: args.priority, title: args.title, description: args.description };
-    return edit(context, key, "PATCH", issuePath(key), body);
+    return context.api.updateIssue(key, body, await editOptions(context, key));
   },
 
-  proof: (context, args) => {
+  proof: async (context, args) => {
     const key = required(args, "key", "KEY");
-    return edit(context, key, "POST", issuePath(key, "proof"), { proofUrl: required(args, "url", "URL") });
+    const body = { proofUrl: required(args, "url", "URL") };
+    return context.api.setProof(key, body, await editOptions(context, key));
   },
 
-  comment: (context, args) => {
+  comment: async (context, args) => {
     const key = required(args, "key", "KEY");
-    return edit(context, key, "POST", issuePath(key, "comments"), { body: required(args, "body", "BODY") });
+    const body = { body: required(args, "body", "BODY") };
+    return context.api.addComment(key, body, await editOptions(context, key));
   },
 
-  subtask: (context, args) => {
+  subtask: async (context, args) => {
     const key = required(args, "key", "KEY");
-    return edit(context, key, "POST", issuePath(key, "subtasks"), { title: required(args, "title", "--title T"), status: args.status });
+    const body = { title: required(args, "title", "--title T"), status: args.status };
+    return context.api.addSubtask(key, body, await editOptions(context, key));
   },
 } satisfies Record<string, Command>;
 

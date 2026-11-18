@@ -1,12 +1,13 @@
 import { ObjectType, v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
-import { MutationCtx, QueryCtx } from "./_generated/server";
+import { MutationCtx } from "./_generated/server";
 import { getOrgIssue } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
-import { inOrg } from "./lib/orgRows";
+import { findMembership } from "./lib/mirror";
+import { inOrg, requireOrgRow } from "./lib/orgRows";
 import { OrgScope } from "./lib/orgScope";
-import { invalid, notFound } from "./lib/refusals";
+import { invalid } from "./lib/refusals";
 
 /** Comment enriched with author + mention display info for the feed. */
 const enrichedCommentValidator = v.object({
@@ -24,35 +25,16 @@ const enrichedCommentValidator = v.object({
   ),
 });
 
-/** Verify a comment belongs to the caller's org before any read/write. */
-async function getOrgComment(
-  ctx: { db: QueryCtx["db"] },
-  orgId: Id<"organizations">,
-  commentId: Id<"comments">
-): Promise<Doc<"comments">> {
-  const comment = await ctx.db.get(commentId);
-  if (!comment || comment.orgId !== orgId) {
-    notFound("Comment not found");
-  }
-  return comment;
-}
-
 /** Keep only mentioned users that are actually members of the org. */
 async function filterToOrgMembers(
-  ctx: { db: QueryCtx["db"] },
+  ctx: MutationCtx,
   orgId: Id<"organizations">,
   userIds: Id<"users">[]
 ): Promise<Id<"users">[]> {
   const unique = [...new Set(userIds)];
   const valid: Id<"users">[] = [];
   for (const userId of unique) {
-    const membership = await ctx.db
-      .query("members")
-      .withIndex("by_org_and_user", (q) =>
-        q.eq("orgId", orgId).eq("userId", userId)
-      )
-      .unique();
-    if (membership) {
+    if (await findMembership(ctx, orgId, userId)) {
       valid.push(userId);
     }
   }
@@ -155,7 +137,7 @@ export const update = orgMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const comment = await getOrgComment(ctx, ctx.org._id, args.commentId);
+    const comment = await requireOrgRow(ctx, ctx.org._id, args.commentId, "Comment");
     if (comment.authorId !== ctx.user._id) {
       throw new Error("Only the author can edit a comment");
     }
@@ -182,7 +164,7 @@ export const remove = orgMutation({
   args: { commentId: v.id("comments") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const comment = await getOrgComment(ctx, ctx.org._id, args.commentId);
+    const comment = await requireOrgRow(ctx, ctx.org._id, args.commentId, "Comment");
     const isAuthor = comment.authorId === ctx.user._id;
     const isAdmin = ctx.membership.role === "admin";
     if (!isAuthor && !isAdmin) {

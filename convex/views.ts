@@ -1,7 +1,6 @@
 import { v } from "convex/values";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
-import { inOrg } from "./lib/orgRows";
-import { notFound } from "./lib/refusals";
+import { inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
 
 const viewShape = {
   _id: v.id("views"),
@@ -78,10 +77,7 @@ export const update = orgMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const view = await ctx.db.get(args.viewId);
-    if (!view || view.orgId !== ctx.org._id) {
-      notFound("View not found");
-    }
+    const view = await requireOrgRow(ctx, ctx.org._id, args.viewId, "View");
     if (view.creatorId !== ctx.user._id && ctx.membership.role !== "admin") {
       throw new Error("Only the view's creator or an admin can edit it");
     }
@@ -110,10 +106,7 @@ export const remove = orgMutation({
   args: { viewId: v.id("views") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const view = await ctx.db.get(args.viewId);
-    if (!view || view.orgId !== ctx.org._id) {
-      notFound("View not found");
-    }
+    const view = await requireOrgRow(ctx, ctx.org._id, args.viewId, "View");
     if (view.creatorId !== ctx.user._id && ctx.membership.role !== "admin") {
       throw new Error("Only the view's creator or an admin can delete it");
     }
@@ -137,10 +130,7 @@ export const teamIssueLabels = orgQuery({
     })
   ),
   handler: async (ctx, args) => {
-    const team = await ctx.db.get(args.teamId);
-    if (!team || team.orgId !== ctx.org._id) {
-      notFound("Team not found");
-    }
+    await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
     const issues = await inOrg(
       ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", args.teamId)).order("desc"),
       ctx.org._id
@@ -159,11 +149,8 @@ export const teamIssueLabels = orgQuery({
       for (const link of links) {
         let label = labelCache.get(link.labelId);
         if (label === undefined) {
-          const doc = await ctx.db.get(link.labelId);
-          label =
-            doc && doc.orgId === ctx.org._id
-              ? { _id: doc._id, name: doc.name, color: doc.color }
-              : null;
+          const doc = await orgRow(ctx, ctx.org._id, link.labelId);
+          label = doc ? { _id: doc._id, name: doc.name, color: doc.color } : null;
           labelCache.set(link.labelId, label);
         }
         if (label) {

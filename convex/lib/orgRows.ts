@@ -1,11 +1,22 @@
 import { FilterBuilder, GenericTableInfo, OrderedQuery } from "convex/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { QueryCtx } from "../_generated/server";
+import { notFound } from "./refusals";
 
 type Db = { db: QueryCtx["db"] };
 
 /** Tables whose rows carry the workspace they belong to. */
-type OrgTable = "issues" | "teams" | "projects" | "cycles";
+type OrgTable =
+  | "issues"
+  | "teams"
+  | "projects"
+  | "cycles"
+  | "labels"
+  | "comments"
+  | "decisions"
+  | "attachments"
+  | "views"
+  | "activity";
 
 /** A row by id, or null when it is missing or belongs to another workspace. */
 export async function orgRow<T extends OrgTable>(
@@ -15,6 +26,20 @@ export async function orgRow<T extends OrgTable>(
 ): Promise<Doc<T> | null> {
   const row = await ctx.db.get(id);
   return row !== null && row.orgId === orgId ? row : null;
+}
+
+/** A row by id; a missing row and another workspace's row are both a typed `"<label> not found"`. */
+export async function requireOrgRow<T extends OrgTable>(
+  ctx: Db,
+  orgId: Id<"organizations">,
+  id: Id<T>,
+  label: string
+): Promise<Doc<T>> {
+  const row = await orgRow(ctx, orgId, id);
+  if (row === null) {
+    notFound(`${label} not found`);
+  }
+  return row;
 }
 
 /**

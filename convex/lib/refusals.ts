@@ -1,9 +1,6 @@
 import { ConvexError } from "convex/values";
 import { type ErrorCode, NOT_FOUND, type Refusal, RULE_REFUSED, VALIDATION } from "../../lib/api-contract";
 
-/** The live check still imports this from here; this line goes once it imports `lib/api-contract`. */
-export { RULE_REFUSED };
-
 /** Refuse with a code from the wire contract. Typed, so callers map it by its code and never by its words. */
 export function refusal(code: ErrorCode, message: string): never {
   throw new ConvexError<Refusal>({ code, message });

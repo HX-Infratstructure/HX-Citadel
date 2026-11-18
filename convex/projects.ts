@@ -4,11 +4,11 @@ import { QueryCtx } from "./_generated/server";
 import { issueShape } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
-import { inOrg } from "./lib/orgRows";
+import { findMembership } from "./lib/mirror";
+import { inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
 import { patchIssue } from "./lib/issueVersion";
 import { assertNoEpics } from "./lib/rules/levels";
 import { projectStatusValidator } from "./schema";
-import { notFound } from "./lib/refusals";
 
 export const projectShape = {
   _id: v.id("projects"),
@@ -32,19 +32,6 @@ export const progressShape = v.object({
   done: v.number(),
   canceled: v.number(),
 });
-
-/** Verify a project belongs to the caller's org before any read/write. */
-async function getOrgProject(
-  ctx: { db: QueryCtx["db"] },
-  orgId: Id<"organizations">,
-  projectId: Id<"projects">
-): Promise<Doc<"projects">> {
-  const project = await ctx.db.get(projectId);
-  if (!project || project.orgId !== orgId) {
-    notFound("Project not found");
-  }
-  return project;
-}
 
 async function countProgress(
   ctx: { db: QueryCtx["db"] },
@@ -104,13 +91,7 @@ export const listWithProgress = orgQuery({
 export const get = orgQuery({
   args: { projectId: v.id("projects") },
   returns: v.union(v.object(projectShape), v.null()),
-  handler: async (ctx, args) => {
-    const project = await ctx.db.get(args.projectId);
-    if (!project || project.orgId !== ctx.org._id) {
-      return null;
-    }
-    return project;
-  },
+  handler: async (ctx, args) => await orgRow(ctx, ctx.org._id, args.projectId),
 });
 
 /** All issues assigned to a project (project detail page computes progress from this). */
@@ -118,7 +99,7 @@ export const listIssues = orgQuery({
   args: { projectId: v.id("projects") },
   returns: v.array(v.object(issueShape)),
   handler: async (ctx, args) => {
-    await getOrgProject(ctx, ctx.org._id, args.projectId);
+    await requireOrgRow(ctx, ctx.org._id, args.projectId, "Project");
     return await inOrg(
       ctx.db.query("issues").withIndex("by_project", (q) => q.eq("projectId", args.projectId)),
       ctx.org._id
@@ -135,7 +116,7 @@ export const candidateIssues = orgQuery({
   args: { projectId: v.id("projects") },
   returns: v.array(v.object(issueShape)),
   handler: async (ctx, args) => {
-    await getOrgProject(ctx, ctx.org._id, args.projectId);
+    await requireOrgRow(ctx, ctx.org._id, args.projectId, "Project");
     const issues = await ctx.db
       .query("issues")
       .withIndex("by_org", (q) => q.eq("orgId", ctx.org._id))
@@ -163,16 +144,8 @@ export const create = orgMutation({
       throw new Error("Project name is required");
     }
 
-    if (args.leadId) {
-      const membership = await ctx.db
-        .query("members")
-        .withIndex("by_org_and_user", (q) =>
-          q.eq("orgId", ctx.org._id).eq("userId", args.leadId!)
-        )
-        .unique();
-      if (!membership) {
-        throw new Error("Project lead must be a member of this organization");
-      }
+    if (args.leadId && !(await findMembership(ctx, ctx.org._id, args.leadId))) {
+      throw new Error("Project lead must be a member of this organization");
     }
 
     return await ctx.db.insert("projects", {
@@ -199,7 +172,7 @@ export const update = orgMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const project = await getOrgProject(ctx, ctx.org._id, args.projectId);
+    const project = await requireOrgRow(ctx, ctx.org._id, args.projectId, "Project");
 
     const updates: Partial<Doc<"projects">> = {};
     if (args.name !== undefined) {
@@ -216,18 +189,8 @@ export const update = orgMutation({
       updates.status = args.status;
     }
     if (args.leadId !== undefined) {
-      if (args.leadId !== null) {
-        const membership = await ctx.db
-          .query("members")
-          .withIndex("by_org_and_user", (q) =>
-            q.eq("orgId", ctx.org._id).eq("userId", args.leadId!)
-          )
-          .unique();
-        if (!membership) {
-          throw new Error(
-            "Project lead must be a member of this organization"
-          );
-        }
+      if (args.leadId !== null && !(await findMembership(ctx, ctx.org._id, args.leadId))) {
+        throw new Error("Project lead must be a member of this organization");
       }
       updates.leadId = args.leadId ?? undefined;
     }
@@ -248,7 +211,7 @@ export const remove = orgMutation({
   args: { projectId: v.id("projects") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const project = await getOrgProject(ctx, ctx.org._id, args.projectId);
+    const project = await requireOrgRow(ctx, ctx.org._id, args.projectId, "Project");
 
     const issues = await inOrg(
       ctx.db.query("issues").withIndex("by_project", (q) => q.eq("projectId", project._id)),

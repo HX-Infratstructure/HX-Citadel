@@ -33,6 +33,7 @@ async function cli(argv: string[], env: Record<string, string | undefined> = ENV
 }
 
 const issue = { issue: { key: "HX-1", version: 7 } };
+const record = { ...issue, subtasks: [] };
 
 describe("hx-citadel", () => {
   beforeEach(() => stubFetch({ status: 200, body: {} }));
@@ -58,7 +59,7 @@ describe("hx-citadel", () => {
   });
 
   it("get reads one issue by key", async () => {
-    const fetchMock = stubFetch({ status: 200, body: issue, etag: '"7"' });
+    const fetchMock = stubFetch({ status: 200, body: record, etag: '"7"' });
     const result = await cli(["get", "HX-1.2"]);
 
     expect(result.code).toBe(0);
@@ -66,7 +67,7 @@ describe("hx-citadel", () => {
   });
 
   it("create --parent maps its flags to the REST body and sends the parent's version as If-Match", async () => {
-    const fetchMock = stubFetch({ status: 200, body: issue, etag: '"7"' }, { status: 201, body: issue });
+    const fetchMock = stubFetch({ status: 200, body: record, etag: '"7"' }, { status: 201, body: issue });
     const args = ["create", "--team", "HX", "--title", "Ship it", "--kind", "story", "--priority", "high", "--parent", "HX-0", "--assignee", "cc1"];
     const result = await cli(args);
 
@@ -88,8 +89,8 @@ describe("hx-citadel", () => {
     expect(call(fetchMock, 0).headers.has("If-Match")).toBe(false);
   });
 
-  it("falls back to the body's issue.version for If-Match when the ETag is missing", async () => {
-    const fetchMock = stubFetch({ status: 200, body: issue }, { status: 201, body: issue });
+  it("sends the read's issue.version as If-Match, with no ETag to read", async () => {
+    const fetchMock = stubFetch({ status: 200, body: record }, { status: 201, body: { comment: { body: "Started" } } });
     const result = await cli(["comment", "HX-1", "Started"]);
 
     expect(result.code).toBe(0);
@@ -97,16 +98,16 @@ describe("hx-citadel", () => {
   });
 
   it("refuses to write when the read returns no version", async () => {
-    const fetchMock = stubFetch({ status: 200, body: { issue: { key: "HX-1" } } });
+    const fetchMock = stubFetch({ status: 200, body: { issue: { key: "HX-1" }, subtasks: [] } });
     const result = await cli(["comment", "HX-1", "Started"]);
 
     expect(result.code).toBe(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(result.err).toContain("--no-if-match");
+    expect(result.err).toMatch(/server_error: .*GET \/api\/v1\/issues\/HX-1 result is unconfirmed/);
   });
 
   it("update sends assignee none as null, after reading the version for If-Match", async () => {
-    const fetchMock = stubFetch({ status: 200, body: issue, etag: '"7"' }, { status: 200, body: issue, etag: '"8"' });
+    const fetchMock = stubFetch({ status: 200, body: record, etag: '"7"' }, { status: 200, body: issue, etag: '"8"' });
     const result = await cli(["update", "HX-1", "--status", "in_progress", "--assignee", "none"]);
 
     expect(result.code).toBe(0);
@@ -121,7 +122,7 @@ describe("hx-citadel", () => {
     [["comment", "HX-1", "Started"], "/api/v1/issues/HX-1/comments", { body: "Started" }],
     [["subtask", "HX-1", "--title", "Wire it", "--status", "todo"], "/api/v1/issues/HX-1/subtasks", { title: "Wire it", status: "todo" }],
   ])("%j reads the version, then posts with If-Match", async (argv, path, body) => {
-    const fetchMock = stubFetch({ status: 200, body: issue, etag: '"7"' }, { status: 201, body: issue });
+    const fetchMock = stubFetch({ status: 200, body: record, etag: '"7"' }, { status: 201, body: issue });
     const result = await cli(argv);
 
     expect(result.code).toBe(0);
@@ -156,7 +157,7 @@ describe("hx-citadel", () => {
   });
 
   it("--agent overrides HX_CITADEL_AGENT, and HX_CITADEL_API wins over NEXT_PUBLIC_CONVEX_SITE_URL", async () => {
-    const fetchMock = stubFetch({ status: 200, body: issue });
+    const fetchMock = stubFetch({ status: 200, body: record });
     await cli(["get", "HX-1", "--agent", "cc2"], { ...ENV, NEXT_PUBLIC_CONVEX_SITE_URL: "http://other.test" });
 
     expect(call(fetchMock, 0).url).toBe(`${API}/api/v1/issues/HX-1`);
@@ -164,7 +165,7 @@ describe("hx-citadel", () => {
   });
 
   it("falls back to NEXT_PUBLIC_CONVEX_SITE_URL for the base URL", async () => {
-    const fetchMock = stubFetch({ status: 200, body: issue });
+    const fetchMock = stubFetch({ status: 200, body: record });
     await cli(["get", "HX-1"], { HX_CITADEL_AGENT: "cc1", NEXT_PUBLIC_CONVEX_SITE_URL: "http://site.test" });
 
     expect(call(fetchMock, 0).url).toBe("http://site.test/api/v1/issues/HX-1");
@@ -209,7 +210,7 @@ describe("hx-citadel", () => {
 
   it("a stale If-Match (412) prints the server's message and exits 3, with no retry", async () => {
     const fetchMock = stubFetch(
-      { status: 200, body: issue, etag: '"7"' },
+      { status: 200, body: record, etag: '"7"' },
       { status: 412, body: { code: "stale", message: "HX-1 is at version 8" } }
     );
     const result = await cli(["update", "HX-1", "--status", "done"]);
@@ -220,7 +221,7 @@ describe("hx-citadel", () => {
   });
 
   it("a rule refusal (409) prints the code and message and exits 1", async () => {
-    stubFetch({ status: 200, body: issue, etag: '"7"' }, { status: 409, body: { code: "rule_refused", message: "cc1 already has HX-2 in progress" } });
+    stubFetch({ status: 200, body: record, etag: '"7"' }, { status: 409, body: { code: "rule_refused", message: "cc1 already has HX-2 in progress" } });
     const result = await cli(["update", "HX-1", "--status", "in_progress"]);
 
     expect(result.code).toBe(1);

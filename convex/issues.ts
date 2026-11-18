@@ -10,7 +10,7 @@ import { orgAdminMutation, orgMutation, orgQuery } from "./lib/customFunctions";
 import { deleteIssueOwnedRows } from "./lib/issueCleanup";
 import { FIRST_VERSION, patchIssue } from "./lib/issueVersion";
 import { findMembership } from "./lib/mirror";
-import { inOrg, orgChildren, orgRow } from "./lib/orgRows";
+import { inOrg, orgChildren, orgRow, requireOrgRow } from "./lib/orgRows";
 import { OrgScope } from "./lib/orgScope";
 import { assertCycleInTeam } from "./lib/rules/cycles";
 import {
@@ -73,11 +73,7 @@ export async function getOrgIssue(
   orgId: Id<"organizations">,
   issueId: Id<"issues">
 ): Promise<Doc<"issues">> {
-  const issue = await orgRow(ctx, orgId, issueId);
-  if (issue === null) {
-    notFound("Issue not found");
-  }
-  return issue;
+  return await requireOrgRow(ctx, orgId, issueId, "Issue");
 }
 
 /** The most issues one list returns, newest first. */
@@ -89,10 +85,7 @@ export async function listTeamIssues(
   orgId: Id<"organizations">,
   teamId: Id<"teams">
 ): Promise<Doc<"issues">[]> {
-  const team = await ctx.db.get(teamId);
-  if (!team || team.orgId !== orgId) {
-    notFound("Team not found");
-  }
+  await requireOrgRow(ctx, orgId, teamId, "Team");
   return await inOrg(
     ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", teamId)).order("desc"),
     orgId
@@ -117,10 +110,7 @@ export const listBacklog = orgQuery({
   args: { teamId: v.id("teams") },
   returns: v.array(v.object(issueShape)),
   handler: async (ctx, args) => {
-    const team = await ctx.db.get(args.teamId);
-    if (!team || team.orgId !== ctx.org._id) {
-      notFound("Team not found");
-    }
+    await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
     const byStatus = await Promise.all(
       OPEN_STATUSES.map((status) =>
         inOrg(
@@ -145,10 +135,7 @@ export const listParentCandidates = orgQuery({
   args: { teamId: v.id("teams"), kind: issueKindValidator },
   returns: v.array(v.object(issueShape)),
   handler: async (ctx, args) => {
-    const team = await ctx.db.get(args.teamId);
-    if (!team || team.orgId !== ctx.org._id) {
-      notFound("Team not found");
-    }
+    await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
     const parentKind = PARENT_KIND[args.kind];
     if (parentKind === null) {
       return [];
@@ -178,8 +165,7 @@ export const getByNumber = orgQuery({
   args: { teamId: v.id("teams"), number: v.number() },
   returns: v.union(v.object(issueShape), v.null()),
   handler: async (ctx, args) => {
-    const team = await ctx.db.get(args.teamId);
-    if (!team || team.orgId !== ctx.org._id) {
+    if ((await orgRow(ctx, ctx.org._id, args.teamId)) === null) {
       return null;
     }
     const issue = await inOrg(
@@ -189,6 +175,15 @@ export const getByNumber = orgQuery({
     return issue?.kind === "story" ? issue : null;
   },
 });
+
+/** An assignee must be a member of the workspace. */
+async function assertAssignee(ctx: MutationCtx, orgId: Id<"organizations">, userId: Id<"users">): Promise<void> {
+  if ((await findMembership(ctx, orgId, userId)) !== null) {
+    return;
+  }
+  const user = await ctx.db.get(userId);
+  notFound(`Assignee ${user?.name ?? userId} not found`);
+}
 
 /** Stories carry a type (default story); other levels carry none. */
 export function storyType(
@@ -241,10 +236,7 @@ export async function createIssue(
   args: CreateIssueArgs
 ): Promise<Id<"issues">> {
   const { org, actorId } = scope;
-  const team = await ctx.db.get(args.teamId);
-  if (!team || team.orgId !== org._id) {
-    notFound("Team not found");
-  }
+  const team = await requireOrgRow(ctx, org._id, args.teamId, "Team");
 
   const kind = args.kind ?? "story";
   const parent = args.parentIssueId ? await getOrgIssue(ctx, org._id, args.parentIssueId) : null;
@@ -258,6 +250,9 @@ export async function createIssue(
   }
   if (args.cycleId !== undefined) {
     await assertCycleInTeam(ctx, org._id, args.cycleId, placement.teamId);
+  }
+  if (args.assigneeId !== undefined) {
+    await assertAssignee(ctx, org._id, args.assigneeId);
   }
   const status = args.status ?? "todo";
   await assertWipFree(ctx, { orgId: org._id, assigneeId: args.assigneeId, kind, status });
@@ -416,6 +411,9 @@ export async function updateIssue(
     updates.priority = args.priority;
   }
   if (args.assigneeId !== undefined) {
+    if (args.assigneeId !== null) {
+      await assertAssignee(ctx, scope.org._id, args.assigneeId);
+    }
     updates.assigneeId = args.assigneeId ?? undefined;
   }
   if (args.projectId !== undefined) {
@@ -474,18 +472,14 @@ function literalOf<T extends string>(validator: { members: { value: T }[] }, tex
   return member.value;
 }
 
-/** A recorded assignee: absent means unassigned; anyone else must still be a member of the issue's workspace. */
-async function assigneeOf(ctx: MutationCtx, orgId: Id<"organizations">, text: string | undefined) {
+/** A recorded assignee: absent means unassigned. `updateIssue` checks that anyone else is still a member. */
+function assigneeOf(ctx: MutationCtx, text: string | undefined) {
   if (text === undefined) {
     return null;
   }
   const userId = ctx.db.normalizeId("users", text);
   if (!userId) {
     refuse(`Unknown value ${text}`);
-  }
-  if (!(await findMembership(ctx, orgId, userId))) {
-    const user = await ctx.db.get(userId);
-    notFound(`Assignee ${user?.name ?? text} not found`);
   }
   return userId;
 }
@@ -498,7 +492,7 @@ const REVERT_ARGS: Record<string, ToRevertArgs> = {
   title: async (_ctx, _issue, text) => ({ title: text ?? "" }),
   status: async (_ctx, _issue, text) => ({ status: literalOf(issueStatusValidator, text) }),
   priority: async (_ctx, _issue, text) => ({ priority: literalOf(issuePriorityValidator, text) }),
-  assignee: async (ctx, issue, text) => ({ assigneeId: await assigneeOf(ctx, issue.orgId, text) }),
+  assignee: async (ctx, _issue, text) => ({ assigneeId: assigneeOf(ctx, text) }),
 };
 
 /** The issue's activity, newest first: by creation time, then `_id`, the `by_issue` index order. */
@@ -552,10 +546,7 @@ export const revertChange = orgAdminMutation({
   args: { activityId: v.id("activity") },
   returns: v.null(),
   handler: async (ctx, { activityId }) => {
-    const change = await ctx.db.get(activityId);
-    if (!change || change.orgId !== ctx.org._id) {
-      notFound("Change not found");
-    }
+    const change = await requireOrgRow(ctx, ctx.org._id, activityId, "Change");
     const issue = await getOrgIssue(ctx, ctx.org._id, change.issueId);
     const refusal = revertRefusal(issue, change, await isNewestForField(ctx, issue, change));
     if (refusal === "not_revertible") {

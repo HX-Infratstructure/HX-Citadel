@@ -3,7 +3,6 @@ import {
   ACTOR_REQUIRED,
   AGENT_HEADER,
   ERROR_STATUS,
-  type ErrorBody,
   type ErrorCode,
   ETAG_HEADER,
   IDEMPOTENCY_HEADER,
@@ -17,9 +16,6 @@ import {
 } from "../../lib/api-contract";
 import { ActionCtx, httpAction } from "../_generated/server";
 import { hashRequest, Idempotency, isValidKey } from "./idempotency";
-
-/** The clients still import these from here; this line goes once they import `lib/api-contract`. */
-export { AGENT_HEADER, type ErrorBody };
 
 export type HttpFailure = { status: number; body: Refusal };
 

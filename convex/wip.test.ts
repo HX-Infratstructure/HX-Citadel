@@ -35,6 +35,7 @@ async function setup() {
       role: "member",
       clerkMembershipId: "mem_member",
     });
+    await ctx.db.insert("members", { orgId, userId: otherId, role: "member", clerkMembershipId: "mem_other" });
     const teamId = await ctx.db.insert("teams", {
       orgId,
       name: "Engineering",

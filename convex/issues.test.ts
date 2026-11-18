@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
+import { ConvexError } from "convex/values";
 import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
@@ -472,5 +473,46 @@ describe("issue ranking", () => {
     expect(new Set(ranks).size).toBe(4);
     expect(backlog.map((issue) => issue._id)).toEqual([above, moved, lower, bottom]);
     expect(ranks.at(-1)).toBe(0);
+  });
+});
+
+describe("the assignee is a member of the workspace", () => {
+  const refused = { code: "not_found", message: "Assignee Outsider not found" };
+
+  async function setupWithOutsider() {
+    const s = await setup();
+    const outsiderId = await s.t.run(async (ctx) => {
+      const outsider = await ctx.db
+        .query("users")
+        .withIndex("by_clerk_id", (q) => q.eq("clerkId", OUTSIDER_CLERK_ID))
+        .unique();
+      return outsider!._id;
+    });
+    return { ...s, outsiderId, asMember: s.t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM }) };
+  }
+
+  const refusalOf = (error: unknown) => (error instanceof ConvexError ? error.data : error);
+
+  test("create refuses a non-member assignee and writes nothing", async () => {
+    const { t, teamId, outsiderId, asMember } = await setupWithOutsider();
+    const error = await asMember
+      .mutation(api.issues.create, { teamId, title: "Story", assigneeId: outsiderId })
+      .catch(refusalOf);
+
+    expect(error).toEqual(refused);
+    expect(await t.run((ctx) => ctx.db.query("issues").collect())).toEqual([]);
+  });
+
+  test("update refuses a non-member assignee and keeps the member, who can still be unassigned", async () => {
+    const { t, teamId, memberId, outsiderId, asMember } = await setupWithOutsider();
+    const issueId = await asMember.mutation(api.issues.create, { teamId, title: "Story", assigneeId: memberId });
+    const assignee = async () => (await t.run((ctx) => ctx.db.get(issueId)))?.assigneeId;
+
+    const error = await asMember.mutation(api.issues.update, { issueId, assigneeId: outsiderId }).catch(refusalOf);
+    expect(error).toEqual(refused);
+    expect(await assignee()).toBe(memberId);
+
+    await asMember.mutation(api.issues.update, { issueId, assigneeId: null });
+    expect(await assignee()).toBeUndefined();
   });
 });

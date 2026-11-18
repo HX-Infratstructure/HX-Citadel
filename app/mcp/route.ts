@@ -1,5 +1,5 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { HttpError, readAgentId } from "../../convex/lib/httpApi";
+import { ACTOR_REQUIRED, AGENT_HEADER, ERROR_STATUS } from "../../lib/api-contract";
 import { CitadelApi } from "../../lib/citadel-api";
 import { createCitadelMcpServer } from "../../lib/mcp/tools";
 
@@ -10,22 +10,11 @@ function rpcError(status: number, message: string, data?: object, headers?: Head
   return Response.json(body, { status, headers });
 }
 
-function agentOf(request: Request): string | HttpError {
-  try {
-    return readAgentId(request);
-  } catch (error) {
-    if (error instanceof HttpError) {
-      return error;
-    }
-    throw error;
-  }
-}
-
 /** Stateless JSON-RPC over POST: one server and transport per request, no sessions, no SSE. */
 export async function POST(request: Request): Promise<Response> {
-  const agent = agentOf(request);
-  if (agent instanceof HttpError) {
-    return rpcError(agent.status, agent.message, { code: agent.code });
+  const agent = request.headers.get(AGENT_HEADER)?.trim();
+  if (!agent) {
+    return rpcError(ERROR_STATUS[ACTOR_REQUIRED], `The ${AGENT_HEADER} header names the acting agent and is required`, { code: ACTOR_REQUIRED });
   }
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   await createCitadelMcpServer(new CitadelApi(agent)).connect(transport);

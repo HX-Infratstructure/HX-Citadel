@@ -1,11 +1,8 @@
 import { errorLine } from "../../cli/commands";
 import type { Infer } from "convex/values";
-import { AGENT_HEADER } from "../../convex/lib/httpApi";
-import { RULE_REFUSED } from "../../convex/lib/refusals";
-import type { ReusedData } from "../../convex/lib/idempotency";
-import type { StaleData } from "../../convex/lib/issueVersion";
 import type { issuePriorityValidator, issueStatusValidator } from "../../convex/schema";
-import { type ApiBody, CitadelApi, CitadelApiError, issuePath, type WriteOptions } from "../../lib/citadel-api";
+import { AGENT_HEADER, IDEMPOTENCY_KEY_REUSED, RULE_REFUSED, SERVER_ERROR, STALE, VALIDATION } from "../../lib/api-contract";
+import { type ApiBody, CitadelApi, CitadelApiError, type IssueAnswer, type WriteOptions } from "../../lib/citadel-api";
 import { MCP_TOOL_NAMES } from "../../lib/mcp/tools";
 
 /** The checker's own agent, so the WIP state it creates and clears is its own. */
@@ -18,8 +15,6 @@ const DONE: Infer<typeof issueStatusValidator> = "done";
 const CANCELED: Infer<typeof issueStatusValidator> = "canceled";
 const LOW: Infer<typeof issuePriorityValidator> = "low";
 const HIGH: Infer<typeof issuePriorityValidator> = "high";
-const REUSED: ReusedData["code"] = "idempotency_key_reused";
-const STALE: StaleData["code"] = "stale";
 
 export type CheckStep<C> = { name: string; run: (context: C) => Promise<string> };
 
@@ -71,45 +66,44 @@ function firstStory(check: LiveCheck): Story {
 }
 
 /** Adds the story a write answered with, if any, to the tidy-up's list, and returns its key or "". */
-function keep(check: LiveCheck, body: ApiBody): string {
-  const issue = body.issue as { key?: unknown } | undefined;
-  const key = typeof issue?.key === "string" ? issue.key : "";
+function keep(check: LiveCheck, answer: IssueAnswer | null): string {
+  const key = answer?.issue.key ?? "";
   if (key !== "" && !check.created.includes(key)) {
     check.created.push(key);
   }
   return key;
 }
 
-function story(check: LiveCheck, body: ApiBody): Story {
-  const key = keep(check, body);
-  expect(key !== "", `no issue key in ${JSON.stringify(body)}`);
-  return { key, version: Number(body.version) };
+function story(check: LiveCheck, answer: IssueAnswer): Story {
+  const key = keep(check, answer);
+  expect(key !== "", `no issue key in ${JSON.stringify(answer)}`);
+  return { key, version: answer.issue.version };
 }
 
 /** No answer, or a 5xx without a `{code, message}` body: the write may still have been committed. */
 function answerLost(error: unknown): boolean {
-  return !(error instanceof CitadelApiError) || error.code === "server_error";
+  return !(error instanceof CitadelApiError) || error.code === SERVER_ERROR;
 }
 
 /**
  * POSTs a story. When the answer is lost, it POSTs once more with the same body and key, so a committed story
  * replays and the tidy-up learns its key; the first error still fails the step.
  */
-async function create(check: LiveCheck, body: ApiBody, step: string): Promise<ApiBody> {
-  const write = () => check.api.write("POST", issuePath(), body, writeOptions(check, step));
+async function create(check: LiveCheck, body: ApiBody, step: string): Promise<IssueAnswer> {
+  const write = () => check.api.createIssue(body, writeOptions(check, step));
   try {
     return await write();
   } catch (error) {
     if (answerLost(error)) {
-      keep(check, await write().catch(() => ({})));
+      keep(check, await write().catch(() => null));
     }
     throw error;
   }
 }
 
 /** Runs a write that must be refused with `code`, and returns the refusal's message. */
-async function refusal(check: LiveCheck, write: () => Promise<ApiBody>, code: string): Promise<string> {
-  let body: ApiBody;
+async function refusal(check: LiveCheck, write: () => Promise<IssueAnswer>, code: string): Promise<string> {
+  let body: IssueAnswer;
   try {
     body = await write();
   } catch (error) {
@@ -145,9 +139,8 @@ const createBody = (check: LiveCheck, title: string): ApiBody => ({ teamKey: che
 
 /** The keys of a story's Complete testing sub-tasks, read from the story's record. */
 async function testingSubtasks(check: LiveCheck, key: string): Promise<string[]> {
-  const { subtasks } = await check.api.get(issuePath(key), {}, deadline());
-  const records = Array.isArray(subtasks) ? (subtasks as { key?: unknown; testing?: unknown }[]) : [];
-  return records.flatMap((record) => (record.testing === true && typeof record.key === "string" ? [record.key] : []));
+  const { subtasks } = await check.api.getIssue(key, deadline());
+  return subtasks.flatMap((subtask) => (subtask.testing === true && subtask.key !== null ? [subtask.key] : []));
 }
 
 export const STEPS: CheckStep<LiveCheck>[] = [
@@ -192,7 +185,7 @@ export const STEPS: CheckStep<LiveCheck>[] = [
   {
     name: "key-reuse",
     run: async (check) => {
-      return refusal(check, () => create(check, createBody(check, `Live check ${check.runId} other`), "create"), REUSED);
+      return refusal(check, () => create(check, createBody(check, `Live check ${check.runId} other`), "create"), IDEMPOTENCY_KEY_REUSED);
     },
   },
   {
@@ -200,9 +193,9 @@ export const STEPS: CheckStep<LiveCheck>[] = [
     run: async (check) => {
       const first = firstStory(check);
       const advance = writeOptions(check, "advance", first.version);
-      check.first = story(check, await check.api.write("PATCH", issuePath(first.key), { priority: LOW }, advance));
+      check.first = story(check, await check.api.updateIssue(first.key, { priority: LOW }, advance));
       expect(check.first.version > first.version, `If-Match ${first.version} left ${first.key} at v${check.first.version}`);
-      const stale = () => check.api.write("PATCH", issuePath(first.key), { priority: HIGH }, writeOptions(check, "stale", first.version));
+      const stale = () => check.api.updateIssue(first.key, { priority: HIGH }, writeOptions(check, "stale", first.version));
       return refusal(check, stale, STALE);
     },
   },
@@ -211,7 +204,7 @@ export const STEPS: CheckStep<LiveCheck>[] = [
     run: async (check) => {
       const first = firstStory(check);
       const moved = { status: IN_PROGRESS, assignee: AGENT };
-      check.first = story(check, await check.api.write("PATCH", issuePath(first.key), moved, writeOptions(check, "start")));
+      check.first = story(check, await check.api.updateIssue(first.key, moved, writeOptions(check, "start")));
       const second = { ...createBody(check, `Live check ${check.runId} second`), ...moved };
       const message = await refusal(check, () => create(check, second, "second"), RULE_REFUSED);
       expect(message.includes(first.key), `the refusal does not name ${first.key}: ${message}`);
@@ -222,10 +215,18 @@ export const STEPS: CheckStep<LiveCheck>[] = [
     name: "done-gate",
     run: async (check) => {
       const first = firstStory(check);
-      const done = () => check.api.write("PATCH", issuePath(first.key), { status: DONE }, writeOptions(check, "done"));
+      const done = () => check.api.updateIssue(first.key, { status: DONE }, writeOptions(check, "done"));
       const message = await refusal(check, done, RULE_REFUSED);
       expect(message.startsWith(`Can't move ${first.key}`), `unexpected Done-gate message: ${message}`);
       return message;
+    },
+  },
+  /** Convex's argument validator throws untyped, and the server finds it by the backend's words, so this pins those words. */
+  {
+    name: "validation",
+    run: async (check) => {
+      const wrongType = { ...createBody(check, `Live check ${check.runId} validation`), title: 5 };
+      return refusal(check, () => create(check, wrongType, "validation"), VALIDATION);
     },
   },
   {
@@ -241,7 +242,7 @@ export const STEPS: CheckStep<LiveCheck>[] = [
         for (const target of [...subtasks, key]) {
           canceled.push(target);
           await check.api
-            .write("PATCH", issuePath(target), { status: CANCELED }, writeOptions(check, `cancel-${target}`))
+            .updateIssue(target, { status: CANCELED }, writeOptions(check, `cancel-${target}`))
             .catch((error: unknown) => failed.push(`${target}: ${errorLine(error)}`));
         }
       }

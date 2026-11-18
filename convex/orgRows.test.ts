@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
+import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
-import { Id } from "./_generated/dataModel";
+import { Id, TableNames } from "./_generated/dataModel";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -142,5 +143,138 @@ describe("an issue or cycle from another workspace that names our team", () => {
     }));
     expect(left.issue?._id).toBe(foreignIssueId);
     expect(left.cycle?._id).toBe(foreignCycleId);
+  });
+});
+
+type Setup = Awaited<ReturnType<typeof setup>>;
+type RunCtx = Parameters<Parameters<Setup["t"]["run"]>[0]>[0];
+type Seed<T extends TableNames> = (ctx: RunCtx, orgId: Id<"organizations">, s: Setup) => Promise<Id<T>>;
+
+const refusalOf = (error: unknown) => (error instanceof ConvexError ? error.data : error);
+
+/** One site that loads a row by id: what it refuses with, how to write such a row, and the call that loads it. */
+function loader<T extends TableNames>(label: string, site: string, seed: Seed<T>, call: (s: Setup, id: Id<T>) => Promise<unknown>) {
+  return {
+    name: `${site} (${label})`,
+    label,
+    refusals: async (s: Setup) => {
+      const { foreign, missing } = await s.t.run(async (ctx) => {
+        const otherOrgId = (await ctx.db.get(s.foreignIssueId))!.orgId;
+        const foreign = await seed(ctx, otherOrgId, s);
+        const missing = await seed(ctx, s.orgId, s);
+        await ctx.db.delete(missing);
+        return { foreign, missing };
+      });
+      return [await call(s, foreign).catch(refusalOf), await call(s, missing).catch(refusalOf)];
+    },
+  };
+}
+
+const team: Seed<"teams"> = (ctx, orgId) => ctx.db.insert("teams", { orgId, name: "Other", key: "OTH", nextIssueNumber: 1 });
+const project: Seed<"projects"> = (ctx, orgId) => ctx.db.insert("projects", { orgId, name: "Other", status: "planned" });
+const cycle: Seed<"cycles"> = (ctx, orgId, s) =>
+  ctx.db.insert("cycles", { orgId, teamId: s.teamId, number: 9, startDate: 0, endDate: 1 });
+const onStory = (orgId: Id<"organizations">, s: Setup) => ({ orgId, issueId: s.storyId });
+
+const LOADERS = [
+  loader("Team", "issues.listByTeam", team, (s, teamId) => s.admin.query(api.issues.listByTeam, { teamId })),
+  loader("Team", "issues.listBacklog", team, (s, teamId) => s.admin.query(api.issues.listBacklog, { teamId })),
+  loader("Team", "issues.listParentCandidates", team, (s, teamId) =>
+    s.admin.query(api.issues.listParentCandidates, { teamId, kind: "story" })
+  ),
+  loader("Team", "issues.create", team, (s, teamId) => s.admin.mutation(api.issues.create, { teamId, title: "New" })),
+  loader("Team", "search.issues", team, (s, teamId) => s.admin.query(api.search.issues, { query: "Ours", teamId })),
+  loader("Team", "views.teamIssueLabels", team, (s, teamId) => s.admin.query(api.views.teamIssueLabels, { teamId })),
+  loader("Team", "cycles.listByTeam", team, (s, teamId) => s.admin.query(api.cycles.listByTeam, { teamId })),
+  loader("Project", "projects.listIssues", project, (s, projectId) => s.admin.query(api.projects.listIssues, { projectId })),
+  loader("Project", "issues.create epic", project, (s, projectId) =>
+    s.admin.mutation(api.issues.create, { teamId: s.teamId, title: "Epic", kind: "epic", projectId })
+  ),
+  loader("Cycle", "cycles.listIssues", cycle, (s, cycleId) => s.admin.query(api.cycles.listIssues, { cycleId })),
+  loader("Cycle", "issues.update cycleId", cycle, (s, cycleId) =>
+    s.admin.mutation(api.issues.update, { issueId: s.storyId, cycleId })
+  ),
+  loader(
+    "Comment",
+    "comments.update",
+    (ctx, orgId, s) => ctx.db.insert("comments", { ...onStory(orgId, s), authorId: s.userId, body: "Hi" }),
+    (s, commentId) => s.admin.mutation(api.comments.update, { commentId, body: "Edited" })
+  ),
+  loader(
+    "Decision",
+    "decisions.answer",
+    (ctx, orgId, s) =>
+      ctx.db.insert("decisions", { ...onStory(orgId, s), askedBy: s.userId, question: "Which?", status: "open" }),
+    (s, decisionId) => s.admin.mutation(api.decisions.answer, { decisionId, text: "This" })
+  ),
+  loader(
+    "Label",
+    "labels.toggleOnIssue",
+    (ctx, orgId) => ctx.db.insert("labels", { orgId, name: "Bug", color: "#ff0000" }),
+    (s, labelId) => s.admin.mutation(api.labels.toggleOnIssue, { issueId: s.storyId, labelId })
+  ),
+  loader(
+    "View",
+    "views.update",
+    (ctx, orgId, s) => ctx.db.insert("views", { orgId, creatorId: s.userId, name: "Mine", filters: "{}", shared: false }),
+    (s, viewId) => s.admin.mutation(api.views.update, { viewId, name: "Renamed" })
+  ),
+  loader(
+    "Attachment",
+    "attachments.remove",
+    async (ctx, orgId, s) =>
+      ctx.db.insert("attachments", {
+        ...onStory(orgId, s),
+        storageId: await ctx.storage.store(new Blob(["x"])),
+        fileName: "x.txt",
+        fileType: "text/plain",
+        fileSize: 1,
+        uploadedBy: s.userId,
+      }),
+    (s, attachmentId) => s.admin.mutation(api.attachments.remove, { attachmentId })
+  ),
+  loader(
+    "Change",
+    "issues.revertChange",
+    (ctx, orgId, s) =>
+      ctx.db.insert("activity", { ...onStory(orgId, s), actorId: s.userId, type: "title_changed", field: "title" }),
+    (s, activityId) => s.admin.mutation(api.issues.revertChange, { activityId })
+  ),
+  loader(
+    "Issue",
+    "issues.update",
+    (ctx, orgId, s) =>
+      ctx.db.insert("issues", {
+        orgId,
+        teamId: s.teamId,
+        kind: "story",
+        title: "Other",
+        status: "todo",
+        priority: "none",
+        creatorId: s.userId,
+        sortOrder: 3,
+      }),
+    (s, issueId) => s.admin.mutation(api.issues.update, { issueId, title: "Renamed" })
+  ),
+];
+
+describe("a row loaded by id", () => {
+  test.each(LOADERS)("$name is not found when missing or in another workspace", async ({ label, refusals }) => {
+    const notFound = { code: "not_found", message: `${label} not found` };
+    expect(await refusals(await setup())).toEqual([notFound, notFound]);
+  });
+
+  test("a label from another workspace linked to our story is not listed", async () => {
+    const { t, admin, storyId, foreignIssueId } = await setup();
+    await t.run(async (ctx) => {
+      const otherOrgId = (await ctx.db.get(foreignIssueId))!.orgId;
+      const foreignLabel = await ctx.db.insert("labels", { orgId: otherOrgId, name: "Foreign", color: "#000000" });
+      await ctx.db.insert("issueLabels", { issueId: storyId, labelId: foreignLabel });
+    });
+    const ourLabel = await admin.mutation(api.labels.create, { name: "Ours", color: "#ffffff" });
+    await admin.mutation(api.labels.toggleOnIssue, { issueId: storyId, labelId: ourLabel });
+
+    const labels = await admin.query(api.labels.listForIssue, { issueId: storyId });
+    expect(labels.map((label) => label.name)).toEqual(["Ours"]);
   });
 });

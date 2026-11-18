@@ -19,7 +19,7 @@ const toolText = (body: { result: { content: { text: string }[] } }) => body.res
 describe("/mcp", () => {
   beforeEach(() => {
     vi.stubEnv("NEXT_PUBLIC_CONVEX_SITE_URL", SITE);
-    fetchMock = vi.fn(async () => new Response(JSON.stringify({ issue: { key: "HX-7" } }), { status: 201, headers: { ETag: '"1"' } }));
+    fetchMock = vi.fn(async () => new Response(JSON.stringify({ issue: { key: "HX-7", version: 1 } }), { status: 201, headers: { ETag: '"1"' } }));
     vi.stubGlobal("fetch", fetchMock);
   });
   afterEach(() => {
@@ -51,7 +51,7 @@ describe("/mcp", () => {
     const args = { teamKey: "HX", title: "T", idempotencyKey: "k-1" };
     const body = await (await POST(rpc("tools/call", { name: "create_issue", arguments: args }))).json();
 
-    expect(JSON.parse(toolText(body))).toEqual({ issue: { key: "HX-7" }, version: 1 });
+    expect(JSON.parse(toolText(body))).toEqual({ issue: { key: "HX-7", version: 1 } });
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(`${SITE}/api/v1/issues`);
     const headers = new Headers(init.headers);

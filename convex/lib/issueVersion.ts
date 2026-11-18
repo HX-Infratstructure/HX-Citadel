@@ -1,4 +1,4 @@
-import { type Refusal, STALE } from "../../lib/api-contract";
+import { STALE } from "../../lib/api-contract";
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx } from "../_generated/server";
 import { notFound, refusal } from "./refusals";
@@ -39,9 +39,6 @@ export async function patchIssue(
   await ctx.db.patch(issue._id, { ...fields, version });
   return version;
 }
-
-/** The clients still read the stale code through this type; it goes once they import `lib/api-contract`. */
-export type StaleData = Refusal & { code: typeof STALE };
 
 /** A write that names a version the issue has moved past. */
 export function assertIfMatch(issue: Doc<"issues">, label: string, ifMatch: number | undefined): void {

@@ -1,10 +1,10 @@
 import { v } from "convex/values";
-import { notFound, refuse } from "./lib/refusals";
-import { getOrgIssue } from "./issues";
+import { invalid, refuse } from "./lib/refusals";
+import { getOrgIssue, LIST_LIMIT } from "./issues";
 import { logActivity } from "./lib/activity";
 import { deleteAttachmentFiles } from "./lib/issueCleanup";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
-import { inOrg } from "./lib/orgRows";
+import { inOrg, requireOrgRow } from "./lib/orgRows";
 
 /** Server-side cap; the upload UI also enforces this before uploading. */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
@@ -45,9 +45,10 @@ export const create = orgMutation({
     const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
 
     if (args.fileSize > MAX_ATTACHMENT_BYTES) {
-      throw new Error("Attachments are limited to 25 MB");
+      invalid("Attachments are limited to 25 MB");
     }
 
+    // Every workspace's rows, on purpose: linking a file another workspace attached would hand us its download URL.
     const existing = await ctx.db
       .query("attachments")
       .withIndex("by_storage", (q) => q.eq("storageId", args.storageId))
@@ -86,10 +87,11 @@ export const listByIssue = orgQuery({
   handler: async (ctx, args) => {
     await getOrgIssue(ctx, ctx.org._id, args.issueId);
 
-    const attachments = await inOrg(
-      ctx.db.query("attachments").withIndex("by_issue", (q) => q.eq("issueId", args.issueId)),
+    const newestFirst = await inOrg(
+      ctx.db.query("attachments").withIndex("by_issue", (q) => q.eq("issueId", args.issueId)).order("desc"),
       ctx.org._id
-    ).collect();
+    ).take(LIST_LIMIT);
+    const attachments = newestFirst.reverse();
 
     const result = [];
     for (const attachment of attachments) {
@@ -114,10 +116,7 @@ export const remove = orgMutation({
   args: { attachmentId: v.id("attachments") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const attachment = await ctx.db.get(args.attachmentId);
-    if (!attachment || attachment.orgId !== ctx.org._id) {
-      notFound("Attachment not found");
-    }
+    const attachment = await requireOrgRow(ctx, ctx.org._id, args.attachmentId, "Attachment");
     const isUploader = attachment.uploadedBy === ctx.user._id;
     const isAdmin = ctx.membership.role === "admin";
     if (!isUploader && !isAdmin) {

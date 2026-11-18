@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { ConvexError } from "convex/values";
+import { ConvexError, type Value } from "convex/values";
 import { internal } from "./_generated/api";
 import { pageFailure } from "./agentApi";
 import schema from "./schema";
@@ -203,6 +203,17 @@ describe("pageFailure, the .paginate error mapping", () => {
     const error = thrown(() => pageFailure(new Error("InvalidCursor: the cursor could not be parsed"), "c1"));
     expect(error).toBeInstanceOf(ConvexError);
     expect((error as ConvexError<{ code: string }>).data.code).toBe("validation");
+  });
+
+  test("Convex's structured InvalidCursor signal is a validation refusal, whatever its message says", () => {
+    const signal = { isConvexSystemError: true, paginationError: "InvalidCursor" };
+    const error = thrown(() => pageFailure(Object.assign(new ConvexError<Value>("Paginated query failed"), { data: signal }), "c1"));
+    expect((error as ConvexError<{ code: string }>).data.code).toBe("validation");
+  });
+
+  test("an error that only mentions a cursor, without Convex's InvalidCursor name, is rethrown and stays a 500", () => {
+    const other = new Error("Too many documents read while following the cursor");
+    expect(thrown(() => pageFailure(other, "c1"))).toBe(other);
   });
 
   test("any other failure, such as a read limit, is rethrown unchanged and stays a 500", () => {

@@ -2,7 +2,6 @@ import { FunctionArgs, httpRouter } from "convex/server";
 import { Webhook } from "svix";
 import { internal } from "./_generated/api";
 import { ActionCtx, httpAction } from "./_generated/server";
-import { parseIssueKey } from "../lib/issue-key";
 import {
   agentRoute,
   HttpError,
@@ -14,7 +13,7 @@ import {
   WriteRequest,
   writeRoute,
 } from "./lib/httpApi";
-import { NOT_FOUND, VALIDATION } from "../lib/api-contract";
+import { NOT_FOUND } from "../lib/api-contract";
 
 const http = httpRouter();
 
@@ -87,93 +86,60 @@ async function listIssuesRoute(ctx: ActionCtx, request: Request, agentName: stri
 }
 
 type ReadRoute = (ctx: ActionCtx, agentName: string, key: string) => Promise<Response>;
+type WriteRoute = (ctx: ActionCtx, write: WriteRequest, key: string) => Promise<Response>;
 
-/** GET /api/v1/issues/{key}/decisions: the story's decision requests, newest first. */
-async function listDecisionsRoute(ctx: ActionCtx, agentName: string, key: string): Promise<Response> {
-  return json(200, await ctx.runQuery(internal.agentApi.listDecisions, { agentName, key }));
-}
+/** One method's routes by the path's action; `""` is the issue itself, with no action. */
+type IssueRoutes<Route> = Partial<Record<IssueAction | "", Route>>;
 
-const ISSUE_READ_ROUTES: Partial<Record<IssueAction, ReadRoute>> = { decisions: listDecisionsRoute };
+/** The body, with the request's fields and the path's key over it, typed as a keyed mutation's arguments. */
+const keyedArgs = <Args>({ body, fields }: WriteRequest, key: string) => uncheckedArgs<Args>(body, { ...fields, key });
 
-/** GET /api/v1/issues/{key}: a story or sub-task by its display key; GET /api/v1/issues/{key}/{action} by the read table. */
-async function getIssueRoute(ctx: ActionCtx, request: Request, agentName: string): Promise<Response> {
-  const { key, action } = parseIssuePath(new URL(request.url).pathname);
-  if (action === null) {
-    return issueJson(200, await ctx.runQuery(internal.agentApi.getIssue, { agentName, key }));
-  }
-  const route = ISSUE_READ_ROUTES[action];
+/** Every `/api/v1/issues/{key}[/{action}]` route, by method and then by action. A pair that is not here is 404. */
+const ISSUE_ROUTES = {
+  GET: {
+    "": async (ctx, agentName, key) => issueJson(200, await ctx.runQuery(internal.agentApi.getIssue, { agentName, key })),
+    decisions: async (ctx, agentName, key) => json(200, await ctx.runQuery(internal.agentApi.listDecisions, { agentName, key })),
+  },
+  PATCH: {
+    "": async (ctx, write, key) => issueJson(200, await ctx.runMutation(internal.agentApi.updateIssue, keyedArgs(write, key))),
+  },
+  POST: {
+    proof: async (ctx, write, key) => issueJson(200, await ctx.runMutation(internal.agentApi.setProof, keyedArgs(write, key))),
+    comments: async (ctx, write, key) => json(201, await ctx.runMutation(internal.agentApi.createComment, keyedArgs(write, key))),
+    /** The create route's rules, with the story as parent. */
+    subtasks: async (ctx, { body, fields }, key) =>
+      issueJson(201, await ctx.runMutation(internal.agentApi.createIssue, uncheckedArgs(body, { ...fields, kind: "subtask", parentKey: key }))),
+    /** Ask the owner; no route answers, so an agent never answers its own. */
+    decisions: async (ctx, write, key) => json(201, await ctx.runMutation(internal.agentApi.askDecision, keyedArgs(write, key))),
+  },
+} satisfies { GET: IssueRoutes<ReadRoute>; PATCH: IssueRoutes<WriteRoute>; POST: IssueRoutes<WriteRoute> };
+
+/** The route for the request's method and its path's action, with the key; the one 404 for a pair the table lacks. */
+function issueRoute<Route>(routes: IssueRoutes<Route>, request: Request): { route: Route; key: string } {
+  const pathname = new URL(request.url).pathname;
+  const { key, action } = parseIssuePath(pathname);
+  const route = routes[action ?? ""];
   if (route === undefined) {
-    throw new HttpError(NOT_FOUND, `No GET route for ${new URL(request.url).pathname}`);
+    throw new HttpError(NOT_FOUND, `No ${request.method} route for ${pathname}`);
   }
+  return { route, key };
+}
+
+const issueWrites = (routes: IssueRoutes<WriteRoute>) =>
+  writeRoute(async (ctx, request, write) => {
+    const { route, key } = issueRoute(routes, request);
+    return await route(ctx, write, key);
+  });
+
+const issueReads = agentRoute(async (ctx, request, agentName) => {
+  const { route, key } = issueRoute(ISSUE_ROUTES.GET, request);
   return await route(ctx, agentName, key);
-}
-
-/** PATCH /api/v1/issues/{key}: any subset of status, assignee (a name or null), priority, title and description. */
-async function updateIssueRoute(ctx: ActionCtx, request: Request, { body, fields }: WriteRequest): Promise<Response> {
-  const { key } = issuePath(request, null);
-  const args = uncheckedArgs<FunctionArgs<typeof internal.agentApi.updateIssue>>(body, { ...fields, key });
-  return issueJson(200, await ctx.runMutation(internal.agentApi.updateIssue, args));
-}
-
-/** POST /api/v1/issues/{key}/proof */
-async function setProofRoute(ctx: ActionCtx, { body, fields }: WriteRequest, key: string): Promise<Response> {
-  const args = uncheckedArgs<FunctionArgs<typeof internal.agentApi.setProof>>(body, { ...fields, key });
-  return issueJson(200, await ctx.runMutation(internal.agentApi.setProof, args));
-}
-
-/** POST /api/v1/issues/{key}/comments */
-async function createCommentRoute(ctx: ActionCtx, { body, fields }: WriteRequest, key: string): Promise<Response> {
-  const args = uncheckedArgs<FunctionArgs<typeof internal.agentApi.createComment>>(body, { ...fields, key });
-  return json(201, await ctx.runMutation(internal.agentApi.createComment, args));
-}
-
-/** POST /api/v1/issues/{key}/subtasks: the create route's rules, with the story as parent. */
-async function createSubtaskRoute(ctx: ActionCtx, { body, fields }: WriteRequest, key: string): Promise<Response> {
-  const parsed = parseIssueKey(key);
-  if (parsed === null) {
-    throw new HttpError(VALIDATION, `invalid issue key ${key}; use KEY-12 or KEY-12.3`);
-  }
-  const args = uncheckedArgs<CreateIssueArgs>(body, { ...fields, teamKey: parsed.teamKey, kind: "subtask", parentKey: key });
-  return issueJson(201, await ctx.runMutation(internal.agentApi.createIssue, args));
-}
-
-/** POST /api/v1/issues/{key}/decisions: ask the owner; no route answers, so an agent never answers its own. */
-async function askDecisionRoute(ctx: ActionCtx, { body, fields }: WriteRequest, key: string): Promise<Response> {
-  const args = uncheckedArgs<FunctionArgs<typeof internal.agentApi.askDecision>>(body, { ...fields, key });
-  return json(201, await ctx.runMutation(internal.agentApi.askDecision, args));
-}
-
-type KeyedRoute = (ctx: ActionCtx, write: WriteRequest, key: string) => Promise<Response>;
-
-const ISSUE_ACTION_ROUTES: Record<IssueAction, KeyedRoute> = {
-  proof: setProofRoute,
-  comments: createCommentRoute,
-  subtasks: createSubtaskRoute,
-  decisions: askDecisionRoute,
-};
-
-/** The key from `/api/v1/issues/{key}[/{action}]`; a path whose action differs from the route's is 404. */
-function issuePath(request: Request, action: IssueAction | null): { key: string } {
-  const path = parseIssuePath(new URL(request.url).pathname);
-  if (path.action !== action) {
-    throw new HttpError(NOT_FOUND, `No ${request.method} route for ${new URL(request.url).pathname}`);
-  }
-  return path;
-}
-
-/** POST /api/v1/issues/{key}/{action} */
-async function issueActionRoute(ctx: ActionCtx, request: Request, write: WriteRequest): Promise<Response> {
-  const { key, action } = parseIssuePath(new URL(request.url).pathname);
-  if (action === null) {
-    throw new HttpError(NOT_FOUND, `No POST route for ${ISSUES_PATH}/${key}`);
-  }
-  return await ISSUE_ACTION_ROUTES[action](ctx, write, key);
-}
+});
 
 http.route({ path: ISSUES_PATH, method: "POST", handler: writeRoute(createIssueRoute) });
 http.route({ path: ISSUES_PATH, method: "GET", handler: agentRoute(listIssuesRoute) });
-http.route({ pathPrefix: `${ISSUES_PATH}/`, method: "GET", handler: agentRoute(getIssueRoute) });
-http.route({ pathPrefix: `${ISSUES_PATH}/`, method: "PATCH", handler: writeRoute(updateIssueRoute) });
-http.route({ pathPrefix: `${ISSUES_PATH}/`, method: "POST", handler: writeRoute(issueActionRoute) });
+http.route({ pathPrefix: `${ISSUES_PATH}/`, method: "GET", handler: issueReads });
+http.route({ pathPrefix: `${ISSUES_PATH}/`, method: "PATCH", handler: issueWrites(ISSUE_ROUTES.PATCH) });
+http.route({ pathPrefix: `${ISSUES_PATH}/`, method: "POST", handler: issueWrites(ISSUE_ROUTES.POST) });
 
 export default http;

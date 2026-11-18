@@ -1,12 +1,12 @@
 import { Infer, v } from "convex/values";
-import { invalid, notFound, refuse } from "./refusals";
+import { invalid, refuse } from "./refusals";
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { formatIssueKey } from "../../lib/issue-key";
 import { getOrgIssue, LIST_LIMIT } from "../issues";
 import { decisionAnswerValidator, decisionFields, decisionViaValidator } from "../schema";
 import { logActivity } from "./activity";
-import { inOrg, orgRow } from "./orgRows";
+import { inOrg, orgRow, requireOrgRow } from "./orgRows";
 import { OrgScope } from "./orgScope";
 
 export const QUESTION_MAX = 500;
@@ -113,14 +113,6 @@ async function openDecision(ctx: Db, issue: Doc<"issues">): Promise<Doc<"decisio
   ).first();
 }
 
-async function getOrgDecision(ctx: Db, orgId: Id<"organizations">, decisionId: Id<"decisions">): Promise<Doc<"decisions">> {
-  const decision = await ctx.db.get(decisionId);
-  if (decision === null || decision.orgId !== orgId) {
-    notFound("Decision not found");
-  }
-  return decision;
-}
-
 /** Ask the owner about one story; at most one decision per story is open. Never changes the issue. */
 export async function askDecision(ctx: MutationCtx, scope: OrgScope, ask: DecisionAsk): Promise<Doc<"decisions">> {
   const issue = await getOrgIssue(ctx, scope.org._id, ask.issueId);
@@ -144,12 +136,12 @@ export async function askDecision(ctx: MutationCtx, scope: OrgScope, ask: Decisi
     type: "decision_asked",
     newValue: fields.question,
   });
-  return await getOrgDecision(ctx, scope.org._id, decisionId);
+  return await requireOrgRow(ctx, scope.org._id, decisionId, "Decision");
 }
 
 /** Record the owner's answer to an open decision; the first answer wins. Never changes the issue. */
 export async function answerDecision(ctx: MutationCtx, scope: OrgScope, answer: DecisionAnswer, via: AnswerVia): Promise<void> {
-  const decision = await getOrgDecision(ctx, scope.org._id, answer.decisionId);
+  const decision = await requireOrgRow(ctx, scope.org._id, answer.decisionId, "Decision");
   if (decision.status !== "open") {
     refuse("This decision was already answered");
   }

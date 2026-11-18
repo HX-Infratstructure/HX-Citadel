@@ -24,7 +24,6 @@ import type * as lib_activity from "../lib/activity.js";
 import type * as lib_agents from "../lib/agents.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_customFunctions from "../lib/customFunctions.js";
-import type * as lib_cycles from "../lib/cycles.js";
 import type * as lib_decisions from "../lib/decisions.js";
 import type * as lib_httpApi from "../lib/httpApi.js";
 import type * as lib_idempotency from "../lib/idempotency.js";
@@ -74,7 +73,6 @@ declare const fullApi: ApiFromModules<{
   "lib/agents": typeof lib_agents;
   "lib/auth": typeof lib_auth;
   "lib/customFunctions": typeof lib_customFunctions;
-  "lib/cycles": typeof lib_cycles;
   "lib/decisions": typeof lib_decisions;
   "lib/httpApi": typeof lib_httpApi;
   "lib/idempotency": typeof lib_idempotency;

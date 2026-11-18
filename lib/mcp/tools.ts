@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { issueKindValidator, issuePriorityValidator, issueStatusValidator, issueTypeValidator } from "../../convex/schema";
-import { type ApiBody, CitadelApi, issuePath, toolResult, type WriteOptions } from "../citadel-api";
+import { type ApiBody, CitadelApi, toolResult, type WriteOptions } from "../citadel-api";
 
 /** A zod enum over a Convex literal union, so the tool schemas reuse `convex/schema.ts`. */
 const literals = <T extends string>(validator: { members: { value: T }[] }) => z.enum(validator.members.map((member) => member.value));
@@ -49,13 +49,13 @@ export function createCitadelMcpServer(api: CitadelApi): McpServer {
         cursor: z.string().min(1).optional().describe("The previous page's nextCursor; omit for the first page"),
       },
     },
-    (args) => toolResult(() => api.get(issuePath(), args))
+    (args) => toolResult(() => api.listIssues(args))
   );
 
   server.registerTool(
     MCP_TOOL.getIssue,
     { description: "GET /api/v1/issues/{key}: a story with its sub-tasks, or one sub-task", inputSchema: { key } },
-    (args) => toolResult(() => api.get(issuePath(args.key)))
+    (args) => toolResult(() => api.getIssue(args.key))
   );
 
   server.registerTool(
@@ -76,7 +76,7 @@ export function createCitadelMcpServer(api: CitadelApi): McpServer {
         assignee: z.string().optional(),
       },
     },
-    (args) => toolResult(() => api.write("POST", issuePath(), ...writeArgs(args)))
+    (args) => toolResult(() => api.createIssue(...writeArgs(args)))
   );
 
   server.registerTool(
@@ -93,19 +93,19 @@ export function createCitadelMcpServer(api: CitadelApi): McpServer {
         assignee: z.string().nullable().optional(),
       },
     },
-    ({ key: issueKey, ...args }) => toolResult(() => api.write("PATCH", issuePath(issueKey), ...writeArgs(args)))
+    ({ key: issueKey, ...args }) => toolResult(() => api.updateIssue(issueKey, ...writeArgs(args)))
   );
 
   server.registerTool(
     MCP_TOOL.setProof,
     { description: "POST /api/v1/issues/{key}/proof: set the proof link", inputSchema: { ...editShape, key, proofUrl: z.string().min(1) } },
-    ({ key: issueKey, ...args }) => toolResult(() => api.write("POST", issuePath(issueKey, "proof"), ...writeArgs(args)))
+    ({ key: issueKey, ...args }) => toolResult(() => api.setProof(issueKey, ...writeArgs(args)))
   );
 
   server.registerTool(
     MCP_TOOL.addComment,
     { description: "POST /api/v1/issues/{key}/comments: comment on an issue", inputSchema: { ...editShape, key, body: z.string().min(1) } },
-    ({ key: issueKey, ...args }) => toolResult(() => api.write("POST", issuePath(issueKey, "comments"), ...writeArgs(args)))
+    ({ key: issueKey, ...args }) => toolResult(() => api.addComment(issueKey, ...writeArgs(args)))
   );
 
   server.registerTool(
@@ -114,7 +114,7 @@ export function createCitadelMcpServer(api: CitadelApi): McpServer {
       description: "POST /api/v1/issues/{key}/subtasks: add a sub-task to a story",
       inputSchema: { ...editShape, key, title: z.string().min(1), status: status.optional() },
     },
-    ({ key: issueKey, ...args }) => toolResult(() => api.write("POST", issuePath(issueKey, "subtasks"), ...writeArgs(args)))
+    ({ key: issueKey, ...args }) => toolResult(() => api.addSubtask(issueKey, ...writeArgs(args)))
   );
 
   return server;

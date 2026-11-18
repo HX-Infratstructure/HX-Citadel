@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { issueShape } from "./issues";
 import { orgQuery } from "./lib/customFunctions";
-import { notFound } from "./lib/refusals";
+import { orgRow, requireOrgRow } from "./lib/orgRows";
 
 const RESULTS_PER_INDEX = 20;
 const MAX_RESULTS = 25;
@@ -32,10 +32,7 @@ export const issues = orgQuery({
       return [];
     }
     if (args.teamId) {
-      const team = await ctx.db.get(args.teamId);
-      if (!team || team.orgId !== ctx.org._id) {
-        notFound("Team not found");
-      }
+      await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
     }
 
     const titleMatches = await ctx.db
@@ -80,10 +77,10 @@ export const issues = orgQuery({
     for (const issue of merged) {
       let team = teamCache.get(issue.teamId);
       if (team === undefined) {
-        team = await ctx.db.get(issue.teamId);
+        team = await orgRow(ctx, ctx.org._id, issue.teamId);
         teamCache.set(issue.teamId, team);
       }
-      if (team && team.orgId === ctx.org._id) {
+      if (team) {
         results.push({ ...issue, teamKey: team.key, teamName: team.name });
       }
     }

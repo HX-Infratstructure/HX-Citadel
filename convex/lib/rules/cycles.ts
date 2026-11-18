@@ -2,8 +2,7 @@ import { Id } from "../../_generated/dataModel";
 import { refuse } from "../refusals";
 import { MutationCtx } from "../../_generated/server";
 import { cycleName } from "../../../lib/sprint";
-import { getOrgCycle } from "../cycles";
-import { orgRow } from "../orgRows";
+import { orgRow, requireOrgRow } from "../orgRows";
 
 /** An issue's cycle must be one of its own team's cycles, in the same org. */
 export async function assertCycleInTeam(
@@ -12,7 +11,7 @@ export async function assertCycleInTeam(
   cycleId: Id<"cycles">,
   teamId: Id<"teams">
 ): Promise<void> {
-  const cycle = await getOrgCycle(ctx, orgId, cycleId);
+  const cycle = await requireOrgRow(ctx, orgId, cycleId, "Cycle");
   if (cycle.teamId === teamId) {
     return;
   }
