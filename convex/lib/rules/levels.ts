@@ -1,6 +1,6 @@
 import { Doc, Id } from "../../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../../_generated/server";
-import { IssueKind, PARENT_KIND } from "../../../lib/issue-key";
+import { childKindOf, IssueKind, PARENT_KIND } from "../../../lib/issue-key";
 import { ActivityActor, changedFields, logFieldChanges } from "../activity";
 
 type Placement = {
@@ -169,6 +169,33 @@ export function assertNoEpics(issues: Doc<"issues">[]): void {
     const noun = epicCount === 1 ? "epic" : "epics";
     throw new Error(
       `This project still has ${epicCount} ${noun}; move or delete them first`
+    );
+  }
+}
+
+function countOf(kind: IssueKind, count: number): string {
+  if (count === 1) {
+    return `1 ${kind}`;
+  }
+  return `${count} ${kind === "story" ? "stories" : `${kind}s`}`;
+}
+
+/** An epic or feature with children cannot be deleted; a story's subtasks are deleted with it instead. */
+export async function assertNoChildren(
+  ctx: { db: QueryCtx["db"] },
+  issue: Doc<"issues">
+): Promise<void> {
+  const childKind = childKindOf(issue.kind);
+  if (childKind === null || issue.kind === "story") {
+    return;
+  }
+  const children = await ctx.db
+    .query("issues")
+    .withIndex("by_parent", (q) => q.eq("parentIssueId", issue._id))
+    .collect();
+  if (children.length > 0) {
+    throw new Error(
+      `This ${issue.kind} still has ${countOf(childKind, children.length)}; move or delete them first`
     );
   }
 }

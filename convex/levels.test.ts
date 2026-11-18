@@ -304,6 +304,71 @@ describe("issue levels", () => {
     expect((await asMember.query(api.issues.get, { issueId: story }))?.projectId).toBeUndefined();
   });
 
+  test("refuses deleting an epic that has a feature, naming 1 feature", async () => {
+    const { t, asMember, tree } = await setup();
+    const { epic } = await tree();
+
+    await expect(
+      asMember.mutation(api.issues.remove, { issueId: epic })
+    ).rejects.toThrow("This epic still has 1 feature; move or delete them first");
+    expect(await t.run((ctx) => ctx.db.get(epic))).not.toBeNull();
+  });
+
+  test("refuses deleting a feature that has two stories, naming 2 stories", async () => {
+    const { t, asMember, create, projectId } = await setup();
+    const epic = await create("epic", { projectId });
+    const feature = await create("feature", { parentIssueId: epic });
+    await create("story", { parentIssueId: feature });
+    await create("story", { parentIssueId: feature });
+
+    await expect(
+      asMember.mutation(api.issues.remove, { issueId: feature })
+    ).rejects.toThrow("This feature still has 2 stories; move or delete them first");
+    expect(await t.run((ctx) => ctx.db.get(feature))).not.toBeNull();
+  });
+
+  test("deletes an empty feature, then its now empty epic", async () => {
+    const { t, asMember, create, projectId } = await setup();
+    const epic = await create("epic", { projectId });
+    const feature = await create("feature", { parentIssueId: epic });
+
+    await asMember.mutation(api.issues.remove, { issueId: feature });
+    await asMember.mutation(api.issues.remove, { issueId: epic });
+
+    expect(await t.run((ctx) => ctx.db.get(feature))).toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(epic))).toBeNull();
+  });
+
+  test("deletes a story with its subtasks, the testing one included", async () => {
+    const { t, asMember, create } = await setup();
+    const story = await create("story");
+    await create("subtask", { parentIssueId: story });
+    const subtasks = await t.run((ctx) =>
+      ctx.db
+        .query("issues")
+        .withIndex("by_parent", (q) => q.eq("parentIssueId", story))
+        .collect()
+    );
+    expect(subtasks.map((subtask) => subtask.testing === true).sort()).toEqual([false, true]);
+
+    await asMember.mutation(api.issues.remove, { issueId: story });
+
+    for (const id of [story, ...subtasks.map((subtask) => subtask._id)]) {
+      expect(await t.run((ctx) => ctx.db.get(id))).toBeNull();
+    }
+  });
+
+  test("deletes a subtask that is not the testing one and keeps its story", async () => {
+    const { t, asMember, create } = await setup();
+    const story = await create("story");
+    const subtask = await create("subtask", { parentIssueId: story });
+
+    await asMember.mutation(api.issues.remove, { issueId: subtask });
+
+    expect(await t.run((ctx) => ctx.db.get(subtask))).toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(story))).not.toBeNull();
+  });
+
   test("getByNumber finds the story and ignores subtasks", async () => {
     const { t, asMember, teamId, create } = await setup();
     const storyId = await create("story");

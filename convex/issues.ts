@@ -11,6 +11,7 @@ import {
   CLOSED_STATUSES,
 } from "./lib/rules/doneGate";
 import {
+  assertNoChildren,
   assertValidParent,
   cascadeProject,
   nextSubNumber,
@@ -365,6 +366,7 @@ export const remove = orgMutation({
   handler: async (ctx, args) => {
     const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
     assertNotTestingSubtask(issue, "deleted");
+    await assertNoChildren(ctx, issue);
     await deleteStorySubtasks(ctx, issue);
     await deleteIssueRow(ctx, issue._id);
     await logChildDeleted(ctx, issue, ctx.user._id);
