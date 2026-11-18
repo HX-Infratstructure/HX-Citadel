@@ -1,15 +1,10 @@
 import { formatIssueKey } from "../../../lib/issue-key";
-import { GatedStatus, isGatedStatus } from "../../../lib/issue-status";
+import { GATED_LABELS, isGatedStatus } from "../../../lib/issue-status";
 import { Doc } from "../../_generated/dataModel";
 import { MutationCtx } from "../../_generated/server";
 import { TESTING_SUBTASK_TITLE } from "./testing";
 
 type IssueStatus = Doc<"issues">["status"];
-
-const GATED_LABELS: Record<GatedStatus, string> = {
-  in_review: "In Review",
-  done: "Done",
-};
 
 /** Canceled work is out of scope, so a canceled child never holds its parent back. */
 export const CLOSED_STATUSES: ReadonlySet<IssueStatus> = new Set(["done", "canceled"]);

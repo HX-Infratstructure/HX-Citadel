@@ -12,6 +12,7 @@ import {
 } from "./lib/rules/doneGate";
 import {
   assertNoChildren,
+  assertParentOpen,
   assertValidParent,
   cascadeProject,
   nextSubNumber,
@@ -189,14 +190,17 @@ export const create = orgMutation({
     }
 
     const kind = args.kind ?? "story";
-    if (args.parentIssueId) {
-      await getOrgIssue(ctx, ctx.org._id, args.parentIssueId);
-    }
+    const parent = args.parentIssueId
+      ? await getOrgIssue(ctx, ctx.org._id, args.parentIssueId)
+      : null;
     const placement = await assertValidParent(ctx, kind, {
       teamId: args.teamId,
       parentIssueId: args.parentIssueId,
       projectId: args.projectId,
     });
+    if (parent !== null) {
+      await assertParentOpen(ctx, parent, kind);
+    }
     const status = args.status ?? "todo";
     await assertWipFree(ctx, { orgId: ctx.org._id, assigneeId: args.assigneeId, kind, status });
     const numbering = await claimNumbering(ctx, team, kind, args.parentIssueId);

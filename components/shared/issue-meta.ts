@@ -1,16 +1,15 @@
 import { Doc } from "@/convex/_generated/dataModel";
+import { STATUS_LABELS } from "@/lib/issue-status";
 
 export type IssueStatus = Doc<"issues">["status"];
 export type IssuePriority = Doc<"issues">["priority"];
 
-export const STATUSES: { value: IssueStatus; label: string }[] = [
-  { value: "backlog", label: "Backlog" },
-  { value: "todo", label: "Todo" },
-  { value: "in_progress", label: "In Progress" },
-  { value: "in_review", label: "In Review" },
-  { value: "done", label: "Done" },
-  { value: "canceled", label: "Canceled" },
-];
+const STATUS_ORDER: IssueStatus[] = ["backlog", "todo", "in_progress", "in_review", "done", "canceled"];
+
+export const STATUSES: { value: IssueStatus; label: string }[] = STATUS_ORDER.map((value) => ({
+  value,
+  label: STATUS_LABELS[value],
+}));
 
 export const PRIORITIES: { value: IssuePriority; label: string }[] = [
   { value: "none", label: "No priority" },

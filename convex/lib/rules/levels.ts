@@ -1,6 +1,7 @@
 import { Doc, Id } from "../../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../../_generated/server";
-import { childKindOf, IssueKind, PARENT_KIND, PARENT_REQUIRED } from "../../../lib/issue-key";
+import { childKindOf, formatIssueKey, IssueKind, PARENT_KIND, PARENT_REQUIRED } from "../../../lib/issue-key";
+import { GATED_LABELS, isGatedStatus } from "../../../lib/issue-status";
 import { ActivityActor, changedFields, logFieldChanges } from "../activity";
 
 type Placement = {
@@ -112,6 +113,25 @@ export async function assertValidParent(
     teamId: inheritedTeam(kind, parent, placement.teamId),
     projectId: inheritedProject(kind, parent, placement.projectId),
   };
+}
+
+/**
+ * The Done gate runs only on status changes, so an In Review or Done parent takes no new
+ * child. The team is read only to name the parent in the refusal.
+ */
+export async function assertParentOpen(
+  ctx: { db: QueryCtx["db"] },
+  parent: Doc<"issues">,
+  childKind: IssueKind
+): Promise<void> {
+  if (!isGatedStatus(parent.status)) {
+    return;
+  }
+  const team = await ctx.db.get(parent.teamId);
+  const name = formatIssueKey(team?.key ?? "", parent) ?? parent.title;
+  throw new Error(
+    `${name} is ${GATED_LABELS[parent.status]}; reopen it before adding ${article(childKind)} ${childKind}`
+  );
 }
 
 /** Next subtask number under a story. Mutations are serializable, so max + 1 is safe. */

@@ -6,6 +6,7 @@ import { getOrgIssue } from "./issues";
 import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import {
+  assertParentOpen,
   assertValidParent,
   cascadeProject,
   nextSubNumber,
@@ -336,6 +337,7 @@ export const setParent = orgMutation({
     assertNotTestingSubtask(issue, "moved");
     const teamCache: TeamCache = new Map();
 
+    let newParent: Doc<"issues"> | null = null;
     let newParentIdentifier: string | undefined;
     let projectId = issue.projectId;
     if (args.parentIssueId !== null) {
@@ -343,6 +345,7 @@ export const setParent = orgMutation({
         throw new Error("An issue cannot be its own parent");
       }
       const parent = await getOrgIssue(ctx, ctx.org._id, args.parentIssueId);
+      newParent = parent;
 
       // Walk up from the new parent — hitting this issue means a cycle.
       let ancestorId: Id<"issues"> | undefined = parent.parentIssueId;
@@ -366,6 +369,9 @@ export const setParent = orgMutation({
       parentIssueId: args.parentIssueId ?? undefined,
       projectId,
     });
+    if (newParent !== null) {
+      await assertParentOpen(ctx, newParent, issue.kind);
+    }
 
     let oldParentIdentifier: string | undefined;
     if (issue.parentIssueId) {

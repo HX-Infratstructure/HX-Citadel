@@ -196,3 +196,91 @@ describe("Done gate: every status write path", () => {
     ).rejects.toThrow("Can't move ENG-1 to Done: open — ENG-1.1 Complete testing (no proof link)");
   });
 });
+
+describe("Done gate: no new child under a gated parent", () => {
+  test.each(GATED)("a story can't be created under a feature in %s", async (label, status) => {
+    const { create, move } = await setup();
+    const epic = await create("epic", "Accounts");
+    const feature = await create("feature", "Sign-in", epic);
+    await move(feature, status);
+
+    await expect(create("story", "Login", feature)).rejects.toThrow(
+      `Sign-in is ${label}; reopen it before adding a story`
+    );
+  });
+
+  test.each(GATED)("a sub-task can't be created under a story in %s", async (label, status) => {
+    const { create, move, storyWithWork, finishStory } = await setup();
+    const ids = await storyWithWork();
+    await finishStory(ids);
+    await move(ids.story, status);
+
+    await expect(create("subtask", "Write docs", ids.story)).rejects.toThrow(
+      `ENG-1 is ${label}; reopen it before adding a subtask`
+    );
+  });
+
+  test.each(GATED)("a story can't be moved under a feature in %s", async (label, status) => {
+    const { t, create, move } = await setup();
+    const epic = await create("epic", "Accounts");
+    const feature = await create("feature", "Sign-in", epic);
+    await move(feature, status);
+    const story = await create("story", "Login");
+    const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+
+    await expect(
+      asMember.mutation(api.issueRelations.setParent, { issueId: story, parentIssueId: feature })
+    ).rejects.toThrow(`Sign-in is ${label}; reopen it before adding a story`);
+  });
+
+  test.each(["todo", "in_progress"] as const)("a child can be created and moved under a parent in %s", async (status) => {
+    const { t, create, move } = await setup();
+    const epic = await create("epic", "Accounts");
+    const feature = await create("feature", "Sign-in", epic);
+    await move(feature, status);
+    const story = await create("story", "Login");
+    const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+
+    await expect(create("story", "Logout", feature)).resolves.toBeDefined();
+    await expect(
+      asMember.mutation(api.issueRelations.setParent, { issueId: story, parentIssueId: feature })
+    ).resolves.toBeNull();
+  });
+
+  test("a new story still gets its Complete testing sub-task", async () => {
+    const { t, create } = await setup();
+    const epic = await create("epic", "Accounts");
+    const feature = await create("feature", "Sign-in", epic);
+    const story = await create("story", "Login", feature);
+
+    const children = await t.run((ctx) =>
+      ctx.db
+        .query("issues")
+        .withIndex("by_parent", (q) => q.eq("parentIssueId", story))
+        .collect()
+    );
+    expect(children.map((child) => [child.title, child.testing])).toEqual([["Complete testing", true]]);
+  });
+
+  test("a wrong-kind parent gets the level message, not reopen, even when gated", async () => {
+    const { create, move } = await setup();
+    const epic = await create("epic", "Accounts");
+    await move(epic, "done");
+
+    await expect(create("story", "Login", epic)).rejects.toThrow(
+      "A story's parent must be a feature, not an epic"
+    );
+  });
+
+  test("reopening the gated parent lets the child in", async () => {
+    const { create, move } = await setup();
+    const epic = await create("epic", "Accounts");
+    await move(epic, "done");
+    await expect(create("feature", "Sign-in", epic)).rejects.toThrow(
+      "Accounts is Done; reopen it before adding a feature"
+    );
+
+    await move(epic, "in_progress");
+    await expect(create("feature", "Sign-in", epic)).resolves.toBeDefined();
+  });
+});

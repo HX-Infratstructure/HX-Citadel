@@ -8,6 +8,20 @@ export const GATED_STATUSES = ["in_review", "done"] as const satisfies readonly 
 
 export type GatedStatus = (typeof GATED_STATUSES)[number];
 
+export const STATUS_LABELS: Record<IssueStatus, string> = {
+  backlog: "Backlog",
+  todo: "Todo",
+  in_progress: "In Progress",
+  in_review: "In Review",
+  done: "Done",
+  canceled: "Canceled",
+};
+
+export const GATED_LABELS: Record<GatedStatus, string> = {
+  in_review: STATUS_LABELS.in_review,
+  done: STATUS_LABELS.done,
+};
+
 export function isGatedStatus(status: IssueStatus): status is GatedStatus {
   return (GATED_STATUSES as readonly IssueStatus[]).includes(status);
 }
