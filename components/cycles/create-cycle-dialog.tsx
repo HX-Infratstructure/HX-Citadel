@@ -23,11 +23,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { DAY_MS, inputDateToMs, msToInputDate } from "@/components/projects/dates";
-import { SPRINT_DAYS } from "./cycle-meta";
+import { inputDateToMs, msToInputDate } from "@/components/projects/dates";
+import { sprintEnd } from "@/lib/sprint";
 
 function defaultSprintEnd(): string {
-  return msToInputDate(Date.now() + (SPRINT_DAYS - 1) * DAY_MS);
+  return msToInputDate(sprintEnd(Date.now()));
 }
 
 export function CreateCycleDialog({

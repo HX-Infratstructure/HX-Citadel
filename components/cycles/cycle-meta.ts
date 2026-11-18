@@ -1,4 +1,4 @@
-import { DAY_MS } from "@/components/projects/dates";
+import { DAY_MS } from "@/lib/sprint";
 
 type CycleLike = {
   number: number;
@@ -6,9 +6,6 @@ type CycleLike = {
   startDate: number;
   endDate: number;
 };
-
-/** Scrum sprint length: a cycle runs 7 days, start and end day inclusive. */
-export const SPRINT_DAYS = 7;
 
 export type CycleStatus = "current" | "upcoming" | "completed";
 

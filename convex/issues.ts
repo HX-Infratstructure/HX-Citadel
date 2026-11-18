@@ -141,7 +141,7 @@ export const getByNumber = orgQuery({
 });
 
 /** Stories carry a type (default story); other levels carry none. */
-function storyType(
+export function storyType(
   kind: Doc<"issues">["kind"],
   type: Doc<"issues">["type"]
 ): Doc<"issues">["type"] {
