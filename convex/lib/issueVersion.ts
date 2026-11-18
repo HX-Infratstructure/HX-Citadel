@@ -11,7 +11,10 @@ export function issueVersion(issue: Doc<"issues">): number {
 
 type IssueFields = Partial<Omit<Doc<"issues">, "_id" | "_creationTime" | "version">>;
 
-/** The only place an issue row is patched, so every change bumps its version by one. */
+/**
+ * The only place an issue row is patched, so every change bumps its version by one.
+ * A patch that changes no field writes nothing, so it cannot make another writer's If-Match stale.
+ */
 export async function patchIssue(
   ctx: { db: MutationCtx["db"] },
   issueId: Id<"issues">,
@@ -20,6 +23,10 @@ export async function patchIssue(
   const issue = await ctx.db.get(issueId);
   if (issue === null) {
     throw new Error(`Issue ${issueId} not found`);
+  }
+  const keys = Object.keys(fields) as (keyof IssueFields)[];
+  if (keys.every((key) => fields[key] === issue[key])) {
+    return issueVersion(issue);
   }
   const version = issueVersion(issue) + 1;
   await ctx.db.patch(issueId, { ...fields, version });

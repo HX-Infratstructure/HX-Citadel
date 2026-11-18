@@ -59,6 +59,40 @@ describe("issues.version", () => {
     expect(response.headers.get("ETag")).toBe('"2"');
   });
 
+  test("an empty PATCH keeps the version and returns its ETag", async () => {
+    const t = await setup();
+    const response = await send(t, "PATCH", "/ENG-1", {});
+    expect(response.status).toBe(200);
+    expect((await response.json()).issue.version).toBe(1);
+    expect(response.headers.get("ETag")).toBe('"1"');
+    expect(await versionOf(t, "ENG-1")).toBe(1);
+  });
+
+  test("a PATCH that sets the title to its current value keeps the version", async () => {
+    const t = await setup();
+    const response = await send(t, "PATCH", "/ENG-1", { title: "Story" });
+    expect(response.status).toBe(200);
+    expect((await response.json()).issue).toMatchObject({ title: "Story", version: 1 });
+    expect(await versionOf(t, "ENG-1")).toBe(1);
+  });
+
+  test("re-posting the same proof URL keeps the testing sub-task's version", async () => {
+    const t = await setup();
+    await send(t, "POST", "/ENG-1.1/proof", { proofUrl: "https://example.com/run/1" });
+    const again = await send(t, "POST", "/ENG-1.1/proof", { proofUrl: "https://example.com/run/1" });
+    expect(again.status).toBe(200);
+    expect((await again.json()).issue.version).toBe(2);
+    expect(again.headers.get("ETag")).toBe('"2"');
+  });
+
+  test("a real change after no-op writes bumps by exactly one", async () => {
+    const t = await setup();
+    await send(t, "PATCH", "/ENG-1", {});
+    await send(t, "PATCH", "/ENG-1", { title: "Story" });
+    const response = await send(t, "PATCH", "/ENG-1", { title: "Renamed" });
+    expect((await response.json()).issue).toMatchObject({ title: "Renamed", version: 2 });
+  });
+
   test("a comment or a new sub-task does not bump the story", async () => {
     const t = await setup();
     expect((await send(t, "POST", "/ENG-1/comments", { body: "note" })).status).toBe(201);
