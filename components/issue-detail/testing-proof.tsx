@@ -3,12 +3,13 @@
 import { errorMessage } from "@/lib/error-message";
 import { useMutation } from "convex/react";
 import { ExternalLink } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import { Doc } from "@/convex/_generated/dataModel";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { proofToSend } from "./proof-to-send";
 
 /** The Complete testing sub-task's badge and proof link, which the Done gate reads. */
 export function TestingProof({ issue }: { issue: Doc<"issues"> }) {
@@ -16,20 +17,27 @@ export function TestingProof({ issue }: { issue: Doc<"issues"> }) {
   const savedUrl = issue.proofUrl ?? "";
   // null until the user edits, so the input follows the saved proof, including a save from another tab.
   const [draft, setDraft] = useState<string | null>(null);
+  const inFlightUrl = useRef<string | null>(null);
 
   const saveProof = () => {
     if (draft === null) {
       return;
     }
-    const trimmed = draft.trim();
-    if (trimmed === savedUrl) {
+    const proofUrl = proofToSend(draft, savedUrl, inFlightUrl.current);
+    if (proofUrl === null) {
       setDraft(null);
       return;
     }
-    setProof({ issueId: issue._id, proofUrl: trimmed })
+    inFlightUrl.current = proofUrl;
+    setProof({ issueId: issue._id, proofUrl })
       .then(() => setDraft((current) => (current === draft ? null : current)))
       .catch((error: unknown) => {
         toast.error(errorMessage(error, "Failed to save proof"));
+      })
+      .finally(() => {
+        if (inFlightUrl.current === proofUrl) {
+          inFlightUrl.current = null;
+        }
       });
   };
 

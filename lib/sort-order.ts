@@ -23,20 +23,30 @@ export function sortOrderBetween(
 
 /**
  * New ranks for `count` rows that share the rank `tie` plus one row moved into
- * their run, so no two of them tie. The run keeps `tie` at its top and steps
+ * their run, followed by the `below` rows ranked between `tie` and
+ * `nextLower`, so no two of them tie. The run keeps `tie` at its top and steps
  * down evenly toward `nextLower`, the closest lower rank, without reaching it;
- * the moved row takes the middle of the run.
+ * the moved row takes the middle of the tied rows. Undefined when the gap is
+ * too narrow to hold the run as distinct numbers.
  */
 export function respaceTie(
   tie: number,
   count: number,
-  nextLower?: number
-): { tied: number[]; moved: number } {
-  const step = nextLower === undefined ? SORT_GAP : (tie - nextLower) / (count + 1);
-  const ranks = Array.from({ length: count + 1 }, (_, slot) => tie - slot * step);
+  nextLower?: number,
+  below = 0
+): { tied: number[]; moved: number; below: number[] } | undefined {
+  const slots = count + 1 + below;
+  const step = nextLower === undefined ? SORT_GAP : (tie - nextLower) / slots;
+  const ranks = Array.from({ length: slots }, (_, slot) => tie - slot * step);
+  const fits = ranks.every((rank, slot) => rank > (ranks[slot + 1] ?? nextLower ?? -Infinity));
+  if (!fits) {
+    return undefined;
+  }
   const movedSlot = Math.ceil(count / 2);
+  const run = ranks.slice(0, count + 1);
   return {
-    tied: ranks.filter((_, slot) => slot !== movedSlot),
-    moved: ranks[movedSlot],
+    tied: run.filter((_, slot) => slot !== movedSlot),
+    moved: run[movedSlot],
+    below: ranks.slice(count + 1),
   };
 }

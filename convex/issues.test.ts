@@ -443,4 +443,34 @@ describe("issue ranking", () => {
     expect(new Set(ranks).size).toBe(3);
     expect(backlog.map((issue) => issue._id)).toEqual([above, moved, below]);
   });
+
+  test("moving a story into a tie whose gap to the next rank holds no new number re-spaces the rows below", async () => {
+    const { t, teamId, memberId } = await setup();
+    const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+    const { above, lower, bottom, moved } = await t.run(async (ctx) => {
+      const team = await ctx.db.get(teamId);
+      const story = {
+        orgId: team!.orgId,
+        teamId,
+        kind: "story",
+        status: "todo",
+        priority: "none",
+        creatorId: memberId,
+      } as const;
+      return {
+        above: await ctx.db.insert("issues", { ...story, title: "Above", sortOrder: 1000 }),
+        lower: await ctx.db.insert("issues", { ...story, title: "Lower", sortOrder: 999.9999999999999 }),
+        bottom: await ctx.db.insert("issues", { ...story, title: "Bottom", sortOrder: 0 }),
+        moved: await ctx.db.insert("issues", { ...story, title: "Moved", sortOrder: -5000 }),
+      };
+    });
+
+    await asMember.mutation(api.issues.update, { issueId: moved, sortOrder: 1000 });
+
+    const backlog = await asMember.query(api.issues.listBacklog, { teamId });
+    const ranks = backlog.map((issue) => issue.sortOrder);
+    expect(new Set(ranks).size).toBe(4);
+    expect(backlog.map((issue) => issue._id)).toEqual([above, moved, lower, bottom]);
+    expect(ranks.at(-1)).toBe(0);
+  });
 });

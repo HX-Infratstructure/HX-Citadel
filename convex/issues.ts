@@ -293,36 +293,67 @@ export const create = orgMutation({
   },
 });
 
-/**
- * The rank to store for an issue moved to `rank`. Other issues in the team that
- * already hold `rank` are re-spaced first, in creation order, and the moved
- * issue takes a rank inside their run, so it never ties a neighbour.
- */
-async function placeRank(
+/** The team's issues at `rank`, other than `issue`, in creation order. */
+async function othersAtRank(
   ctx: MutationCtx,
   issue: Doc<"issues">,
   rank: number
-): Promise<number> {
+): Promise<Doc<"issues">[]> {
   const atRank = await ctx.db
     .query("issues")
     .withIndex("by_team_and_sort_order", (q) =>
       q.eq("teamId", issue.teamId).eq("sortOrder", rank)
     )
     .collect();
-  const tied = atRank.filter((other) => other._id !== issue._id);
+  return atRank.filter((other) => other._id !== issue._id);
+}
+
+/** The team's closest rank below `rank`, if any. */
+async function nextLowerRank(
+  ctx: MutationCtx,
+  teamId: Id<"teams">,
+  rank: number
+): Promise<number | undefined> {
+  const nextLower = await ctx.db
+    .query("issues")
+    .withIndex("by_team_and_sort_order", (q) => q.eq("teamId", teamId).lt("sortOrder", rank))
+    .order("desc")
+    .first();
+  return nextLower?.sortOrder;
+}
+
+/**
+ * The rank to store for an issue moved to `rank`. Other issues in the team that
+ * already hold `rank` are re-spaced first, in creation order, and the moved
+ * issue takes a rank inside their run, so it never ties a neighbour. When the
+ * gap to the next lower rank can't hold distinct numbers, the issues at that
+ * rank join the run and the gap widens to the rank below them.
+ */
+async function placeRank(
+  ctx: MutationCtx,
+  issue: Doc<"issues">,
+  rank: number
+): Promise<number> {
+  const tied = await othersAtRank(ctx, issue, rank);
   if (tied.length === 0) {
     return rank;
   }
-  const nextLower = await ctx.db
-    .query("issues")
-    .withIndex("by_team_and_sort_order", (q) =>
-      q.eq("teamId", issue.teamId).lt("sortOrder", rank)
-    )
-    .order("desc")
-    .first();
-  const ranks = respaceTie(rank, tied.length, nextLower?.sortOrder);
+  const below: Doc<"issues">[] = [];
+  let floor = await nextLowerRank(ctx, issue.teamId, rank);
+  let ranks = respaceTie(rank, tied.length, floor, below.length);
+  while (ranks === undefined && floor !== undefined) {
+    below.push(...(await othersAtRank(ctx, issue, floor)));
+    floor = await nextLowerRank(ctx, issue.teamId, floor);
+    ranks = respaceTie(rank, tied.length, floor, below.length);
+  }
+  if (ranks === undefined) {
+    throw new Error("There is no room to rank this issue here");
+  }
   for (const [index, other] of tied.entries()) {
     await ctx.db.patch(other._id, { sortOrder: ranks.tied[index] });
+  }
+  for (const [index, other] of below.entries()) {
+    await ctx.db.patch(other._id, { sortOrder: ranks.below[index] });
   }
   return ranks.moved;
 }
