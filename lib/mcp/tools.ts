@@ -58,7 +58,8 @@ export function createCitadelMcpServer(api: CitadelApi): McpServer {
     {
       description: "POST /api/v1/issues: create an issue; a new story gets its testing sub-task .1",
       inputSchema: {
-        ...writeShape,
+        ...editShape,
+        ifMatch: editShape.ifMatch.describe("The parentKey issue's version last read; a stale one is refused with code stale"),
         teamKey: z.string().min(1),
         title: z.string().min(1),
         description: z.string().optional(),

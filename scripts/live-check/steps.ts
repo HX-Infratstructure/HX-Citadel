@@ -14,6 +14,7 @@ const IN_PROGRESS: Infer<typeof issueStatusValidator> = "in_progress";
 const DONE: Infer<typeof issueStatusValidator> = "done";
 const CANCELED: Infer<typeof issueStatusValidator> = "canceled";
 const LOW: Infer<typeof issuePriorityValidator> = "low";
+const HIGH: Infer<typeof issuePriorityValidator> = "high";
 const REUSED: ReusedData["code"] = "idempotency_key_reused";
 const STALE: StaleData["code"] = "stale";
 
@@ -62,14 +63,41 @@ function firstStory(check: LiveCheck): Story {
   return check.first;
 }
 
-function story(check: LiveCheck, body: ApiBody): Story {
+/** Adds the story a write answered with, if any, to the tidy-up's list, and returns its key or "". */
+function keep(check: LiveCheck, body: ApiBody): string {
   const issue = body.issue as { key?: unknown } | undefined;
   const key = typeof issue?.key === "string" ? issue.key : "";
-  expect(key !== "", `no issue key in ${JSON.stringify(body)}`);
-  if (!check.created.includes(key)) {
+  if (key !== "" && !check.created.includes(key)) {
     check.created.push(key);
   }
+  return key;
+}
+
+function story(check: LiveCheck, body: ApiBody): Story {
+  const key = keep(check, body);
+  expect(key !== "", `no issue key in ${JSON.stringify(body)}`);
   return { key, version: Number(body.version) };
+}
+
+/** No answer, or a 5xx without a `{code, message}` body: the write may still have been committed. */
+function answerLost(error: unknown): boolean {
+  return !(error instanceof CitadelApiError) || error.code === "server_error";
+}
+
+/**
+ * POSTs a story. When the answer is lost, it POSTs once more with the same body and key, so a committed story
+ * replays and the tidy-up learns its key; the first error still fails the step.
+ */
+async function create(check: LiveCheck, body: ApiBody, step: string): Promise<ApiBody> {
+  const write = () => check.api.write("POST", issuePath(), body, { idempotencyKey: idempotencyKey(check, step) });
+  try {
+    return await write();
+  } catch (error) {
+    if (answerLost(error)) {
+      keep(check, await write().catch(() => ({})));
+    }
+    throw error;
+  }
 }
 
 /** Runs a write that must be refused with `code`, and returns the refusal's message. */
@@ -81,10 +109,7 @@ async function refusal(check: LiveCheck, write: () => Promise<ApiBody>, code: st
     expect(error instanceof CitadelApiError && error.code === code, `expected ${code}, got ${errorLine(error)}`);
     return (error as CitadelApiError).message;
   }
-  const issue = body.issue as { key?: unknown } | undefined;
-  if (typeof issue?.key === "string") {
-    story(check, body);
-  }
+  keep(check, body);
   throw new Error(`expected ${code}, got success ${JSON.stringify(body)}`);
 }
 
@@ -136,8 +161,7 @@ export const STEPS: CheckStep<LiveCheck>[] = [
   {
     name: "agent-create",
     run: async (check) => {
-      const options = { idempotencyKey: idempotencyKey(check, "create") };
-      check.first = story(check, await check.api.write("POST", issuePath(), createBody(check, `Live check ${check.runId}`), options));
+      check.first = story(check, await create(check, createBody(check, `Live check ${check.runId}`), "create"));
       return `${check.first.key} v${check.first.version}`;
     },
   },
@@ -145,8 +169,7 @@ export const STEPS: CheckStep<LiveCheck>[] = [
     name: "replay",
     run: async (check) => {
       const first = firstStory(check);
-      const options = { idempotencyKey: idempotencyKey(check, "create") };
-      const replayed = story(check, await check.api.write("POST", issuePath(), createBody(check, `Live check ${check.runId}`), options));
+      const replayed = story(check, await create(check, createBody(check, `Live check ${check.runId}`), "create"));
       expect(replayed.key === first.key && replayed.version === first.version, `replay gave ${replayed.key} v${replayed.version}`);
       return `${replayed.key} v${replayed.version}, no new story`;
     },
@@ -154,16 +177,18 @@ export const STEPS: CheckStep<LiveCheck>[] = [
   {
     name: "key-reuse",
     run: async (check) => {
-      const options = { idempotencyKey: idempotencyKey(check, "create") };
-      return refusal(check, () => check.api.write("POST", issuePath(), createBody(check, `Live check ${check.runId} other`), options), REUSED);
+      return refusal(check, () => create(check, createBody(check, `Live check ${check.runId} other`), "create"), REUSED);
     },
   },
   {
     name: "stale-if-match",
     run: async (check) => {
       const first = firstStory(check);
-      const options = { idempotencyKey: idempotencyKey(check, "stale"), ifMatch: first.version + 1 };
-      return refusal(check, () => check.api.write("PATCH", issuePath(first.key), { priority: LOW }, options), STALE);
+      const advance = { idempotencyKey: idempotencyKey(check, "advance"), ifMatch: first.version };
+      check.first = story(check, await check.api.write("PATCH", issuePath(first.key), { priority: LOW }, advance));
+      expect(check.first.version > first.version, `If-Match ${first.version} left ${first.key} at v${check.first.version}`);
+      const stale = { idempotencyKey: idempotencyKey(check, "stale"), ifMatch: first.version };
+      return refusal(check, () => check.api.write("PATCH", issuePath(first.key), { priority: HIGH }, stale), STALE);
     },
   },
   {
@@ -173,7 +198,7 @@ export const STEPS: CheckStep<LiveCheck>[] = [
       const moved = { status: IN_PROGRESS, assignee: AGENT };
       check.first = story(check, await check.api.write("PATCH", issuePath(first.key), moved, { idempotencyKey: idempotencyKey(check, "start") }));
       const second = { ...createBody(check, `Live check ${check.runId} second`), ...moved };
-      const message = await refusal(check, () => check.api.write("POST", issuePath(), second, { idempotencyKey: idempotencyKey(check, "second") }), RULE_REFUSED);
+      const message = await refusal(check, () => create(check, second, "second"), RULE_REFUSED);
       expect(message.includes(first.key), `the refusal does not name ${first.key}: ${message}`);
       return message;
     },

@@ -1,9 +1,12 @@
 import { ConvexError, v } from "convex/values";
+import { internal } from "../_generated/api";
 import { MutationCtx } from "../_generated/server";
 import { OrgScope } from "./orgScope";
 
 export const IDEMPOTENCY_HEADER = "Idempotency-Key";
 export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+/** Receipts hold whole write results, so one cleanup run reads a bounded batch, well under Convex's read limit. */
+export const EXPIRY_BATCH = 256;
 const KEY_PATTERN = /^[\x21-\x7e]{1,200}$/;
 
 /** What a REST write passes to its internal mutation; MCP passes the same. */
@@ -30,9 +33,12 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
-/** One hash per request: method, path, the parsed body in stable key order, and If-Match. */
-export async function hashRequest(route: string, body: Record<string, unknown>, ifMatch: number | undefined): Promise<string> {
-  const text = canonicalJson({ route, body, ifMatch: ifMatch ?? null });
+/**
+ * One hash per request: method, path and the parsed body in stable key order. If-Match is left out: it is
+ * the precondition of the first attempt, and a retry that re-reads the version must still replay.
+ */
+export async function hashRequest(route: string, body: Record<string, unknown>): Promise<string> {
+  const text = canonicalJson({ route, body });
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -78,12 +84,15 @@ export async function withIdempotency<T>(
   return body;
 }
 
-/** Deletes keys older than the TTL; returns how many went. */
+/** Deletes up to `EXPIRY_BATCH` of the oldest keys past the TTL and schedules the next batch while a full one went; returns how many went. */
 export async function expireKeys(ctx: MutationCtx, now: number): Promise<number> {
   const expired = await ctx.db
     .query("idempotencyKeys")
     .withIndex("by_created_at", (q) => q.lt("createdAt", now - IDEMPOTENCY_TTL_MS))
-    .collect();
+    .take(EXPIRY_BATCH);
   await Promise.all(expired.map((row) => ctx.db.delete(row._id)));
+  if (expired.length === EXPIRY_BATCH) {
+    await ctx.scheduler.runAfter(0, internal.agentApi.expireIdempotencyKeys, {});
+  }
   return expired.length;
 }

@@ -33,13 +33,35 @@ describe("CitadelApi", () => {
     expect(JSON.parse(init.body as string)).toEqual({ status: "todo" });
   });
 
-  it("sends no If-Match when the caller gave none, and query filters on reads", async () => {
+  it("sends query filters on reads, without the undefined ones", async () => {
     const fetchMock = stubFetch(200, { issues: [] });
     await new CitadelApi("cc1").get(issuePath(), { team: "HX", status: undefined, assignee: "me" });
 
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
     expect(url).toBe(`${SITE}/api/v1/issues?team=HX&assignee=me`);
-    expect(new Headers(init.headers).has("If-Match")).toBe(false);
+  });
+
+  it("sends no If-Match on a write when the caller gave no version", async () => {
+    const fetchMock = stubFetch(201, { issue: { key: "HX-2" } });
+    await new CitadelApi("cc1").write("POST", issuePath(), { teamKey: "HX", title: "T" }, { idempotencyKey: "k-2" });
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(headers.get("Idempotency-Key")).toBe("k-2");
+    expect(headers.has("If-Match")).toBe(false);
+  });
+
+  it.each([
+    ["an HTML page", "<html>proxy</html>"],
+    ["JSON null", "null"],
+    ["a JSON array", "[]"],
+  ])("refuses a 2xx answer with %s as server_error, saying the write's result is unconfirmed", async (_name, raw) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(raw, { status: 201 })));
+    const result = await toolResult(() => new CitadelApi("cc1").write("POST", issuePath(), { teamKey: "HX", title: "T" }, { idempotencyKey: "k-3" }));
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result).code).toBe("server_error");
+    expect(textOf(result).message).toMatch(/unconfirmed/);
   });
 
   it("maps a REST {code, message} to a tool error with the same code and message", async () => {

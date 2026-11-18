@@ -85,7 +85,9 @@ describe("issues.version", () => {
 
   test("re-posting the same proof URL keeps the testing sub-task's version", async () => {
     const t = await setup();
-    await send(t, "POST", "/ENG-1.1/proof", { proofUrl: "https://example.com/run/1" });
+    const first = await send(t, "POST", "/ENG-1.1/proof", { proofUrl: "https://example.com/run/1" });
+    expect(first.status).toBe(200);
+    expect((await first.json()).issue.version).toBe(2);
     const again = await send(t, "POST", "/ENG-1.1/proof", { proofUrl: "https://example.com/run/1" });
     expect(again.status).toBe(200);
     expect((await again.json()).issue.version).toBe(2);
@@ -223,6 +225,6 @@ describe("one home for issue patches", () => {
       [...readFileSync(join(__dirname, file), "utf8").matchAll(/ctx\.db\.patch\(([^,]+),/g)].map((match) => ({ file, id: match[1] }))
     );
     const issuePatches = patches.filter((patch) => !NON_ISSUE_IDS.includes(patch.id));
-    expect(issuePatches).toEqual([{ file: "lib/issueVersion.ts", id: "issueId" }]);
+    expect(issuePatches).toEqual([{ file: join("lib", "issueVersion.ts"), id: "issueId" }]);
   });
 });

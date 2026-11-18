@@ -331,8 +331,8 @@ async function setupTeams() {
     await ctx.db.insert("issueLabels", { issueId: cleared.storyId, labelId });
     await ctx.db.insert("issueLabels", { issueId: kept.storyId, labelId });
     await ctx.db.insert("issueRelations", {
-      issueId: cleared.storyId,
-      relatedIssueId: kept.storyId,
+      issueId: kept.storyId,
+      relatedIssueId: cleared.storyId,
       type: "blocks",
     });
     await ctx.db.insert("projects", { orgId, name: "Shared", status: "planned" });

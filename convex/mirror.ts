@@ -146,7 +146,10 @@ export const mirrorSnapshot = internalQuery({
   },
 });
 
-/** Agents are not in Clerk, so the reconcile never sees, counts or removes them or their memberships. */
+/**
+ * Agents are not in Clerk, so the snapshot leaves agent users and memberships out of reconciliation.
+ * Removing a gone organization (`admin.deleteOrgMirror`) still deletes every membership in it, agents' included.
+ */
 function isAgent(user: Doc<"users">): boolean {
   return user.kind === "agent";
 }

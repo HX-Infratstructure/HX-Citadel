@@ -30,8 +30,8 @@ export class GitRepo {
     return this.git("remote", "get-url", "origin");
   }
 
-  /** The path git runs a hook from: `<repo>/.git/hooks/<name>`, shared by every worktree. */
+  /** The path git runs a hook from: `core.hooksPath` when set, else `<repo>/.git/hooks/<name>`, shared by every worktree. */
   hookPath(name: string): string {
-    return path.resolve(this.dir, this.git("rev-parse", "--git-common-dir"), "hooks", name);
+    return path.resolve(this.dir, this.git("rev-parse", "--git-path", `hooks/${name}`));
   }
 }

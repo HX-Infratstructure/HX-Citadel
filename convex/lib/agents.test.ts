@@ -22,7 +22,7 @@ describe("normalizeAgentName", () => {
     expect(normalizeAgentName(raw)).toBe(normalized);
   });
 
-  test.each(["", "   ", "cc 1", "cc1!", "agent:cc1", "cc/1", "ü", "a".repeat(65)])(
+  test.each(["", "   ", "cc 1", "cc1!", "agent:cc1", "cc/1", "ü", "a".repeat(65), "me", " ME "])(
     "%j is refused",
     (raw) => {
       expect(() => normalizeAgentName(raw)).toThrow("invalid agent name");

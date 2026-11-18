@@ -4,10 +4,13 @@ import { findMembership, findUserByClerkId } from "./mirror";
 
 const AGENT_NAME = /^[a-z0-9._-]{1,64}$/;
 
-/** Trimmed and lower-cased; `[a-z0-9._-]`, 1 to 64 characters. `system` is allowed for machine jobs. */
+/** `assignee=me` selects the calling agent, so no agent may take `me` as its name. */
+const SELF_SELECTOR = "me";
+
+/** Trimmed and lower-cased; `[a-z0-9._-]`, 1 to 64 characters, never `me`. `system` is allowed for machine jobs. */
 export function normalizeAgentName(raw: string): string {
   const name = raw.trim().toLowerCase();
-  if (!AGENT_NAME.test(name)) {
+  if (!AGENT_NAME.test(name) || name === SELF_SELECTOR) {
     throw new Error("invalid agent name");
   }
   return name;

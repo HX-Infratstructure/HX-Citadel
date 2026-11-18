@@ -12,6 +12,7 @@ type Reply = { status: number; body?: unknown; etag?: string; text?: string };
 const ok = (body: unknown, etag?: string): Reply => ({ status: 200, body, etag });
 const refused = (status: number, code: string, message: string): Reply => ({ status, body: { code, message } });
 const story = (key: string, version: number): Reply => ({ status: 201, body: { issue: { key } }, etag: `"${version}"` });
+const LOST = new TypeError("fetch failed");
 
 const HAPPY: Reply[] = [
   { status: 200, text: "<html>sign in</html>" },
@@ -21,17 +22,22 @@ const HAPPY: Reply[] = [
   story("LCK-1", 1),
   story("LCK-1", 1),
   refused(409, "idempotency_key_reused", "That Idempotency-Key was used with another body"),
-  refused(412, "stale", "LCK-1 is at version 1, not 2"),
   story("LCK-1", 2),
+  refused(412, "stale", "LCK-1 is at version 2"),
+  story("LCK-1", 3),
   refused(409, "rule_refused", "live-check already has LCK-1 In Progress; finish it first"),
   refused(409, "rule_refused", "Can't move LCK-1 to Done: open — no proof link"),
   story("LCK-1", 5),
 ];
 
-function stubFetch(replies: Reply[]) {
+function stubFetch(replies: (Reply | Error)[]) {
   const queue = [...replies];
   const fetchMock = vi.fn(async () => {
-    const { status, body, etag, text } = queue.shift() ?? ok({});
+    const reply = queue.shift() ?? ok({});
+    if (reply instanceof Error) {
+      throw reply;
+    }
+    const { status, body, etag, text } = reply;
     const payload = text ?? JSON.stringify(body);
     return new Response(status === 405 ? null : payload, { status, headers: etag ? { ETag: etag } : {} });
   });
@@ -113,14 +119,19 @@ describe("live-check", () => {
     expect(reuse.headers.get("Idempotency-Key")).toBe(create.headers.get("Idempotency-Key"));
     expect(reuse.body).not.toEqual(create.body);
 
-    const stale = call(fetchMock, 7);
+    const advance = call(fetchMock, 7);
+    const stale = call(fetchMock, 8);
+    expect(advance).toMatchObject({ url: "http://convex.test:3211/api/v1/issues/LCK-1", method: "PATCH", body: { priority: "low" } });
+    expect(advance.headers.get("If-Match")).toBe('"1"');
     expect(stale).toMatchObject({ url: "http://convex.test:3211/api/v1/issues/LCK-1", method: "PATCH" });
-    expect(stale.headers.get("If-Match")).toBe('"2"');
+    expect(stale.headers.get("If-Match")).toBe('"1"');
+    expect(stale.body).not.toEqual(advance.body);
+    expect(stale.headers.get("Idempotency-Key")).not.toBe(advance.headers.get("Idempotency-Key"));
 
-    expect(call(fetchMock, 8).body).toMatchObject({ status: "in_progress", assignee: "live-check" });
-    expect(call(fetchMock, 9).body).toMatchObject({ teamKey: "LCK", status: "in_progress", assignee: "live-check" });
-    expect(call(fetchMock, 10).body).toMatchObject({ status: "done" });
-    expect(call(fetchMock, 11)).toMatchObject({ url: "http://convex.test:3211/api/v1/issues/LCK-1", method: "PATCH", body: { status: "canceled" } });
+    expect(call(fetchMock, 9).body).toMatchObject({ status: "in_progress", assignee: "live-check" });
+    expect(call(fetchMock, 10).body).toMatchObject({ teamKey: "LCK", status: "in_progress", assignee: "live-check" });
+    expect(call(fetchMock, 11).body).toMatchObject({ status: "done" });
+    expect(call(fetchMock, 12)).toMatchObject({ url: "http://convex.test:3211/api/v1/issues/LCK-1", method: "PATCH", body: { status: "canceled" } });
   });
 
   it.each([
@@ -130,9 +141,10 @@ describe("live-check", () => {
     ["agent-create", 4, refused(409, "rule_refused", "nope")],
     ["replay", 5, story("LCK-2", 2)],
     ["key-reuse", 6, story("LCK-1", 1)],
-    ["stale-if-match", 7, story("LCK-1", 3)],
-    ["wip-refusal", 9, refused(409, "rule_refused", "live-check already has LCK-9 In Progress; finish it first")],
-    ["done-gate", 10, story("LCK-1", 4)],
+    ["stale-if-match", 7, story("LCK-1", 1)],
+    ["stale-if-match", 8, story("LCK-1", 3)],
+    ["wip-refusal", 10, refused(409, "rule_refused", "live-check already has LCK-9 In Progress; finish it first")],
+    ["done-gate", 11, story("LCK-1", 4)],
   ])("fails %s when its answer is wrong, and the rest still run", async (name, index, wrong) => {
     const replies = [...HAPPY];
     replies[index] = wrong;
@@ -145,8 +157,8 @@ describe("live-check", () => {
 
   it("tidies up even when an earlier step failed, cancelling every story it created", async () => {
     const replies = [...HAPPY];
-    replies[9] = story("LCK-2", 1);
-    replies.splice(11, 1, story("LCK-1", 5), story("LCK-2", 2));
+    replies[10] = story("LCK-2", 1);
+    replies.splice(12, 1, story("LCK-1", 5), story("LCK-2", 2));
     const fetchMock = stubFetch(replies);
     const { code, out } = await check(["--team", "LCK"]);
     expect(out).toContain(out.find((line) => line.startsWith("FAIL wip-refusal")));
@@ -154,6 +166,30 @@ describe("live-check", () => {
     const cancels = fetchMock.mock.calls.map((_, index) => call(fetchMock, index)).filter((request) => request.body?.status === "canceled");
     expect(cancels.map((request) => request.url)).toEqual(["http://convex.test:3211/api/v1/issues/LCK-1", "http://convex.test:3211/api/v1/issues/LCK-2"]);
     expect(code).toBe(EXIT_CODES.refused.code);
+  });
+
+  it("asks once more with the same key when the create's answer is lost, and cancels the story it made", async () => {
+    const replies = [...HAPPY.slice(0, 4), { status: 502, text: "" }, story("LCK-1", 1), HAPPY[6], story("LCK-1", 2)];
+    const fetchMock = stubFetch(replies);
+    const { code, out } = await check(["--team", "LCK"]);
+    expect(out[2]).toMatch(/^FAIL agent-create .*502/);
+    const [create, retry] = [call(fetchMock, 4), call(fetchMock, 5)];
+    expect(retry).toMatchObject({ url: create.url, method: "POST", body: create.body });
+    expect(retry.headers.get("Idempotency-Key")).toBe(create.headers.get("Idempotency-Key"));
+    expect(call(fetchMock, 7)).toMatchObject({ url: "http://convex.test:3211/api/v1/issues/LCK-1", body: { status: "canceled" } });
+    expect(out.at(-1)).toMatch(/^PASS tidy-up canceled LCK-1$/);
+    expect(code).toBe(EXIT_CODES.refused.code);
+  });
+
+  it("recovers the key when a refusal step's create was made but its answer was lost", async () => {
+    const replies = [...HAPPY.slice(0, 10), LOST, story("LCK-2", 1), HAPPY[11], story("LCK-1", 5), story("LCK-2", 2)];
+    const fetchMock = stubFetch(replies);
+    const { out } = await check(["--team", "LCK"]);
+    expect(out.find((line) => line.startsWith("FAIL wip-refusal"))).toContain("fetch failed");
+    const [second, retry] = [call(fetchMock, 10), call(fetchMock, 11)];
+    expect(retry).toMatchObject({ url: second.url, method: "POST", body: second.body });
+    expect(retry.headers.get("Idempotency-Key")).toBe(second.headers.get("Idempotency-Key"));
+    expect(out.at(-1)).toMatch(/^PASS tidy-up canceled LCK-1, LCK-2$/);
   });
 
   it.each([

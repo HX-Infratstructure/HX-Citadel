@@ -1,16 +1,14 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { MCP_TOOL_NAMES } from "../lib/mcp/tools";
 import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
+import http from "./http";
+import { parseIssuePath } from "./lib/httpApi";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
-const agentSurfaces = import.meta.glob(["./http.ts", "./agentApi.ts", "../lib/mcp/tools.ts"], {
-  query: "?raw",
-  import: "default",
-  eager: true,
-}) as Record<string, string>;
 
 const ORG_CLAIM = "org_test";
 
@@ -169,9 +167,10 @@ describe("owner revert from the activity log", () => {
   });
 
   test("an agent can't reach it: no REST route and no MCP tool", () => {
-    expect(Object.keys(agentSurfaces)).toHaveLength(3);
-    for (const source of Object.values(agentSurfaces)) {
-      expect(source).not.toMatch(/revert/i);
-    }
+    const paths = http.getRoutes().map(([path]) => path);
+    expect(paths).toContain("/api/v1/issues");
+    expect(paths.filter((path) => /revert/i.test(path))).toEqual([]);
+    expect(() => parseIssuePath("/api/v1/issues/ENG-1/revert")).toThrow(/No route for/);
+    expect(MCP_TOOL_NAMES.filter((name) => /revert/i.test(name))).toEqual([]);
   });
 });

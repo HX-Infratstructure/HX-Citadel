@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, MutationCtx, QueryCtx } from "./_generated/server";
 import { formatIssueKey, parseIssueKey } from "../lib/issue-key";
@@ -7,7 +7,6 @@ import {
   createIssue as createIssueWithRules,
   getOrgIssue,
   issueShape,
-  listTeamIssues,
   setIssueProof,
   updateIssue as updateIssueWithRules,
 } from "./issues";
@@ -19,7 +18,7 @@ import {
   resolveAgentScope,
 } from "./lib/orgScope";
 import { expireKeys, idempotencyValidator, Idempotency, withIdempotency } from "./lib/idempotency";
-import { assertIfMatch, issueVersion } from "./lib/issueVersion";
+import { assertIfMatch, issueVersion, StaleData } from "./lib/issueVersion";
 import {
   askDecision as askDecisionWithRules,
   decisionValidator,
@@ -112,6 +111,9 @@ export const createIssue = internalMutation({
   handler: (ctx, { agentName, idempotency, teamKey, parentKey, assignee, ifMatch, ...fields }) =>
     agentWrite(ctx, agentName, idempotency, async (scope) => {
       const team = await findTeamByKey(ctx, scope.org._id, teamKey);
+      if (ifMatch !== undefined && parentKey === undefined) {
+        throw new ConvexError<StaleData>({ code: "stale", message: "If-Match needs a parentKey; a new story has no version to check" });
+      }
       const parent = parentKey === undefined ? null : (await findIssueByKey(ctx, scope.org._id, parentKey)).issue;
       if (parent !== null && parentKey !== undefined) {
         assertIfMatch(parent, parentKey, ifMatch);
@@ -177,6 +179,9 @@ const listedIssue = v.object({
   version: v.number(),
 });
 
+/** The newest matching issues a list returns; filters apply before the limit. */
+const LIST_LIMIT = 500;
+
 export const listIssues = internalQuery({
   args: {
     agentName: v.string(),
@@ -192,19 +197,34 @@ export const listIssues = internalQuery({
     if (assigneeId === null) {
       return { issues: [] };
     }
-    const all = await listTeamIssues(ctx, org._id, team._id);
-    const byId = new Map(all.map((issue) => [issue._id, issue]));
-    const matches = all.filter(
-      (issue) => (status === undefined || issue.status === status) && (assigneeId === undefined || issue.assigneeId === assigneeId)
-    );
+    const matches = await ctx.db
+      .query("issues")
+      .withIndex("by_team", (q) => q.eq("teamId", team._id))
+      .order("desc")
+      // No index covers team plus an optional status and assignee; the filter runs before take, so no match is cut.
+      // eslint-disable-next-line @convex-dev/no-filter-in-query
+      .filter((q) =>
+        q.and(
+          q.or(status === undefined, q.eq(q.field("status"), status)),
+          q.or(assigneeId === undefined, q.eq(q.field("assigneeId"), assigneeId))
+        )
+      )
+      .take(LIST_LIMIT);
+    const parents = new Map<Id<"issues">, Promise<Doc<"issues"> | null>>();
+    const parentOf = (parentId: Id<"issues">) => {
+      if (!parents.has(parentId)) {
+        parents.set(parentId, ctx.db.get(parentId));
+      }
+      return parents.get(parentId)!;
+    };
     const issues = await Promise.all(
       matches.map(async (issue) => {
-        const parent = issue.parentIssueId === undefined ? undefined : byId.get(issue.parentIssueId);
+        const parent = issue.parentIssueId === undefined ? null : await parentOf(issue.parentIssueId);
         const user = issue.assigneeId === undefined ? null : await ctx.db.get(issue.assigneeId);
         return {
           ...withKey(issue, team.key, parent?.number),
           assignee: user?.name ?? null,
-          parentKey: parent === undefined ? null : formatIssueKey(team.key, parent),
+          parentKey: parent === null ? null : formatIssueKey(team.key, parent),
         };
       })
     );

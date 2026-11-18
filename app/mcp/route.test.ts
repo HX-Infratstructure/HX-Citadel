@@ -60,6 +60,15 @@ describe("/mcp", () => {
     expect(JSON.parse(init.body as string)).toEqual({ teamKey: "HX", title: "T" });
   });
 
+  it("forwards create_issue's ifMatch as If-Match, the parent's version check", async () => {
+    const args = { teamKey: "HX", title: "T", parentKey: "HX-3", ifMatch: 4, idempotencyKey: "k-2" };
+    await POST(rpc("tools/call", { name: "create_issue", arguments: args }));
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(new Headers(init.headers).get("If-Match")).toBe('"4"');
+    expect(JSON.parse(init.body as string)).toEqual({ teamKey: "HX", title: "T", parentKey: "HX-3" });
+  });
+
   it("rejects a request without X-Agent-Id with actor_required, and no tool runs", async () => {
     const response = await POST(rpc("tools/call", { name: "get_issue", arguments: { key: "HX-1" } }, {}));
     expect(response.status).toBe(400);

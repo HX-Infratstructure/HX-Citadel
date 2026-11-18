@@ -71,6 +71,47 @@ describe("internal.agentApi.createIssue", () => {
     await t.mutation(internal.agentApi.createIssue, { ...args, title: "First" });
     await expect(t.mutation(internal.agentApi.createIssue, { ...args, title: "Second" })).rejects.toThrow(WIP_REFUSAL);
   });
+
+  test("If-Match on a story create, with no parent to check, is refused and creates nothing", async () => {
+    const t = await setup();
+    await expect(
+      t.mutation(internal.agentApi.createIssue, { agentName: "cc1", teamKey: "ENG", title: "Story", ifMatch: 1 })
+    ).rejects.toThrow("If-Match needs a parentKey");
+    expect(await t.run(async (ctx) => (await ctx.db.query("issues").collect()).length)).toBe(0);
+  });
+});
+
+describe("internal.agentApi.listIssues past the newest 500 issues", () => {
+  async function fill(t: T, count: number) {
+    await t.run(async (ctx) => {
+      const { orgId, teamId, creatorId } = (await ctx.db.query("issues").first())!;
+      for (let i = 0; i < count; i++) {
+        const filler = { orgId, teamId, creatorId, kind: "story", number: 1000 + i, sortOrder: i } as const;
+        await ctx.db.insert("issues", { ...filler, title: "Filler", status: "todo", priority: "none" });
+      }
+    });
+  }
+
+  test("an assignee filter finds a match older than the newest 500 issues", async () => {
+    const t = await setup();
+    await t.mutation(internal.agentApi.createIssue, { agentName: "cc1", teamKey: "ENG", title: "Old", assignee: "cc1" });
+    await fill(t, 501);
+    const { issues } = await t.query(internal.agentApi.listIssues, { agentName: "cc1", teamKey: "ENG", assignee: "me" });
+    expect(issues.map((issue) => issue.key).sort()).toEqual(["ENG-1", "ENG-1.1"]);
+  });
+
+  test("a recent sub-task keeps its parentKey when its story is older than the newest 500 issues", async () => {
+    const t = await setup();
+    await t.mutation(internal.agentApi.createIssue, { agentName: "cc1", teamKey: "ENG", title: "Old story" });
+    await fill(t, 501);
+    await t.fetch("/api/v1/issues/ENG-1/subtasks", {
+      method: "POST",
+      headers: { "X-Agent-Id": "cc1", ...freshKey() },
+      body: JSON.stringify({ title: "Recent sub-task" }),
+    });
+    const { issues } = await t.query(internal.agentApi.listIssues, { agentName: "cc1", teamKey: "ENG" });
+    expect(issues).toContainEqual(expect.objectContaining({ key: "ENG-1.2", parentKey: "ENG-1" }));
+  });
 });
 
 describe("REST /api/v1/issues", () => {
@@ -196,6 +237,7 @@ describe("REST P3.2b routes", () => {
     await post(t, { teamKey: "ENG", title: "Mine", assignee: "cc1" }, "cc1");
     await post(t, { teamKey: "ENG", title: "Mine", assignee: "cc1" }, "cc1");
     await post(t, { teamKey: "ENG", title: "Other" }, "cc1");
+    await post(t, { teamKey: "ENG", title: "Parked", assignee: "cc1", status: "backlog" }, "cc1");
     const all = await send(t, "GET", "?team=ENG");
     expect(all.status).toBe(200);
     const { issues } = await all.json();
@@ -206,7 +248,10 @@ describe("REST P3.2b routes", () => {
       ["ENG-1.1", "cc1"],
       ["ENG-2", "cc1"],
       ["ENG-2.1", "cc1"],
+      ["ENG-4.1", "cc1"],
     ]);
+    const assigned = await (await send(t, "GET", "?team=ENG&assignee=me")).json();
+    expect(assigned.issues.map((issue: { key: string }) => issue.key)).toContain("ENG-4");
     expect(await failure(await send(t, "GET", "?team=ENG", undefined, {}))).toEqual({ status: 400, code: "actor_required" });
   });
 
@@ -244,17 +289,21 @@ describe("REST P3.2b routes", () => {
     });
   });
 
-  test("POST comments is 201 with the comment, authored and logged by the agent", async () => {
+  test("POST comments is 201 with the comment, authored and logged by the commenting agent", async () => {
     const t = await setup();
-    const { issue } = await (await post(t, { teamKey: "ENG", title: "Story" }, "cc1")).json();
-    const response = await send(t, "POST", "/ENG-1/comments", { body: "Started" });
+    await post(t, { teamKey: "ENG", title: "Story" }, "cc1");
+    const response = await send(t, "POST", "/ENG-1/comments", { body: "Started" }, { "X-Agent-Id": "cc2" });
     expect(response.status).toBe(201);
     const { comment } = await response.json();
-    expect(comment).toMatchObject({ body: "Started", authorId: issue.creatorId });
-    const activity = await t.run(async (ctx) =>
-      (await ctx.db.query("activity").collect()).filter((row) => row.type === "commented")
-    );
-    expect(activity.map((row) => row.actorId)).toEqual([issue.creatorId]);
+    const { commenter, activity } = await t.run(async (ctx) => ({
+      commenter: await ctx.db
+        .query("users")
+        .withIndex("by_clerk_id", (q) => q.eq("clerkId", "agent:cc2"))
+        .unique(),
+      activity: (await ctx.db.query("activity").collect()).filter((row) => row.type === "commented"),
+    }));
+    expect(comment).toMatchObject({ body: "Started", authorId: commenter!._id });
+    expect(activity.map((row) => row.actorId)).toEqual([commenter!._id]);
     expect(await failure(await send(t, "POST", "/ENG-9/comments", { body: "x" }))).toEqual({ status: 404, code: "not_found" });
   });
 

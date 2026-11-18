@@ -48,5 +48,7 @@ export async function main(argv: string[], env: Env, io: Io): Promise<number> {
 }
 
 if (process.argv[1]?.endsWith("live-check.ts")) {
-  void main(process.argv.slice(2), process.env, { out: console.log, err: console.error }).then((code) => process.exit(code));
+  void main(process.argv.slice(2), process.env, { out: console.log, err: console.error }).then((code) => {
+    process.exitCode = code;
+  });
 }

@@ -70,7 +70,7 @@ describe("parseIssuePath", () => {
   });
 
   test("an unknown sub-path or extra segment is 404 not_found", () => {
-    for (const path of ["/api/v1/issues/ENG-1/nope", "/api/v1/issues/ENG-1/proof/x", "/api/v1/issues/"]) {
+    for (const path of ["/api/v1/issues/ENG-1/nope", "/api/v1/issues/ENG-1/proof/x", "/api/v1/issues/", "/api/v1/issues/ENG-%E0%A4%A"]) {
       expect(toHttpError(captured(() => parseIssuePath(path)))).toMatchObject({ status: 404, body: { code: "not_found" } });
     }
   });

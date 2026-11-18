@@ -75,14 +75,24 @@ function idempotencyKey({ io, write }: Context): string {
   return key;
 }
 
-/** Read-modify-write: the issue's current version goes out as If-Match, unless `--no-if-match`. */
+type ReadIssue = { version?: unknown; issue?: { version?: unknown } };
+
+function isVersion(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+/** Read-modify-write: the issue's current version (the ETag, else the body's) goes out as If-Match, unless `--no-if-match`. */
 async function editOptions(context: Context, key: string): Promise<WriteOptions> {
   const options: WriteOptions = { idempotencyKey: idempotencyKey(context) };
   if (!context.write.ifMatch) {
     return options;
   }
-  const { version } = await context.api.get(issuePath(key));
-  return { ...options, ifMatch: typeof version === "number" ? version : undefined };
+  const read = (await context.api.get(issuePath(key))) as ReadIssue;
+  const version = isVersion(read.version) ? read.version : read.issue?.version;
+  if (!isVersion(version)) {
+    throw new Error(`${key} returned no version to send as If-Match; nothing was written. Pass --no-if-match to write without it`);
+  }
+  return { ...options, ifMatch: version };
 }
 
 async function edit(context: Context, key: string, method: "POST" | "PATCH", path: string, body: ApiBody): Promise<ApiBody> {
@@ -98,7 +108,7 @@ export const commands = {
 
   get: ({ api }, args) => api.get(issuePath(required(args, "key", "KEY"))),
 
-  create: (context, args) => {
+  create: async (context, args) => {
     const body = {
       teamKey: required(args, "team", "--team KEY"),
       title: required(args, "title", "--title T"),
@@ -109,7 +119,8 @@ export const commands = {
       parentKey: args.parent,
       assignee: args.assignee,
     };
-    return context.api.write("POST", issuePath(), body, { idempotencyKey: idempotencyKey(context) });
+    const options = args.parent ? await editOptions(context, args.parent) : { idempotencyKey: idempotencyKey(context) };
+    return context.api.write("POST", issuePath(), body, options);
   },
 
   update: (context, args) => {

@@ -56,17 +56,44 @@ describe("hx-citadel", () => {
     expect(call(fetchMock, 0)).toMatchObject({ url: `${API}/api/v1/issues/HX-1.2`, method: "GET" });
   });
 
-  it("create maps its flags to the REST body and sends no If-Match", async () => {
-    const fetchMock = stubFetch({ status: 201, body: issue });
+  it("create --parent maps its flags to the REST body and sends the parent's version as If-Match", async () => {
+    const fetchMock = stubFetch({ status: 200, body: issue, etag: '"7"' }, { status: 201, body: issue });
     const args = ["create", "--team", "HX", "--title", "Ship it", "--kind", "story", "--priority", "high", "--parent", "HX-0", "--assignee", "cc1"];
     const result = await cli(args);
 
     expect(result.code).toBe(0);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const sent = call(fetchMock, 0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(call(fetchMock, 0)).toMatchObject({ url: `${API}/api/v1/issues/HX-0`, method: "GET" });
+    const sent = call(fetchMock, 1);
     expect(sent).toMatchObject({ url: `${API}/api/v1/issues`, method: "POST" });
     expect(sent.body).toEqual({ teamKey: "HX", title: "Ship it", kind: "story", priority: "high", parentKey: "HX-0", assignee: "cc1" });
-    expect(sent.headers.has("If-Match")).toBe(false);
+    expect(sent.headers.get("If-Match")).toBe('"7"');
+  });
+
+  it("create without --parent sends no read and no If-Match", async () => {
+    const fetchMock = stubFetch({ status: 201, body: issue });
+    const result = await cli(["create", "--team", "HX", "--title", "Ship it"]);
+
+    expect(result.code).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(call(fetchMock, 0).headers.has("If-Match")).toBe(false);
+  });
+
+  it("falls back to the body's issue.version for If-Match when the ETag is missing", async () => {
+    const fetchMock = stubFetch({ status: 200, body: issue }, { status: 201, body: issue });
+    const result = await cli(["comment", "HX-1", "Started"]);
+
+    expect(result.code).toBe(0);
+    expect(call(fetchMock, 1).headers.get("If-Match")).toBe('"7"');
+  });
+
+  it("refuses to write when the read returns no version", async () => {
+    const fetchMock = stubFetch({ status: 200, body: { issue: { key: "HX-1" } } });
+    const result = await cli(["comment", "HX-1", "Started"]);
+
+    expect(result.code).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.err).toContain("--no-if-match");
   });
 
   it("update sends assignee none as null, after reading the version for If-Match", async () => {

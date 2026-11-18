@@ -83,9 +83,18 @@ const ISSUE_ACTIONS = ["proof", "comments", "subtasks", "decisions"] as const;
 export type IssueAction = (typeof ISSUE_ACTIONS)[number];
 export type IssuePath = { key: string; action: IssueAction | null };
 
-/** `/api/v1/issues/{key}` or `/api/v1/issues/{key}/{action}`; any other shape is 404. */
+/** The path segments after `/api/v1/issues/`, decoded; none when a percent escape is malformed. */
+function decodeSegments(pathname: string): string[] {
+  try {
+    return pathname.slice(ISSUES_PATH.length + 1).split("/").map(decodeURIComponent);
+  } catch {
+    return [];
+  }
+}
+
+/** `/api/v1/issues/{key}` or `/api/v1/issues/{key}/{action}`; any other shape, or a malformed escape, is 404. */
 export function parseIssuePath(pathname: string): IssuePath {
-  const [key, action, ...rest] = pathname.slice(ISSUES_PATH.length + 1).split("/").map(decodeURIComponent);
+  const [key, action, ...rest] = decodeSegments(pathname);
   const known = ISSUE_ACTIONS.find((candidate) => candidate === action);
   if (!key || rest.length > 0 || (action !== undefined && known === undefined)) {
     throw new HttpError(404, "not_found", `No route for ${pathname}`);
@@ -163,7 +172,7 @@ export function writeRoute(handle: (ctx: ActionCtx, request: Request, write: Wri
     const key = readIdempotencyKey(request);
     const body = await readJsonObject(request);
     const ifMatch = readIfMatch(request);
-    const requestHash = await hashRequest(`${request.method} ${new URL(request.url).pathname}`, body, ifMatch);
+    const requestHash = await hashRequest(`${request.method} ${new URL(request.url).pathname}`, body);
     return await handle(ctx, request, { body, fields: { agentName, ifMatch, idempotency: { key, requestHash } } });
   });
 }

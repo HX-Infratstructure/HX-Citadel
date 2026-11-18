@@ -19,7 +19,7 @@ const HOOK_NAME = "pre-push";
 const CLI_PATH = path.resolve(__dirname, "hx-citadel.ts");
 const TSX_PATH = path.resolve(__dirname, "..", "node_modules", ".bin", "tsx");
 
-type PushedRef = { localSha: string; remoteSha: string };
+type PushedRef = { localSha: string; remoteRef: string; remoteSha: string };
 type CommitComment = { key: string; sha: string; body: string };
 
 function canonicalKey({ teamKey, number, subNumber }: ParsedIssueKey): string | null {
@@ -59,7 +59,7 @@ export function commentText(sha: string, subject: string, url: string): string {
   return `commit ${sha.slice(0, SHORT_SHA_LENGTH)} ${subject} ${url}`;
 }
 
-/** A re-push of the same commit replays this comment instead of adding another. */
+/** A re-push of the same commit within the server's idempotency window (`IDEMPOTENCY_TTL_MS`) replays this comment; after the window, it posts again. */
 export function commitIdempotencyKey(sha: string, key: string): string {
   return `commit-${sha}-${key}`;
 }
@@ -67,7 +67,7 @@ export function commitIdempotencyKey(sha: string, key: string): string {
 /** Git's pre-push stdin: `<local ref> <local sha> <remote ref> <remote sha>` per line. */
 function pushedRefs(input: string): PushedRef[] {
   const lines = input.split("\n").map((line) => line.trim().split(/\s+/));
-  return lines.filter((fields) => fields.length === 4).map(([, localSha, , remoteSha]) => ({ localSha, remoteSha }));
+  return lines.filter((fields) => fields.length === 4).map(([, localSha, remoteRef, remoteSha]) => ({ localSha, remoteRef, remoteSha }));
 }
 
 function commitComments(git: GitRepo, origin: string, sha: string): CommitComment[] {
@@ -76,10 +76,19 @@ function commitComments(git: GitRepo, origin: string, sha: string): CommitCommen
   return storyKeys(message).map((key) => ({ key, sha, body }));
 }
 
-function pushedComments(git: GitRepo, refs: PushedRef[]): CommitComment[] {
-  const origin = git.originUrl();
-  const shas = refs.filter((ref) => !isZeroSha(ref.localSha)).flatMap((ref) => git.newCommits(ref.localSha, ref.remoteSha));
-  return [...new Set(shas)].flatMap((sha) => commitComments(git, origin, sha));
+/** A ref whose range git cannot read, such as a remote tip this checkout never fetched, is skipped with a warning. */
+function refCommits(git: GitRepo, ref: PushedRef, io: Io): string[] {
+  try {
+    return git.newCommits(ref.localSha, ref.remoteSha);
+  } catch (error) {
+    io.err(`${WARNING} skipped ${ref.remoteRef}: ${errorLine(error)}`);
+    return [];
+  }
+}
+
+function pushedComments(git: GitRepo, refs: PushedRef[], remoteUrl: string, io: Io): CommitComment[] {
+  const shas = refs.filter((ref) => !isZeroSha(ref.localSha)).flatMap((ref) => refCommits(git, ref, io));
+  return [...new Set(shas)].flatMap((sha) => commitComments(git, remoteUrl, sha));
 }
 
 async function post(api: CitadelApi, { key, sha, body }: CommitComment, io: Io): Promise<void> {
@@ -94,19 +103,20 @@ async function post(api: CitadelApi, { key, sha, body }: CommitComment, io: Io):
 function hookOptions(argv: string[]) {
   const options = { repo: { type: "string" }, agent: { type: "string" }, force: { type: "boolean" } } as const;
   try {
-    return parseArgs({ args: argv, options, allowPositionals: true, strict: true }).values;
+    return parseArgs({ args: argv, options, allowPositionals: true, strict: true });
   } catch (error) {
     throw new UsageError(errorLine(error));
   }
 }
 
-/** Git passes `<remote name> <remote url>` as arguments, which this ignores; any failure is a warning, never a blocked push. */
+/** Git passes `<remote name> <remote url>`; links use that url, else origin's. Any failure is a warning, never a blocked push. */
 async function prePush(argv: string[], env: Env, io: Io): Promise<number> {
   try {
     const input = io.input ? await io.input() : "";
-    const options = hookOptions(argv);
+    const { values: options, positionals } = hookOptions(argv);
     const api = connect(options.agent, env);
-    const comments = pushedComments(new GitRepo(options.repo ?? process.cwd()), pushedRefs(input));
+    const git = new GitRepo(options.repo ?? process.cwd());
+    const comments = pushedComments(git, pushedRefs(input), positionals[1] ?? git.originUrl(), io);
     for (const comment of comments) {
       await post(api, comment, io);
     }
@@ -133,7 +143,7 @@ function isFileExists(error: unknown): boolean {
 }
 
 async function install(argv: string[], _env: Env, io: Io): Promise<number> {
-  const options = hookOptions(argv);
+  const { values: options } = hookOptions(argv);
   const target = new GitRepo(options.repo ?? process.cwd()).hookPath(HOOK_NAME);
   mkdirSync(path.dirname(target), { recursive: true });
   try {

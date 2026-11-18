@@ -1,7 +1,7 @@
 "use client";
 
 import { errorMessage } from "@/lib/error-message";
-import { isValidTeamKey, suggestTeamKey, TEAM_KEY_RULE } from "@/lib/issue-key";
+import { isValidTeamKey, normalizeTeamKey, suggestTeamKey, TEAM_KEY_RULE } from "@/lib/issue-key";
 import { useMutation } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -29,7 +29,8 @@ export function CreateTeamDialog({
   const [key, setKey] = useState("");
   const [keyTouched, setKeyTouched] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const keyValid = isValidTeamKey(key);
+  const normalizedKey = normalizeTeamKey(key);
+  const keyValid = isValidTeamKey(normalizedKey);
 
   const handleNameChange = (value: string) => {
     setName(value);
@@ -44,7 +45,7 @@ export function CreateTeamDialog({
     }
     setSubmitting(true);
     try {
-      await createTeam({ name, key });
+      await createTeam({ name, key: normalizedKey });
       toast.success(`Team ${name} created`);
       onOpenChange(false);
       setName("");
@@ -92,7 +93,7 @@ export function CreateTeamDialog({
               }}
             />
             <p className="text-xs text-muted-foreground">
-              Issues will be numbered {key || "ENG"}-1, {key || "ENG"}-2, …
+              Issues will be numbered {normalizedKey || "ENG"}-1, {normalizedKey || "ENG"}-2, …
             </p>
             {key && !keyValid && <p className="text-xs text-destructive">{TEAM_KEY_RULE}</p>}
           </div>

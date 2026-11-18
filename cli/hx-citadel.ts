@@ -103,5 +103,7 @@ export async function run(argv: string[], env: Env, io: Io): Promise<number> {
 // Runs only as the `pnpm citadel` entry, not when a test imports `run`.
 if (process.argv[1]?.endsWith("hx-citadel.ts")) {
   const input = () => readText(process.stdin);
-  void run(process.argv.slice(2), process.env, { out: console.log, err: console.error, input }).then((code) => process.exit(code));
+  void run(process.argv.slice(2), process.env, { out: console.log, err: console.error, input }).then((code) => {
+    process.exitCode = code;
+  });
 }

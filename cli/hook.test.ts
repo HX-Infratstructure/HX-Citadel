@@ -45,6 +45,7 @@ function tempRepo(origin = HTTPS_ORIGIN) {
   git("config", "user.email", "test@example.invalid");
   git("config", "user.name", "Test");
   git("config", "commit.gpgsign", "false");
+  git("config", "core.hooksPath", path.join(dir, ".git", "hooks"));
   git("remote", "add", "origin", origin);
   const commit = (message: string) => {
     git("commit", "-q", "--allow-empty", "-m", message);
@@ -120,6 +121,27 @@ describe("hx-citadel hook pre-push", () => {
     ]);
   });
 
+  it("links each commit under the push destination Git passes, not origin", async () => {
+    const fetchMock = stubFetch();
+    const { dir, base, second } = pushedRepo();
+    const fork = "https://github.com/someone/HX-Citadel-fork.git";
+    const result = await hook(["pre-push", "--repo", dir, "fork", fork], `refs/heads/main ${second} refs/heads/main ${base}\n`);
+
+    expect(result.code).toBe(0);
+    expect(calls(fetchMock).at(-1)?.body).toBe(`commit ${second.slice(0, 7)} HX-1 follow-up https://github.com/someone/HX-Citadel-fork/commit/${second}`);
+  });
+
+  it("warns about a ref whose remote tip is not local and still comments the other refs", async () => {
+    const fetchMock = stubFetch();
+    const { dir, base, first, second } = pushedRepo();
+    const input = `refs/heads/main ${second} refs/heads/gone ${"b".repeat(40)}\nrefs/heads/main ${second} refs/heads/main ${base}\n`;
+    const result = await hook(["pre-push", "--repo", dir], input);
+
+    expect(result.code).toBe(0);
+    expect(calls(fetchMock).map((entry) => entry.key)).toEqual([`commit-${first}-HX-1`, `commit-${first}-HX-2.1`, `commit-${second}-HX-1`]);
+    expect(result.err).toContain("refs/heads/gone");
+  });
+
   it("on a new branch posts only the commits no remote branch has", async () => {
     const fetchMock = stubFetch();
     const { dir, first, second } = pushedRepo();
@@ -181,6 +203,17 @@ describe("hx-citadel hook install", () => {
     const script = readFileSync(target, "utf8");
     expect(script).toContain(path.resolve(__dirname, "hx-citadel.ts"));
     expect(script).toContain("hook pre-push");
+  });
+
+  it("writes into core.hooksPath when the repository sets one", async () => {
+    const { dir, git } = tempRepo();
+    const hooksDir = path.join(dir, "custom-hooks");
+    git("config", "core.hooksPath", hooksDir);
+    const result = await hook(["install", "--repo", dir]);
+
+    expect(result.code).toBe(0);
+    expect(result.out).toBe(`Installed ${path.join(hooksDir, "pre-push")}`);
+    expect(readFileSync(path.join(hooksDir, "pre-push"), "utf8")).toContain("hook pre-push");
   });
 
   it("refuses to overwrite an existing hook without --force", async () => {

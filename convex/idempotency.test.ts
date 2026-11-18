@@ -1,7 +1,8 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
+import { EXPIRY_BATCH } from "./lib/idempotency";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -88,22 +89,39 @@ describe("Idempotency-Key", () => {
     expect(second.headers.get("ETag")).toBe('"2"');
   });
 
-  test("the same key with another body, route or If-Match is 409 idempotency_key_reused and applies nothing", async () => {
+  test("the same key with another body or route is 409 idempotency_key_reused and applies nothing", async () => {
     const t = await setup();
     await write(t, "POST", "", { teamKey: "ENG", title: "Once" }, keyed("k-1"));
     expect(await failure(await write(t, "POST", "", { teamKey: "ENG", title: "Other" }, keyed("k-1")))).toEqual({
       status: 409,
       code: "idempotency_key_reused",
     });
-    expect(await failure(await write(t, "POST", "/ENG-1/comments", { body: "hi" }, keyed("k-1")))).toEqual({
-      status: 409,
-      code: "idempotency_key_reused",
-    });
-    expect(await failure(await write(t, "POST", "", { teamKey: "ENG", title: "Once" }, keyed("k-1", { "If-Match": "1" })))).toEqual({
-      status: 409,
-      code: "idempotency_key_reused",
-    });
     expect(await storyCount(t)).toBe(1);
+  });
+
+  test("the same key, body, actor and If-Match on another story's path is 409 and leaves that story unchanged", async () => {
+    const t = await setup();
+    await write(t, "POST", "", { teamKey: "ENG", title: "First" }, keyed("create-1"));
+    await write(t, "POST", "", { teamKey: "ENG", title: "Second" }, keyed("create-2"));
+    const edit = { title: "Renamed" };
+    expect((await write(t, "PATCH", "/ENG-1", edit, keyed("rename", { "If-Match": "1" }))).status).toBe(200);
+    expect(await failure(await write(t, "PATCH", "/ENG-2", edit, keyed("rename", { "If-Match": "1" })))).toEqual({
+      status: 409,
+      code: "idempotency_key_reused",
+    });
+    const second = await (await t.fetch("/api/v1/issues/ENG-2", { headers: { "X-Agent-Id": "cc1" } })).json();
+    expect([second.issue.title, second.issue.version]).toEqual(["Second", 1]);
+  });
+
+  test("a retried edit with the same key replays the stored result after the version advanced", async () => {
+    const t = await setup();
+    await write(t, "POST", "", { teamKey: "ENG", title: "Story" }, keyed("create"));
+    const first = await write(t, "PATCH", "/ENG-1", { title: "Renamed" }, keyed("rename", { "If-Match": "1" }));
+    const retry = await write(t, "PATCH", "/ENG-1", { title: "Renamed" }, keyed("rename", { "If-Match": "2" }));
+    expect(retry.status).toBe(first.status);
+    expect(await retry.json()).toEqual(await first.json());
+    const current = await (await t.fetch("/api/v1/issues/ENG-1", { headers: { "X-Agent-Id": "cc1" } })).json();
+    expect(current.issue.version).toBe(2);
   });
 
   test("the same key from a different agent is 409 and never returns the first agent's result", async () => {
@@ -161,5 +179,24 @@ describe("Idempotency-Key", () => {
     await t.mutation(internal.agentApi.expireIdempotencyKeys, {});
     const left = await t.run(async (ctx) => (await ctx.db.query("idempotencyKeys").collect()).map((row) => row.key));
     expect(left).toEqual(["new"]);
+  });
+
+  test("the cleanup deletes one bounded batch per run and schedules the next until none is left", async () => {
+    vi.useFakeTimers();
+    const t = await setup();
+    await write(t, "POST", "", { teamKey: "ENG", title: "Seed" }, keyed("seed"));
+    await t.run(async (ctx) => {
+      const seed = (await ctx.db.query("idempotencyKeys").collect())[0];
+      await ctx.db.patch(seed._id, { createdAt: 0 });
+      for (let index = 0; index < EXPIRY_BATCH; index++) {
+        await ctx.db.insert("idempotencyKeys", { orgId: seed.orgId, agentId: seed.agentId, key: `old-${index}`, requestHash: "h", body: null, createdAt: 0 });
+      }
+    });
+    const count = () => t.run(async (ctx) => (await ctx.db.query("idempotencyKeys").collect()).length);
+    expect(await t.mutation(internal.agentApi.expireIdempotencyKeys, {})).toBe(EXPIRY_BATCH);
+    expect(await count()).toBe(1);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await count()).toBe(0);
+    vi.useRealTimers();
   });
 });

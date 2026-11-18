@@ -55,10 +55,16 @@ export class CitadelApi {
     if (!response.ok) {
       throw apiError(response.status, payload);
     }
+    if (!isApiBody(payload)) {
+      throw new CitadelApiError("server_error", `The REST API answered ${response.status} without a JSON object, so the ${method} ${path} result is unconfirmed`);
+    }
     const version = Number(response.headers.get("ETag")?.replace(/^"(.*)"$/, "$1"));
-    const result = payload as ApiBody;
-    return Number.isInteger(version) && version > 0 ? { ...result, version } : result;
+    return Number.isInteger(version) && version > 0 ? { ...payload, version } : payload;
   }
+}
+
+function isApiBody(payload: unknown): payload is ApiBody {
+  return typeof payload === "object" && payload !== null && !Array.isArray(payload);
 }
 
 function siteUrl(): string {

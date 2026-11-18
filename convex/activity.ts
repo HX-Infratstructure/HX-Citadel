@@ -43,12 +43,13 @@ export const listByIssue = orgQuery({
 
     const projectName = async (value: string): Promise<string | undefined> => {
       const projectId = ctx.db.normalizeId("projects", value);
-      return projectId ? (await ctx.db.get(projectId))?.name : undefined;
+      const project = projectId ? await ctx.db.get(projectId) : null;
+      return project?.orgId === ctx.org._id ? project.name : undefined;
     };
     const cycleName = async (value: string): Promise<string | undefined> => {
       const cycleId = ctx.db.normalizeId("cycles", value);
       const cycle = cycleId ? await ctx.db.get(cycleId) : null;
-      return cycle ? formatCycleName(cycle) : undefined;
+      return cycle?.orgId === ctx.org._id ? formatCycleName(cycle) : undefined;
     };
     const userName = async (value: string): Promise<string | undefined> => {
       const userId = ctx.db.normalizeId("users", value);
