@@ -3,7 +3,11 @@ import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
-import { assertValidParent, nextSubNumber } from "./lib/rules/levels";
+import {
+  assertValidParent,
+  cascadeProject,
+  nextSubNumber,
+} from "./lib/rules/levels";
 import {
   issueKindValidator,
   issuePriorityValidator,
@@ -147,7 +151,8 @@ export const create = orgMutation({
     if (args.parentIssueId) {
       await getOrgIssue(ctx, ctx.org._id, args.parentIssueId);
     }
-    const projectId = await assertValidParent(ctx, kind, {
+    const placement = await assertValidParent(ctx, kind, {
+      teamId: args.teamId,
       parentIssueId: args.parentIssueId,
       projectId: args.projectId,
     });
@@ -163,7 +168,7 @@ export const create = orgMutation({
 
     const issueId = await ctx.db.insert("issues", {
       orgId: ctx.org._id,
-      teamId: args.teamId,
+      teamId: placement.teamId,
       kind,
       type: storyType(kind, args.type),
       ...numbering,
@@ -173,7 +178,7 @@ export const create = orgMutation({
       priority: args.priority ?? "none",
       assigneeId: args.assigneeId,
       creatorId: ctx.user._id,
-      projectId,
+      projectId: placement.projectId,
       cycleId: args.cycleId,
       parentIssueId: args.parentIssueId,
       estimate: args.estimate,
@@ -242,10 +247,13 @@ export const update = orgMutation({
       });
     }
     if (args.projectId !== undefined) {
-      updates.projectId = await assertValidParent(ctx, issue.kind, {
+      const placement = await assertValidParent(ctx, issue.kind, {
+        teamId: issue.teamId,
         parentIssueId: issue.parentIssueId,
         projectId: args.projectId ?? undefined,
       });
+      updates.projectId = placement.projectId;
+      await cascadeProject(ctx, issue._id, placement.projectId);
     }
     if (args.cycleId !== undefined) {
       updates.cycleId = args.cycleId ?? undefined;

@@ -5,7 +5,11 @@ import { QueryCtx } from "./_generated/server";
 import { getOrgIssue } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
-import { assertValidParent, nextSubNumber } from "./lib/rules/levels";
+import {
+  assertValidParent,
+  cascadeProject,
+  nextSubNumber,
+} from "./lib/rules/levels";
 import {
   issuePriorityValidator,
   issueRelationTypeValidator,
@@ -353,7 +357,8 @@ export const setParent = orgMutation({
       }
       newParentIdentifier = await issueIdentifier(ctx, parent, teamCache);
     }
-    const projectId = await assertValidParent(ctx, issue.kind, {
+    const placement = await assertValidParent(ctx, issue.kind, {
+      teamId: issue.teamId,
       parentIssueId: args.parentIssueId ?? undefined,
       projectId: issue.projectId,
     });
@@ -368,9 +373,10 @@ export const setParent = orgMutation({
 
     await ctx.db.patch(issue._id, {
       parentIssueId: args.parentIssueId ?? undefined,
-      projectId,
+      projectId: placement.projectId,
       ...(await renumberedSubtask(ctx, issue.kind, args.parentIssueId)),
     });
+    await cascadeProject(ctx, issue._id, placement.projectId);
 
     await logActivity(ctx, {
       orgId: ctx.org._id,

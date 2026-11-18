@@ -4,6 +4,7 @@ import { QueryCtx } from "./_generated/server";
 import { issueShape } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { assertNoEpics } from "./lib/rules/levels";
 import { projectStatusValidator } from "./schema";
 
 export const projectShape = {
@@ -243,7 +244,7 @@ export const update = orgMutation({
   },
 });
 
-/** Delete a project and detach its issues (issues themselves are kept). */
+/** Delete a project with no epics and detach its issues (issues themselves are kept). */
 export const remove = orgMutation({
   args: { projectId: v.id("projects") },
   returns: v.null(),
@@ -254,6 +255,7 @@ export const remove = orgMutation({
       .query("issues")
       .withIndex("by_project", (q) => q.eq("projectId", project._id))
       .collect();
+    assertNoEpics(issues);
     for (const issue of issues) {
       if (issue.orgId !== ctx.org._id) {
         continue;

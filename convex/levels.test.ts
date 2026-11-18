@@ -50,7 +50,11 @@ async function setup() {
 
   const create = (
     kind: Kind,
-    placement: { parentIssueId?: Id<"issues">; projectId?: Id<"projects"> } = {}
+    placement: {
+      parentIssueId?: Id<"issues">;
+      projectId?: Id<"projects">;
+      teamId?: Id<"teams">;
+    } = {}
   ) =>
     asMember.mutation(api.issues.create, {
       teamId,
@@ -77,7 +81,27 @@ async function setup() {
       });
     });
 
-  return { t, asMember, teamId, projectId, create, tree, insertOtherProject };
+  const insertOtherTeam = () =>
+    t.run(async (ctx) => {
+      const team = await ctx.db.get(teamId);
+      return ctx.db.insert("teams", {
+        orgId: team!.orgId,
+        name: "Other",
+        key: "OTH",
+        nextIssueNumber: 1,
+      });
+    });
+
+  return {
+    t,
+    asMember,
+    teamId,
+    projectId,
+    create,
+    tree,
+    insertOtherProject,
+    insertOtherTeam,
+  };
 }
 
 describe("issue levels", () => {
@@ -216,6 +240,65 @@ describe("issue levels", () => {
         parentIssueId: feature,
       })
     ).rejects.toThrow("A story's project must match its feature's project");
+  });
+
+  test.each<[Kind, "epic" | "feature" | "story", string]>([
+    ["feature", "epic", "A feature's team must match its epic's team"],
+    ["story", "feature", "A story's team must match its feature's team"],
+    ["subtask", "story", "A subtask's team must match its story's team"],
+  ])("refuses a %s in another team than its %s", async (kind, parentKind, message) => {
+    const { create, insertOtherTeam, tree } = await setup();
+    const ids = await tree();
+    const otherTeam = await insertOtherTeam();
+
+    await expect(
+      create(kind, { parentIssueId: ids[parentKind], teamId: otherTeam })
+    ).rejects.toThrow(message);
+  });
+
+  test("refuses a reparent under a parent in another team", async () => {
+    const { asMember, create, insertOtherTeam } = await setup();
+    const story = await create("story");
+    const otherTeam = await insertOtherTeam();
+    const otherStory = await create("story", { teamId: otherTeam });
+    const subtask = await create("subtask", { parentIssueId: story });
+
+    await expect(
+      asMember.mutation(api.issueRelations.setParent, {
+        issueId: subtask,
+        parentIssueId: otherStory,
+      })
+    ).rejects.toThrow("A subtask's team must match its story's team");
+  });
+
+  test("an epic's project change reaches its feature, story and subtask", async () => {
+    const { asMember, insertOtherProject, tree } = await setup();
+    const { epic, feature, story, subtask } = await tree();
+    const newProject = await insertOtherProject();
+
+    await asMember.mutation(api.issues.update, { issueId: epic, projectId: newProject });
+
+    for (const issueId of [epic, feature, story, subtask]) {
+      expect((await asMember.query(api.issues.get, { issueId }))?.projectId).toBe(newProject);
+    }
+  });
+
+  test("refuses deleting a project that has an epic", async () => {
+    const { asMember, projectId, tree } = await setup();
+    await tree();
+
+    await expect(
+      asMember.mutation(api.projects.remove, { projectId })
+    ).rejects.toThrow("This project still has 1 epic");
+  });
+
+  test("deletes a project without epics and detaches its issues", async () => {
+    const { asMember, create, projectId } = await setup();
+    const story = await create("story", { projectId });
+
+    await asMember.mutation(api.projects.remove, { projectId });
+
+    expect((await asMember.query(api.issues.get, { issueId: story }))?.projectId).toBeUndefined();
   });
 
   test("getByNumber finds the story and ignores subtasks", async () => {
