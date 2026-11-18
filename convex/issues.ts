@@ -3,7 +3,6 @@ import { Doc, Id } from "./_generated/dataModel";
 import { QueryCtx } from "./_generated/server";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
-import { assertCanCreateIssue } from "./lib/limits";
 import { issuePriorityValidator, issueStatusValidator } from "./schema";
 
 export const issueShape = {
@@ -106,7 +105,6 @@ export const create = orgMutation({
     if (!team || team.orgId !== ctx.org._id) {
       throw new Error("Team not found");
     }
-    await assertCanCreateIssue(ctx, ctx.org);
 
     // Claim the next per-team issue number (ENG-1, ENG-2, ...).
     const number = team.nextIssueNumber;

@@ -24,17 +24,10 @@ Vector is the HX work tracker, a Linear-style multi-tenant app. It is built with
 
 ## Routes
 
-- Workspace routes live under `app/(app)/[orgSlug]/`: the home page, `team/[teamId]` and its `board`, `issue/[issueId]`, `projects` and `projects/[projectId]`, `cycles` and `cycles/[cycleId]`, `search` and `settings` with `billing` and `members`.
+- Workspace routes live under `app/(app)/[orgSlug]/`: the home page, `team/[teamId]` and its `board`, `issue/[issueId]`, `projects` and `projects/[projectId]`, `cycles` and `cycles/[cycleId]`, `search` and `settings` with `members`.
 - Read the slug with `useParams<{ orgSlug: string }>()`.
 - `components/shell/workspace-shell.tsx` makes sure the user and organization are synced before a workspace page renders.
 - Sign-in, sign-up and onboarding live under `app/sign-in`, `app/sign-up` and `app/onboarding`.
-
-## Billing gates (removed in step P1.3)
-
-- Plans are `free`, `pro` and `enterprise`, synced onto `ctx.org.plan` (`planValidator` in `convex/schema.ts`).
-- Convex enforces limits with the helpers in `convex/lib/limits.ts`: `assertCanCreateIssue`, `assertCanCreateProject`, `assertUnderSeatLimit` and `FREE_PLAN_LIMITS`.
-- The UI checks Clerk with `has({ plan: "pro" })` or `has({ feature: "ai_agent" })` from `useAuth()` or `auth()`, or with `<Show>`. UI checks are cosmetic. The Convex checks are the enforcement.
-- Plan IDs and features live in `lib/plans.ts`, never inline.
 
 ## Code standards
 

@@ -10,8 +10,7 @@ import { getMembershipOrThrow, getOrgByClerkIdOrThrow, getUserByClerkIdOrThrow }
  * dozen issues (with sub-issues, relations, comments and activity) so an
  * empty development org shows the app in full flight.
  *
- * Sized to stay inside FREE_PLAN_LIMITS by construction (2 projects = the
- * free cap, 43 issues < 100), so it never trips the limit helpers.
+ * Small by design: 2 projects and 43 issues.
  */
 
 const DAY = 24 * 60 * 60 * 1000;

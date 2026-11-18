@@ -21,7 +21,6 @@ import type * as labels from "../labels.js";
 import type * as lib_activity from "../lib/activity.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_customFunctions from "../lib/customFunctions.js";
-import type * as lib_limits from "../lib/limits.js";
 import type * as lib_mirror from "../lib/mirror.js";
 import type * as mirror from "../mirror.js";
 import type * as organizations from "../organizations.js";
@@ -54,7 +53,6 @@ declare const fullApi: ApiFromModules<{
   "lib/activity": typeof lib_activity;
   "lib/auth": typeof lib_auth;
   "lib/customFunctions": typeof lib_customFunctions;
-  "lib/limits": typeof lib_limits;
   "lib/mirror": typeof lib_mirror;
   mirror: typeof mirror;
   organizations: typeof organizations;

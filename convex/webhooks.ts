@@ -1,15 +1,11 @@
 import { v } from "convex/values";
-import { Doc } from "./_generated/dataModel";
 import { internalMutation, MutationCtx } from "./_generated/server";
-import { findOrgByClerkId, findUserByClerkId, getOrgByClerkIdOrThrow } from "./lib/mirror";
+import { findOrgByClerkId, findUserByClerkId } from "./lib/mirror";
 
 /**
- * Clerk → Convex sync. Clerk is the source of truth for users, orgs,
- * memberships, and subscriptions; these handlers mirror them into Convex
- * tables so queries can join against them with indexes.
- *
- * Clerk billing uses dot-notation event names (subscription.updated,
- * subscriptionItem.canceled) — never Stripe-style names.
+ * Clerk → Convex sync. Clerk is the source of truth for users, orgs and
+ * memberships; these handlers mirror them into Convex tables so queries can
+ * join against them with indexes.
  */
 
 export type ClerkUserData = {
@@ -33,20 +29,6 @@ export type ClerkMembershipData = {
   role?: string;
   organization?: { id: string };
   public_user_data?: { user_id: string };
-};
-
-type ClerkSubscriptionData = {
-  id: string;
-  status?: string;
-  payer?: { organization_id?: string; user_id?: string };
-  items?: { status?: string; plan?: { slug?: string } }[];
-};
-
-type ClerkSubscriptionItemData = {
-  id: string;
-  status?: string;
-  payer?: { organization_id?: string; user_id?: string };
-  plan?: { slug?: string };
 };
 
 export const handleClerkEvent = internalMutation({
@@ -76,14 +58,6 @@ export const handleClerkEvent = internalMutation({
       await upsertMembership(ctx, args.data as ClerkMembershipData);
     } else if (eventType === "organizationMembership.deleted") {
       await deleteMembership(ctx, args.data as ClerkMembershipData);
-    } else if (eventType.startsWith("subscription.")) {
-      await syncSubscription(ctx, args.data as ClerkSubscriptionData);
-    } else if (eventType.startsWith("subscriptionItem.")) {
-      await syncSubscriptionItem(
-        ctx,
-        eventType,
-        args.data as ClerkSubscriptionItemData
-      );
     } else {
       console.log("Unhandled Clerk webhook event", eventType);
     }
@@ -220,88 +194,5 @@ async function deleteMembership(ctx: MutationCtx, data: ClerkMembershipData) {
     .unique();
   if (existing) {
     await ctx.db.delete(existing._id);
-  }
-}
-
-function planFromSlug(slug: string | undefined): Doc<"organizations">["plan"] | null {
-  if (slug === "pro" || slug === "enterprise") {
-    return slug;
-  }
-  if (slug === "free_org") {
-    return "free";
-  }
-  return null;
-}
-
-async function syncSubscription(
-  ctx: MutationCtx,
-  data: ClerkSubscriptionData
-) {
-  const clerkOrgId = data.payer?.organization_id;
-  if (!clerkOrgId) {
-    return;
-  }
-  // Same out-of-order delivery race as memberships: fail so Svix retries.
-  const org = await getOrgByClerkIdOrThrow(
-    ctx,
-    clerkOrgId,
-    `Subscription sync: org not synced yet (${clerkOrgId}) — failing so Svix retries`
-  );
-
-  // Highest active paid plan wins; fall back to free.
-  let plan: Doc<"organizations">["plan"] = "free";
-  for (const item of data.items ?? []) {
-    const itemPlan = planFromSlug(item.plan?.slug);
-    if (
-      itemPlan &&
-      itemPlan !== "free" &&
-      (item.status === "active" || item.status === "upcoming")
-    ) {
-      if (plan !== "enterprise") {
-        plan = itemPlan;
-      }
-    }
-  }
-
-  await ctx.db.patch(org._id, {
-    plan,
-    subscriptionStatus: data.status,
-  });
-}
-
-async function syncSubscriptionItem(
-  ctx: MutationCtx,
-  eventType: string,
-  data: ClerkSubscriptionItemData
-) {
-  const clerkOrgId = data.payer?.organization_id;
-  if (!clerkOrgId) {
-    return;
-  }
-  // Same out-of-order delivery race as memberships: fail so Svix retries.
-  const org = await getOrgByClerkIdOrThrow(
-    ctx,
-    clerkOrgId,
-    `Subscription item sync: org not synced yet (${clerkOrgId}) — failing so Svix retries`
-  );
-
-  const itemPlan = planFromSlug(data.plan?.slug);
-  if (!itemPlan || itemPlan === "free") {
-    return;
-  }
-
-  const activated =
-    eventType === "subscriptionItem.active" ||
-    (eventType === "subscriptionItem.updated" && data.status === "active");
-  const deactivated =
-    eventType === "subscriptionItem.canceled" ||
-    eventType === "subscriptionItem.ended" ||
-    eventType === "subscriptionItem.expired" ||
-    eventType === "subscriptionItem.abandoned";
-
-  if (activated) {
-    await ctx.db.patch(org._id, { plan: itemPlan, subscriptionStatus: "active" });
-  } else if (deactivated && org.plan === itemPlan) {
-    await ctx.db.patch(org._id, { plan: "free" });
   }
 }

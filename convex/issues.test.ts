@@ -93,3 +93,42 @@ describe("issues.create", () => {
     expect(team?.nextIssueNumber).toBe(FIRST_NUMBER);
   });
 });
+
+describe("issues.create on a free organization", () => {
+  test("creates the 101st issue", async () => {
+    const { t, teamId, memberId } = await setup();
+    await t.run(async (ctx) => {
+      const team = await ctx.db.get(teamId);
+      for (let i = 0; i < 100; i++) {
+        await ctx.db.insert("issues", {
+          orgId: team!.orgId,
+          teamId,
+          number: i + 1,
+          title: `Seeded ${i + 1}`,
+          status: "todo",
+          priority: "none",
+          creatorId: memberId,
+          sortOrder: (i + 1) * 1000,
+        });
+      }
+    });
+    const asMember = t.withIdentity({
+      subject: MEMBER_CLERK_ID,
+      org_id: ORG_CLAIM,
+    });
+
+    const issueId = await asMember.mutation(api.issues.create, {
+      teamId,
+      title: "Hundred and first",
+    });
+
+    const issues = await t.run((ctx) =>
+      ctx.db
+        .query("issues")
+        .withIndex("by_team", (q) => q.eq("teamId", teamId))
+        .collect()
+    );
+    expect(issues).toHaveLength(101);
+    expect(issues.map((issue) => issue._id)).toContain(issueId);
+  });
+});
