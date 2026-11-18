@@ -37,6 +37,9 @@ const TRACKED_FIELDS = {
 
 type TrackedKey = keyof typeof TRACKED_FIELDS;
 
+/** How a field change is recorded: `<field>_changed` by default, or one type for every change. */
+export type FieldLogOptions = { type?: string };
+
 function asText(value: unknown): string | undefined {
   return value === undefined || value === null ? undefined : String(value);
 }
@@ -71,14 +74,22 @@ export async function logActivity(
   await ctx.db.insert("activity", entry);
 }
 
-/** One `<field>_changed` row per field change. */
+/** The issue's current value of a feed field, as text, the way `changedFields` records it. */
+export function fieldText(issue: Doc<"issues">, field: string): string | undefined {
+  const key = (Object.keys(TRACKED_FIELDS) as TrackedKey[]).find((k) => TRACKED_FIELDS[k] === field);
+  return key ? asText(issue[key]) : undefined;
+}
+
+/** One row per field change, typed `<field>_changed` unless the options name the type. */
 export async function logFieldChanges(
   ctx: { db: MutationCtx["db"] },
   actor: ActivityActor,
   issueId: Id<"issues">,
-  changes: FieldChange[]
+  changes: FieldChange[],
+  options: FieldLogOptions = {}
 ): Promise<void> {
   for (const change of changes) {
-    await logActivity(ctx, { ...actor, issueId, type: `${change.field}_changed`, ...change });
+    const type = options.type ?? `${change.field}_changed`;
+    await logActivity(ctx, { ...actor, issueId, type, ...change });
   }
 }

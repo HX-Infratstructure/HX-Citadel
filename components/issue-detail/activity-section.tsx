@@ -24,6 +24,11 @@ import {
   MentionTextarea,
   resolveMentions,
 } from "@/components/issue-detail/mention-textarea";
+import {
+  isRevertible,
+  RevertChange,
+  revertibleValueLabel,
+} from "@/components/issue-detail/revert-change";
 import { IssueDetailSlotProps } from "@/components/issue-detail/slots";
 import {
   IssuePriority,
@@ -61,6 +66,18 @@ const FIELD_LABELS: Record<string, string> = {
   cycle: "cycle",
   subNumber: "number",
 };
+
+/** The newest row per field, so Revert never offers to overwrite a later change. */
+function latestFieldChanges(activity: ActivityEntry[]): Set<Id<"activity">> {
+  const latest = new Map<string, ActivityEntry>();
+  for (const entry of activity) {
+    const current = entry.field ? latest.get(entry.field) : undefined;
+    if (entry.field && (!current || entry._creationTime > current._creationTime)) {
+      latest.set(entry.field, entry);
+    }
+  }
+  return new Set([...latest.values()].filter(isRevertible).map((entry) => entry._id));
+}
 
 function Emphasis({ children }: { children: ReactNode }) {
   return <span className="font-medium text-foreground">{children}</span>;
@@ -166,6 +183,13 @@ function describeActivity(entry: ActivityEntry): ReactNode {
           removed attachment <Emphasis>{oldValue}</Emphasis>
         </>
       );
+    case "reverted":
+      return (
+        <>
+          reverted {field} to{" "}
+          <Emphasis>{revertibleValueLabel(field ?? "", newValue)}</Emphasis>
+        </>
+      );
     case "description_changed":
       return <>updated the description</>;
     case "proof_set":
@@ -237,6 +261,8 @@ export function ActivitySection({ issue }: IssueDetailSlotProps) {
     return feed.sort((a, b) => a.time - b.time);
   }, [comments, activity, filter]);
 
+  const revertible = useMemo(() => latestFieldChanges(activity ?? []), [activity]);
+
   const loading = comments === undefined || activity === undefined;
 
   return (
@@ -301,6 +327,13 @@ export function ActivitySection({ issue }: IssueDetailSlotProps) {
                 <span className="ml-auto shrink-0">
                   {formatRelativeTime(item.entry._creationTime)}
                 </span>
+                {isAdmin && revertible.has(item.entry._id) && (
+                  <RevertChange
+                    activityId={item.entry._id}
+                    field={item.entry.field!}
+                    oldValue={item.entry.oldValue}
+                  />
+                )}
               </div>
             )
           )}

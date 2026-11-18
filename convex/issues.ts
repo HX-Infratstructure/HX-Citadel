@@ -2,8 +2,8 @@ import { ObjectType, v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
 import { formatIssueKey } from "../lib/issue-key";
-import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
-import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { changedFields, fieldText, FieldLogOptions, logActivity, logFieldChanges } from "./lib/activity";
+import { orgAdminMutation, orgMutation, orgQuery } from "./lib/customFunctions";
 import { deleteIssueOwnedRows } from "./lib/issueCleanup";
 import { FIRST_VERSION, patchIssue } from "./lib/issueVersion";
 import { OrgScope } from "./lib/orgScope";
@@ -285,7 +285,12 @@ const updateArgs = {
 export type UpdateIssueArgs = ObjectType<typeof updateArgs>;
 
 /** Every update rule in one place; the Clerk session and agent calls both come through here. */
-export async function updateIssue(ctx: MutationCtx, scope: OrgScope, args: UpdateIssueArgs): Promise<void> {
+export async function updateIssue(
+  ctx: MutationCtx,
+  scope: OrgScope,
+  args: UpdateIssueArgs,
+  log: FieldLogOptions = {}
+): Promise<void> {
   const issue = await getOrgIssue(ctx, scope.org._id, args.issueId);
 
   const actor = { orgId: scope.org._id, actorId: scope.actorId };
@@ -331,7 +336,7 @@ export async function updateIssue(ctx: MutationCtx, scope: OrgScope, args: Updat
   await assertWipFreeAfterUpdate(ctx, issue, updates);
   await assertDoneGateAfterUpdate(ctx, issue, updates);
   await patchIssue(ctx, issue._id, updates);
-  await logFieldChanges(ctx, actor, issue._id, changedFields(issue, updates));
+  await logFieldChanges(ctx, actor, issue._id, changedFields(issue, updates), log);
 }
 
 export const update = orgMutation({
@@ -339,6 +344,65 @@ export const update = orgMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await updateIssue(ctx, { org: ctx.org, actorId: ctx.user._id }, args);
+    return null;
+  },
+});
+
+function literalOf<T extends string>(validator: { members: { value: T }[] }, text: string | undefined): T {
+  const member = validator.members.find((candidate) => candidate.value === text);
+  if (!member) {
+    throw new Error(`Unknown value ${text}`);
+  }
+  return member.value;
+}
+
+/** A recorded assignee: absent means unassigned; anything else must be a `users` id. */
+function assigneeOf(ctx: MutationCtx, text: string | undefined): Id<"users"> | null {
+  if (text === undefined) {
+    return null;
+  }
+  const userId = ctx.db.normalizeId("users", text);
+  if (!userId) {
+    throw new Error(`Unknown value ${text}`);
+  }
+  return userId;
+}
+
+type RevertArgs = Omit<UpdateIssueArgs, "issueId">;
+
+/** The fields a revert may touch, each turning recorded text back into its update argument. */
+const REVERT_ARGS: Record<string, (ctx: MutationCtx, text: string | undefined) => RevertArgs> = {
+  title: (_ctx, text) => ({ title: text ?? "" }),
+  status: (_ctx, text) => ({ status: literalOf(issueStatusValidator, text) }),
+  priority: (_ctx, text) => ({ priority: literalOf(issuePriorityValidator, text) }),
+  assignee: (ctx, text) => ({ assigneeId: assigneeOf(ctx, text) }),
+};
+
+/** Apply an activity row's old value back through `updateIssue`, logged as one `reverted` row. */
+export const revertChange = orgAdminMutation({
+  args: { activityId: v.id("activity") },
+  returns: v.null(),
+  handler: async (ctx, { activityId }) => {
+    const change = await ctx.db.get(activityId);
+    if (!change || change.orgId !== ctx.org._id || !change.field) {
+      throw new Error("Change not found");
+    }
+    const toArgs = REVERT_ARGS[change.field];
+    if (!toArgs) {
+      throw new Error("Only status, assignee, priority and title changes can be reverted");
+    }
+    const issue = await getOrgIssue(ctx, ctx.org._id, change.issueId);
+    if (fieldText(issue, change.field) !== change.newValue) {
+      const team = await ctx.db.get(issue.teamId);
+      const key = team ? formatIssueKey(team.key, issue) : null;
+      throw new Error(`${key ?? issue.title} ${change.field} has changed since; revert the latest change instead`);
+    }
+    await updateIssue(
+      ctx,
+      { org: ctx.org, actorId: ctx.user._id },
+      { issueId: issue._id, ...toArgs(ctx, change.oldValue) },
+      { type: "reverted" }
+    );
     return null;
   },
 });
