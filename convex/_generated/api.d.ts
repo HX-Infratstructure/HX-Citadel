@@ -33,6 +33,7 @@ import type * as lib_rules_doneGate from "../lib/rules/doneGate.js";
 import type * as lib_rules_levels from "../lib/rules/levels.js";
 import type * as lib_rules_testing from "../lib/rules/testing.js";
 import type * as lib_rules_wip from "../lib/rules/wip.js";
+import type * as lib_teams from "../lib/teams.js";
 import type * as mirror from "../mirror.js";
 import type * as organizations from "../organizations.js";
 import type * as presenceFns from "../presenceFns.js";
@@ -76,6 +77,7 @@ declare const fullApi: ApiFromModules<{
   "lib/rules/levels": typeof lib_rules_levels;
   "lib/rules/testing": typeof lib_rules_testing;
   "lib/rules/wip": typeof lib_rules_wip;
+  "lib/teams": typeof lib_teams;
   mirror: typeof mirror;
   organizations: typeof organizations;
   presenceFns: typeof presenceFns;
