@@ -1,6 +1,8 @@
+import { ConvexError } from "convex/values";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { ERROR_STATUS, type ErrorCode } from "../../lib/api-contract";
 import { HttpError, parseIssuePath, readAgentId, toHttpError } from "./httpApi";
-import { invalid, notFound, refuse } from "./refusals";
+import { invalid, notFound, refusal, refuse } from "./refusals";
 
 const withAgent = (value?: string) =>
   new Request("http://x/api/v1/issues", value === undefined ? {} : { headers: { "X-Agent-Id": value } });
@@ -35,16 +37,41 @@ function captured(run: () => unknown): unknown {
   throw new Error("expected a throw");
 }
 
-describe("toHttpError", () => {
-  test.each([
-    ["ArgumentValidationError: Value does not match validator.", 400, "validation"],
-    ["Validator error: Expected `string`, got `1`", 400, "validation"],
-  ])("%s maps to %i %s", (message, status, code) => {
-    expect(toHttpError(new Error(message))).toMatchObject({ status, body: { code } });
-  });
+/** The statuses `docs/AGENT-API.md` promises agents, one row per code. */
+const WIRE_STATUS: [ErrorCode, number][] = [
+  ["actor_required", 400],
+  ["idempotency_key_required", 400],
+  ["validation", 400],
+  ["not_found", 404],
+  ["rule_refused", 409],
+  ["idempotency_key_reused", 409],
+  ["stale", 412],
+  ["server_error", 500],
+];
 
+describe("toHttpError", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  test("the contract table has exactly the codes agents are promised", () => {
+    expect(Object.keys(ERROR_STATUS).sort()).toEqual(WIRE_STATUS.map(([code]) => code).sort());
+  });
+
+  test.each(WIRE_STATUS)("an HttpError %s is %i with its own words", (code, status) => {
+    expect(toHttpError(new HttpError(code, `refused as ${code}`))).toEqual({ status, body: { code, message: `refused as ${code}` } });
+  });
+
+  test.each(WIRE_STATUS)("a typed refusal %s from a Convex function is %i with its own words", (code, status) => {
+    expect(toHttpError(captured(() => refusal(code, `refused as ${code}`)))).toEqual({ status, body: { code, message: `refused as ${code}` } });
+  });
+
+  test.each([
+    ["the deployed backend's text (live, p3-2a 10:17Z)", "ArgumentValidationError: Value does not match validator.", "ArgumentValidationError: Value does not match validator."],
+    ["convex-test's text", "Validator error: Expected `string`, got `1`", "Validator error: Expected `string`, got `1`"],
+    ["a validator error with detail lines, its first line", "Validator error: Missing required field `title` in object\n    at validateValidator", "Validator error: Missing required field `title` in object"],
+  ])("a Convex argument validator error, %s, is 400 validation", (_label, message, expected) => {
+    expect(toHttpError(new Error(message))).toEqual({ status: 400, body: { code: "validation", message: expected } });
   });
 
   test("a rule refusal is 409 rule_refused with the rule's own words", () => {
@@ -62,23 +89,27 @@ describe("toHttpError", () => {
     expect(toHttpError(captured(raise))).toEqual({ status, body: { code, message } });
   });
 
+  test("a misconfiguration refused as server_error is 500 with its words", () => {
+    expect(toHttpError(captured(() => refusal("server_error", "HX_WORKSPACE_ORG_ID is not configured")))).toEqual({
+      status: 500,
+      body: { code: "server_error", message: "HX_WORKSPACE_ORG_ID is not configured" },
+    });
+  });
+
   test.each([
     ["a plain Error", new Error("Uncaught Error: Member already has ENG-1 In Progress; move it to In Review or Done first")],
     ["a TypeError", new TypeError("Cannot read properties of null (reading 'teamId')")],
     ["a plain Error whose words say not found", new Error("Database index not found")],
     ["a plain Error whose words say invalid", new Error("invalid agent name")],
+    ["a plain Error that names the workspace setting", new Error("HX_WORKSPACE_ORG_ID is not configured")],
+    ["a ConvexError with a code the contract lacks", new ConvexError({ code: "TEAM_KEY_TAKEN", message: "Team key ENG is taken" })],
+    ["a ConvexError whose code is an Object method", new ConvexError({ code: "toString", message: "not a code" })],
+    ["a ConvexError with string data", new ConvexError("Team key ENG is taken")],
     ["a non-error", "boom"],
   ])("%s nobody expected is a logged 500 server_error that keeps its words out of the body", (_label, error) => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(toHttpError(error)).toEqual({ status: 500, body: { code: "server_error", message: "Internal error" } });
     expect(logged).toHaveBeenCalledWith(expect.any(String), error);
-  });
-
-  test("a missing or unmatched workspace setting maps to 500 server_error", () => {
-    expect(toHttpError(new Error("HX_WORKSPACE_ORG_ID is not configured"))).toMatchObject({
-      status: 500,
-      body: { code: "server_error" },
-    });
   });
 });
 

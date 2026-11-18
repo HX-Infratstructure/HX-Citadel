@@ -9,6 +9,7 @@ import { changedFields, fieldText, FieldLogOptions, logActivity, logFieldChanges
 import { orgAdminMutation, orgMutation, orgQuery } from "./lib/customFunctions";
 import { deleteIssueOwnedRows } from "./lib/issueCleanup";
 import { FIRST_VERSION, patchIssue } from "./lib/issueVersion";
+import { findMembership } from "./lib/mirror";
 import { inOrg, orgChildren, orgRow } from "./lib/orgRows";
 import { OrgScope } from "./lib/orgScope";
 import { assertCycleInTeam } from "./lib/rules/cycles";
@@ -468,45 +469,82 @@ export const update = orgMutation({
 function literalOf<T extends string>(validator: { members: { value: T }[] }, text: string | undefined): T {
   const member = validator.members.find((candidate) => candidate.value === text);
   if (!member) {
-    throw new Error(`Unknown value ${text}`);
+    refuse(`Unknown value ${text}`);
   }
   return member.value;
 }
 
-/** A recorded assignee: absent means unassigned; anything else must be a `users` id. */
-function assigneeOf(ctx: MutationCtx, text: string | undefined): Id<"users"> | null {
+/** A recorded assignee: absent means unassigned; anyone else must still be a member of the issue's workspace. */
+async function assigneeOf(ctx: MutationCtx, orgId: Id<"organizations">, text: string | undefined) {
   if (text === undefined) {
     return null;
   }
   const userId = ctx.db.normalizeId("users", text);
   if (!userId) {
-    throw new Error(`Unknown value ${text}`);
+    refuse(`Unknown value ${text}`);
+  }
+  if (!(await findMembership(ctx, orgId, userId))) {
+    const user = await ctx.db.get(userId);
+    notFound(`Assignee ${user?.name ?? text} not found`);
   }
   return userId;
 }
 
 type RevertArgs = Omit<UpdateIssueArgs, "issueId">;
+type ToRevertArgs = (ctx: MutationCtx, issue: Doc<"issues">, text: string | undefined) => Promise<RevertArgs>;
 
 /** The fields a revert may touch, each turning recorded text back into its update argument. */
-const REVERT_ARGS: Record<string, (ctx: MutationCtx, text: string | undefined) => RevertArgs> = {
-  title: (_ctx, text) => ({ title: text ?? "" }),
-  status: (_ctx, text) => ({ status: literalOf(issueStatusValidator, text) }),
-  priority: (_ctx, text) => ({ priority: literalOf(issuePriorityValidator, text) }),
-  assignee: (ctx, text) => ({ assigneeId: assigneeOf(ctx, text) }),
+const REVERT_ARGS: Record<string, ToRevertArgs> = {
+  title: async (_ctx, _issue, text) => ({ title: text ?? "" }),
+  status: async (_ctx, _issue, text) => ({ status: literalOf(issueStatusValidator, text) }),
+  priority: async (_ctx, _issue, text) => ({ priority: literalOf(issuePriorityValidator, text) }),
+  assignee: async (ctx, issue, text) => ({ assigneeId: await assigneeOf(ctx, issue.orgId, text) }),
 };
 
-/** The newest activity row that records a change to `field` on the issue. */
-async function latestFieldChange(ctx: MutationCtx, issue: Doc<"issues">, field: string) {
-  const rows = inOrg(
+/** The issue's activity, newest first: by creation time, then `_id`, the `by_issue` index order. */
+export function activityNewestFirst(ctx: { db: QueryCtx["db"] }, issue: Doc<"issues">) {
+  return inOrg(
     ctx.db.query("activity").withIndex("by_issue", (q) => q.eq("issueId", issue._id)).order("desc"),
     issue.orgId
   );
-  for await (const row of rows) {
-    if (row.field === field) {
-      return row;
-    }
+}
+
+/**
+ * Why an owner can't revert `row`, or null when they can. Only a `<field>_changed` row of a field in
+ * `REVERT_ARGS` can be reverted, while it is the newest row for its field and the issue still holds its new value.
+ * A `reverted` row never is: to redo, make the change again.
+ */
+function revertRefusal(issue: Doc<"issues">, row: Doc<"activity">, newestForField: boolean) {
+  if (row.field === undefined || !(row.field in REVERT_ARGS) || row.type !== `${row.field}_changed`) {
+    return "not_revertible";
+  }
+  if (!newestForField || fieldText(issue, row.field) !== row.newValue) {
+    return "changed_since";
   }
   return null;
+}
+
+/** The rows of `newestFirst`, an `activityNewestFirst` prefix, that an owner can revert. */
+export function revertibleRows(issue: Doc<"issues">, newestFirst: Doc<"activity">[]): Set<Id<"activity">> {
+  const seenFields = new Set<string | undefined>();
+  const revertible = new Set<Id<"activity">>();
+  for (const row of newestFirst) {
+    if (revertRefusal(issue, row, !seenFields.has(row.field)) === null) {
+      revertible.add(row._id);
+    }
+    seenFields.add(row.field);
+  }
+  return revertible;
+}
+
+/** Whether `row` is the newest activity row for its field; the walk stops at `row` itself. */
+async function isNewestForField(ctx: MutationCtx, issue: Doc<"issues">, row: Doc<"activity">) {
+  for await (const newer of activityNewestFirst(ctx, issue)) {
+    if (newer.field === row.field) {
+      return newer._id === row._id;
+    }
+  }
+  return false;
 }
 
 /** Apply an activity row's old value back through `updateIssue`, logged as one `reverted` row. */
@@ -515,24 +553,24 @@ export const revertChange = orgAdminMutation({
   returns: v.null(),
   handler: async (ctx, { activityId }) => {
     const change = await ctx.db.get(activityId);
-    if (!change || change.orgId !== ctx.org._id || !change.field) {
+    if (!change || change.orgId !== ctx.org._id) {
       notFound("Change not found");
     }
-    const toArgs = REVERT_ARGS[change.field];
-    if (!toArgs) {
+    const issue = await getOrgIssue(ctx, ctx.org._id, change.issueId);
+    const refusal = revertRefusal(issue, change, await isNewestForField(ctx, issue, change));
+    if (refusal === "not_revertible") {
       refuse("Only status, assignee, priority and title changes can be reverted");
     }
-    const issue = await getOrgIssue(ctx, ctx.org._id, change.issueId);
-    const latest = await latestFieldChange(ctx, issue, change.field);
-    if (latest?._id !== change._id || fieldText(issue, change.field) !== change.newValue) {
+    if (refusal === "changed_since") {
       const team = await orgRow(ctx, issue.orgId, issue.teamId);
       const key = team ? formatIssueKey(team.key, issue) : null;
       refuse(`${key ?? issue.title} ${change.field} has changed since; revert the latest change instead`);
     }
+    const toArgs = REVERT_ARGS[change.field!];
     await updateIssue(
       ctx,
       { org: ctx.org, actorId: ctx.user._id },
-      { issueId: issue._id, ...toArgs(ctx, change.oldValue) },
+      { issueId: issue._id, ...(await toArgs(ctx, issue, change.oldValue)) },
       { type: "reverted" }
     );
     return null;

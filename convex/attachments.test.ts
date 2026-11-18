@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { ConvexError } from "convex/values";
 import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
@@ -72,7 +73,15 @@ async function setup() {
 
   const storedFile = (storageId: Id<"_storage">) => t.run((ctx) => ctx.db.system.get(storageId));
 
-  return { createIssue, storeFile, attach, insertSharedRow, removeAttachment, storedFile };
+  const asOtherMember = async () => {
+    await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", { clerkId: "user_other", name: "Other", email: "other@example.com" });
+      await ctx.db.insert("members", { orgId, userId, role: "member", clerkMembershipId: "mem_other" });
+    });
+    return t.withIdentity({ subject: "user_other", org_id: ORG_CLAIM });
+  };
+
+  return { createIssue, storeFile, attach, insertSharedRow, removeAttachment, storedFile, asOtherMember };
 }
 
 describe("attachments keep one owner per stored file", () => {
@@ -109,5 +118,22 @@ describe("attachments keep one owner per stored file", () => {
 
     await removeAttachment(secondAttachment);
     expect(await storedFile(file)).toBeNull();
+  });
+});
+
+describe("attachments.remove", () => {
+  test("a member who neither uploaded the file nor is an admin gets a typed rule refusal, and the file stays", async () => {
+    const { createIssue, storeFile, attach, storedFile, asOtherMember } = await setup();
+    const file = await storeFile();
+    const attachmentId = await attach(await createIssue(), file);
+    const other = await asOtherMember();
+
+    const refusal = await other.mutation(api.attachments.remove, { attachmentId }).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(ConvexError);
+    expect((refusal as ConvexError<{ code: string; message: string }>).data).toEqual({
+      code: "rule_refused",
+      message: "Only the uploader or an admin can delete an attachment",
+    });
+    expect(await storedFile(file)).not.toBeNull();
   });
 });

@@ -1,30 +1,46 @@
 import { ConvexError } from "convex/values";
-import { errorMessage } from "../../lib/error-message";
+import {
+  ACTOR_REQUIRED,
+  AGENT_HEADER,
+  ERROR_STATUS,
+  type ErrorBody,
+  type ErrorCode,
+  ETAG_HEADER,
+  IDEMPOTENCY_HEADER,
+  IDEMPOTENCY_KEY_REQUIRED,
+  IF_MATCH_HEADER,
+  isErrorCode,
+  NOT_FOUND,
+  type Refusal,
+  SERVER_ERROR,
+  VALIDATION,
+} from "../../lib/api-contract";
 import { ActionCtx, httpAction } from "../_generated/server";
-import { hashRequest, Idempotency, IDEMPOTENCY_HEADER, isValidKey } from "./idempotency";
-import { IDEMPOTENCY_KEY_REUSED, NOT_FOUND, RULE_REFUSED, STALE, VALIDATION } from "./refusals";
+import { hashRequest, Idempotency, isValidKey } from "./idempotency";
 
-export type ErrorBody = { code: string; message: string };
-export type HttpFailure = { status: number; body: ErrorBody };
+/** The clients still import these from here; this line goes once they import `lib/api-contract`. */
+export { AGENT_HEADER, type ErrorBody };
 
-/** A refusal the HTTP layer raises itself, before any Convex function runs. */
+export type HttpFailure = { status: number; body: Refusal };
+
+/** A refusal the HTTP layer raises itself, before any Convex function runs; its status is its code's. */
 export class HttpError extends Error {
+  readonly status: number;
+
   constructor(
-    readonly status: number,
-    readonly code: string,
+    readonly code: ErrorCode,
     message: string
   ) {
     super(message);
+    this.status = ERROR_STATUS[code];
   }
 }
-
-export const AGENT_HEADER = "X-Agent-Id";
 
 /** The acting agent's name; agents carry no key, only this header. */
 export function readAgentId(request: Request): string {
   const agentId = request.headers.get(AGENT_HEADER)?.trim();
   if (!agentId) {
-    throw new HttpError(400, "actor_required", `The ${AGENT_HEADER} header names the acting agent and is required`);
+    throw new HttpError(ACTOR_REQUIRED, `The ${AGENT_HEADER} header names the acting agent and is required`);
   }
   return agentId;
 }
@@ -39,19 +55,19 @@ export function json(status: number, body: unknown): Response {
 /** A JSON body for one issue, with its version as the ETag. */
 export function issueJson(status: number, body: { issue: { version: number } }): Response {
   const response = json(status, body);
-  response.headers.set("ETag", `"${body.issue.version}"`);
+  response.headers.set(ETAG_HEADER, `"${body.issue.version}"`);
   return response;
 }
 
 /** `If-Match: "N"` (or `N`) as the version number the client last read; absent means no check. */
 export function readIfMatch(request: Request): number | undefined {
-  const header = request.headers.get("If-Match");
+  const header = request.headers.get(IF_MATCH_HEADER);
   if (header === null) {
     return undefined;
   }
   const version = Number(header.trim().replace(/^"(.*)"$/, "$1"));
   if (!Number.isInteger(version) || version < 1) {
-    throw new HttpError(400, VALIDATION, `If-Match must be an issue version such as "2", not ${header}`);
+    throw new HttpError(VALIDATION, `${IF_MATCH_HEADER} must be an issue version such as "2", not ${header}`);
   }
   return version;
 }
@@ -60,10 +76,10 @@ export function readIfMatch(request: Request): number | undefined {
 export function readIdempotencyKey(request: Request): string {
   const key = request.headers.get(IDEMPOTENCY_HEADER) ?? "";
   if (key === "") {
-    throw new HttpError(400, "idempotency_key_required", `The ${IDEMPOTENCY_HEADER} header is required on every write`);
+    throw new HttpError(IDEMPOTENCY_KEY_REQUIRED, `The ${IDEMPOTENCY_HEADER} header is required on every write`);
   }
   if (!isValidKey(key)) {
-    throw new HttpError(400, VALIDATION, `${IDEMPOTENCY_HEADER} must be 1 to 200 visible ASCII characters`);
+    throw new HttpError(VALIDATION, `${IDEMPOTENCY_HEADER} must be 1 to 200 visible ASCII characters`);
   }
   return key;
 }
@@ -71,7 +87,7 @@ export function readIdempotencyKey(request: Request): string {
 export async function readJsonObject(request: Request): Promise<Record<string, unknown>> {
   const body: unknown = await request.json().catch(() => null);
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    throw new HttpError(400, VALIDATION, "The request body must be a JSON object");
+    throw new HttpError(VALIDATION, "The request body must be a JSON object");
   }
   return body as Record<string, unknown>;
 }
@@ -96,27 +112,16 @@ export function parseIssuePath(pathname: string): IssuePath {
   const [key, action, ...rest] = decodeSegments(pathname);
   const known = ISSUE_ACTIONS.find((candidate) => candidate === action);
   if (!key || rest.length > 0 || (action !== undefined && known === undefined)) {
-    throw new HttpError(404, NOT_FOUND, `No route for ${pathname}`);
+    throw new HttpError(NOT_FOUND, `No route for ${pathname}`);
   }
   return { key, action: known ?? null };
 }
 
-/** Errors with no typed code, matched by their words: the runtime's argument validation and a missing workspace setting. */
-const ERROR_MAP: { pattern: RegExp; status: number; code: string }[] = [
-  { pattern: /HX_WORKSPACE_ORG_ID/, status: 500, code: "server_error" },
-  { pattern: /ArgumentValidationError|Validator error/, status: 400, code: VALIDATION },
-];
-
-/** Typed `ConvexError` codes the shared write logic throws, by HTTP status. */
-const TYPED_ERRORS: Record<string, number> = {
-  [VALIDATION]: 400,
-  [NOT_FOUND]: 404,
-  [STALE]: 412,
-  [IDEMPOTENCY_KEY_REUSED]: 409,
-  [RULE_REFUSED]: 409,
-};
-
-function typedFailure(error: unknown): HttpFailure | null {
+/** The `{code, message}` of an `HttpError` or of a `ConvexError` from `refusal`; null for any other error. */
+function typedBody(error: unknown): Refusal | null {
+  if (error instanceof HttpError) {
+    return { code: error.code, message: error.message };
+  }
   if (!(error instanceof ConvexError)) {
     return null;
   }
@@ -124,26 +129,29 @@ function typedFailure(error: unknown): HttpFailure | null {
   if (typeof data !== "object" || data === null || !("code" in data) || !("message" in data)) {
     return null;
   }
-  const { code, message } = data as ErrorBody;
-  const status = TYPED_ERRORS[code];
-  return status === undefined ? null : { status, body: { code, message } };
+  const { code, message } = data;
+  return isErrorCode(code) && typeof message === "string" ? { code, message } : null;
 }
 
-/** Any thrown error as a status and a JSON `{code, message}`; an unexpected error is logged here and leaves as a bare 500. */
+/**
+ * Convex's argument validator throws an untyped error, so it is the one error found by its words: the deployed
+ * backend's `ArgumentValidationError` and convex-test's `Validator error`. The body is that line, from the name on.
+ */
+const VALIDATOR_LINE = /(?:ArgumentValidationError|Validator error)\b.*/;
+
+function validatorRefusal(error: unknown): Refusal | null {
+  const line = error instanceof Error ? VALIDATOR_LINE.exec(error.message) : null;
+  return line === null ? null : { code: VALIDATION, message: line[0] };
+}
+
+/** Any thrown error as its code's status and a JSON `{code, message}`; an unexpected error is logged here and leaves as a bare 500. */
 export function toHttpError(error: unknown): HttpFailure {
-  if (error instanceof HttpError) {
-    return { status: error.status, body: { code: error.code, message: error.message } };
-  }
-  const typed = typedFailure(error);
-  if (typed !== null) {
-    return typed;
-  }
-  const mapped = error instanceof Error ? ERROR_MAP.find((entry) => entry.pattern.test(error.message)) : undefined;
-  if (mapped === undefined) {
+  const body = typedBody(error) ?? validatorRefusal(error);
+  if (body === null) {
     console.error("Unexpected error in an agent route", error);
-    return { status: 500, body: { code: "server_error", message: "Internal error" } };
+    return { status: ERROR_STATUS[SERVER_ERROR], body: { code: SERVER_ERROR, message: "Internal error" } };
   }
-  return { status: mapped.status, body: { code: mapped.code, message: errorMessage(error, "Request failed") } };
+  return { status: ERROR_STATUS[body.code], body };
 }
 
 /** An agent route: the header is required, and every error leaves as JSON. */

@@ -1,9 +1,9 @@
 import { v } from "convex/values";
 import { cycleName as formatCycleName } from "../lib/sprint";
 import { Doc, Id } from "./_generated/dataModel";
-import { getOrgIssue } from "./issues";
+import { activityNewestFirst, getOrgIssue, revertibleRows } from "./issues";
 import { orgQuery } from "./lib/customFunctions";
-import { inOrg, orgRow } from "./lib/orgRows";
+import { orgRow } from "./lib/orgRows";
 
 /**
  * Activity feed queries. Entries are written by `logActivity` in
@@ -21,18 +21,19 @@ const activityEntryValidator = v.object({
   newValue: v.optional(v.string()),
   actorName: v.string(),
   actorImageUrl: v.optional(v.string()),
+  revertible: v.boolean(),
 });
 
+/** The issue's newest 500 activity rows, oldest first, each saying whether an owner can revert it. */
 export const listByIssue = orgQuery({
   args: { issueId: v.id("issues") },
   returns: v.array(activityEntryValidator),
   handler: async (ctx, args) => {
-    await getOrgIssue(ctx, ctx.org._id, args.issueId);
+    const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
 
-    const entries = await inOrg(
-      ctx.db.query("activity").withIndex("by_issue", (q) => q.eq("issueId", args.issueId)),
-      ctx.org._id
-    ).take(500);
+    const newestFirst = await activityNewestFirst(ctx, issue).take(500);
+    const revertible = revertibleRows(issue, newestFirst);
+    const entries = [...newestFirst].reverse();
 
     const userCache = new Map<Id<"users">, Doc<"users"> | null>();
     const getUser = async (userId: Id<"users">) => {
@@ -91,6 +92,7 @@ export const listByIssue = orgQuery({
         newValue: await resolveValue(entry.field, entry.newValue),
         actorName: actor?.name ?? "Unknown user",
         actorImageUrl: actor?.imageUrl,
+        revertible: revertible.has(entry._id),
       });
     }
     return result;

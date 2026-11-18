@@ -3,7 +3,7 @@ import { convexTest } from "convex-test";
 import { StorageActionWriter } from "convex/server";
 import { describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
-import { BACKFILL_PAGE_SIZE } from "./admin";
+import { PAGE_SIZE } from "./admin";
 import { Doc, Id, TableNames } from "./_generated/dataModel";
 import { MutationCtx } from "./_generated/server";
 import schema from "./schema";
@@ -31,6 +31,9 @@ const CONTENT_TABLES = [
 ] as const satisfies readonly TableNames[];
 
 const MIRROR_TABLES = ["organizations", "users", "members"] as const satisfies readonly TableNames[];
+
+/** The tables with an organization index, which the mirror refusal checks one row of each. */
+const ORG_INDEXED_TABLES = ["activity", "decisions", "issues", "labels", "views", "projects", "teams", "idempotencyKeys"];
 
 const SEEDED_COUNTS = {
   issueLabels: 1,
@@ -169,6 +172,38 @@ function belongsTo(orgId: Id<"organizations">, clearedIssueIds: Set<string>) {
     doc.orgId === orgId || clearedIssueIds.has(String(doc.issueId));
 }
 
+async function addIssues(t: TestConvex, teamId: Id<"teams">, count: number) {
+  await t.run(async (ctx) => {
+    const team = (await ctx.db.get(teamId))!;
+    const creator = (await ctx.db.query("users").first())!;
+    for (let number = 100; number < 100 + count; number++) {
+      const issueId = await ctx.db.insert("issues", {
+        orgId: team.orgId,
+        teamId,
+        status: "todo",
+        priority: "none",
+        creatorId: creator._id,
+        kind: "story",
+        number,
+        title: `bulk ${number}`,
+        sortOrder: number,
+      });
+      await ctx.db.insert("activity", { orgId: team.orgId, issueId, actorId: creator._id, type: "created" });
+    }
+  });
+}
+
+/** Cancels every queued run, as if the scheduled continuation had failed. */
+async function cancelScheduledRuns(t: TestConvex) {
+  await t.run(async (ctx) => {
+    for (const job of await ctx.db.system.query("_scheduled_functions").collect()) {
+      if (job.state.kind === "pending") {
+        await ctx.scheduler.cancel(job._id);
+      }
+    }
+  });
+}
+
 describe("admin.clearOrgContent", () => {
   test("deletes one organization's content and keeps its mirror and the other organization", async () => {
     const { t, cleared } = await setup();
@@ -209,6 +244,30 @@ describe("admin.clearOrgContent", () => {
       t.mutation(internal.admin.clearOrgContent, { clerkOrgId: "org_missing" })
     ).rejects.toThrow("Organization org_missing not found");
   });
+
+  test("deletes one page of issues per run and the scheduled runs delete the rest", async () => {
+    vi.useFakeTimers();
+    const { t, cleared } = await setup();
+    const teamId = await t.run(async (ctx) => (await ctx.db.query("teams").first())!._id);
+    await addIssues(t, teamId, PAGE_SIZE);
+    const contentBefore = await snapshot(t, CONTENT_TABLES);
+    const clearedIssueIds = new Set(
+      contentBefore.issues.filter((issue) => issue.orgId === cleared.orgId).map((issue) => issue._id)
+    );
+    const isCleared = belongsTo(cleared.orgId, clearedIssueIds);
+
+    const counts = await t.mutation(internal.admin.clearOrgContent, { clerkOrgId: CLEARED_ORG });
+
+    expect(counts).toMatchObject({ issues: PAGE_SIZE, teams: 0, labels: 0 });
+    expect(await t.run((ctx) => ctx.db.get(teamId))).not.toBeNull();
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const contentAfter = await snapshot(t, CONTENT_TABLES);
+    for (const table of CONTENT_TABLES) {
+      expect(contentAfter[table], table).toEqual(contentBefore[table].filter((doc) => !isCleared(doc)));
+    }
+    expect(await t.run((ctx) => ctx.db.system.get(cleared.storageId))).toBeNull();
+    vi.useRealTimers();
+  });
 });
 
 async function setupMirrorWith(
@@ -230,13 +289,13 @@ async function expectMirrorRefused(t: TestConvex, clerkOrgId: string, message: s
 }
 
 describe("admin.deleteOrgMirror", () => {
-  test("refuses while the organization still has content and names every table", async () => {
+  test("refuses while the organization still has content and names every table with an organization index", async () => {
     const { t } = await setup();
 
     await expectMirrorRefused(
       t,
       CLEARED_ORG,
-      `Organization ${CLEARED_ORG} still has rows in ${CONTENT_TABLES.join(", ")}.`
+      `Organization ${CLEARED_ORG} still has rows in ${ORG_INDEXED_TABLES.join(", ")}.`
     );
   });
 
@@ -383,6 +442,7 @@ describe("admin.clearTeamContent", () => {
       decisions: 1,
       issues: 2,
       cycles: 1,
+      views: 0,
       teams: 1,
     });
     const contentAfter = await snapshot(t, CONTENT_TABLES);
@@ -425,30 +485,110 @@ describe("admin.clearTeamContent", () => {
     expect(after.keptAttachment).not.toBeNull();
   });
 
-  test("refuses a team too large for one transaction and changes nothing", async () => {
-    const { t, cleared } = await setupTeams();
-    await t.run(async (ctx) => {
-      const story = await ctx.db.get(cleared.storyId);
-      for (let number = 10; number < 610; number++) {
-        await ctx.db.insert("issues", {
-          orgId: story!.orgId,
-          teamId: cleared.teamId,
-          status: "todo",
-          priority: "none",
-          creatorId: story!.creatorId,
-          kind: "story",
-          number,
-          title: `bulk ${number}`,
-          sortOrder: number,
-        });
-      }
-    });
-    const before = await snapshot(t, [...CONTENT_TABLES, ...MIRROR_TABLES]);
+  test("clears a team larger than one page over the scheduled runs", async () => {
+    vi.useFakeTimers();
+    const { t, cleared, kept } = await setupTeams();
+    await addIssues(t, cleared.teamId, 600);
+    const contentBefore = await snapshot(t, CONTENT_TABLES);
+    const clearedIssueIds = new Set(
+      contentBefore.issues.filter((issue) => issue.teamId === cleared.teamId).map((issue) => issue._id)
+    );
+    const isCleared = belongsToTeam(cleared.teamId, clearedIssueIds);
 
-    await expect(
-      t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM })
-    ).rejects.toThrow("Too many index ranges read in a single function execution");
-    expect(await snapshot(t, [...CONTENT_TABLES, ...MIRROR_TABLES])).toEqual(before);
+    const counts = await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+
+    expect(counts).toMatchObject({ issues: PAGE_SIZE, cycles: 0, teams: 0 });
+    expect(await t.run((ctx) => ctx.db.get(cleared.teamId))).not.toBeNull();
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const contentAfter = await snapshot(t, CONTENT_TABLES);
+    for (const table of CONTENT_TABLES) {
+      expect(contentAfter[table], table).toEqual(contentBefore[table].filter((doc) => !isCleared(doc)));
+    }
+    expect(await t.run((ctx) => ctx.db.get(kept.teamId))).not.toBeNull();
+    vi.useRealTimers();
+  });
+
+  test("a rerun after a scheduled run failed finishes the clear", async () => {
+    vi.useFakeTimers();
+    const { t, cleared } = await setupTeams();
+    await addIssues(t, cleared.teamId, PAGE_SIZE + 5);
+    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+    await cancelScheduledRuns(t);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = () =>
+      t.run(async (ctx) => ({
+        team: await ctx.db.get(cleared.teamId),
+        issues: await ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", cleared.teamId)).collect(),
+      }));
+    expect((await left()).team).not.toBeNull();
+    expect((await left()).issues.length).toBeGreaterThan(0);
+
+    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await left()).toEqual({ team: null, issues: [] });
+    vi.useRealTimers();
+  });
+
+  test("leaves another workspace's rows that point at a cleared issue", async () => {
+    const { t, cleared } = await setupTeams();
+    const foreign = await t.run(async (ctx) => {
+      const { orgId, userId } = await seedMirror(ctx, "org_foreign");
+      const issueId = cleared.storyId;
+      return [
+        await ctx.db.insert("comments", { orgId, issueId, authorId: userId, body: "foreign" }),
+        await ctx.db.insert("activity", { orgId, issueId, actorId: userId, type: "commented" }),
+        await ctx.db.insert("decisions", { orgId, issueId, askedBy: userId, question: "foreign", status: "open" }),
+        await ctx.db.insert("attachments", {
+          orgId,
+          issueId,
+          storageId: cleared.storageId,
+          fileName: "foreign.txt",
+          fileType: "text/plain",
+          fileSize: 3,
+          uploadedBy: userId,
+        }),
+      ];
+    });
+
+    await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+
+    const after = await t.run(async (ctx) => ({
+      rows: await Promise.all(foreign.map((id) => ctx.db.get(id))),
+      file: await ctx.db.system.get(cleared.storageId),
+    }));
+    expect(after.rows.every((row) => row !== null)).toBe(true);
+    expect(after.file).not.toBeNull();
+  });
+
+  test("deletes the saved views that open the cleared team and keeps the others", async () => {
+    const { t, cleared, kept } = await setupTeams();
+    const savedView = (teamId: Id<"teams">) =>
+      JSON.stringify({ v: 1, teamId, display: "board", filters: { statuses: ["todo"] } });
+    const viewIds = await t.run(async (ctx) => {
+      const keptStory = (await ctx.db.get(kept.storyId))!;
+      const view = (name: string, filters: string) =>
+        ctx.db.insert("views", { orgId: keptStory.orgId, creatorId: keptStory.creatorId, name, filters, shared: true });
+      return {
+        clearedTeam: await view("Cleared board", savedView(cleared.teamId)),
+        keptTeam: await view("Kept board", savedView(kept.teamId)),
+        notAView: await view("Null", "null"),
+      };
+    });
+
+    const counts = await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+
+    expect(counts.views).toBe(1);
+    const views = await t.run(async (ctx) => ({
+      clearedTeam: await ctx.db.get(viewIds.clearedTeam),
+      keptTeam: await ctx.db.get(viewIds.keptTeam),
+      notAView: await ctx.db.get(viewIds.notAView),
+      all: await ctx.db.query("views").collect(),
+    }));
+    expect(views.clearedTeam).toBeNull();
+    expect(views.keptTeam).not.toBeNull();
+    expect(views.notAView).not.toBeNull();
+    expect(views.all).toHaveLength(3);
   });
 
   test("finds the team by a lower-case, padded key", async () => {
@@ -527,7 +667,7 @@ describe("admin.backfillSubCounters", () => {
     const { t, cleared } = await setup();
     await t.run(async (ctx) => {
       const story = (await ctx.db.query("issues").collect()).find((issue) => issue.orgId === cleared.orgId)!;
-      for (let index = 0; index < BACKFILL_PAGE_SIZE; index++) {
+      for (let index = 0; index < PAGE_SIZE; index++) {
         await ctx.db.insert("issues", {
           orgId: story.orgId,
           teamId: story.teamId,
@@ -544,10 +684,10 @@ describe("admin.backfillSubCounters", () => {
     const counters = () =>
       t.run(async (ctx) => (await ctx.db.query("issues").collect()).map((issue) => issue.nextSubNumber ?? null));
 
-    expect(await t.mutation(internal.admin.backfillSubCounters, {})).toBe(BACKFILL_PAGE_SIZE);
+    expect(await t.mutation(internal.admin.backfillSubCounters, {})).toBe(PAGE_SIZE);
     expect((await counters()).filter((counter) => counter === null)).toHaveLength(4);
     await t.finishAllScheduledFunctions(vi.runAllTimers);
-    expect(await counters()).toEqual(Array(BACKFILL_PAGE_SIZE + 4).fill(1));
+    expect(await counters()).toEqual(Array(PAGE_SIZE + 4).fill(1));
     vi.useRealTimers();
   });
 });

@@ -121,9 +121,7 @@ export const remove = orgMutation({
     const isUploader = attachment.uploadedBy === ctx.user._id;
     const isAdmin = ctx.membership.role === "admin";
     if (!isUploader && !isAdmin) {
-      throw new Error(
-        "Only the uploader or an admin can delete an attachment"
-      );
+      refuse("Only the uploader or an admin can delete an attachment");
     }
 
     await deleteAttachmentFiles(ctx, [attachment]);

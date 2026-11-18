@@ -1,19 +1,24 @@
+import { SERVER_ERROR } from "../../lib/api-contract";
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { agentClerkId, ensureAgent, normalizeAgentName } from "./agents";
-import { findMembership, findUserByClerkId, getOrgByClerkIdOrThrow } from "./mirror";
-import { notFound } from "./refusals";
+import { findMembership, findOrgByClerkId, findUserByClerkId } from "./mirror";
+import { notFound, refusal } from "./refusals";
 
 /** Who acts and in which workspace; the Clerk session and agent calls both resolve to it. */
 export type OrgScope = { org: Doc<"organizations">; actorId: Id<"users"> };
 
-/** The pinned HX workspace, from the server-side `HX_WORKSPACE_ORG_ID` (the Clerk org id). */
+/** The pinned HX workspace, from the server-side `HX_WORKSPACE_ORG_ID` (the Clerk org id); a bad setting is a 500 that names it. */
 export async function resolveWorkspace(ctx: QueryCtx | MutationCtx): Promise<Doc<"organizations">> {
   const clerkOrgId = process.env.HX_WORKSPACE_ORG_ID;
   if (!clerkOrgId) {
-    throw new Error("HX_WORKSPACE_ORG_ID is not configured");
+    refusal(SERVER_ERROR, "HX_WORKSPACE_ORG_ID is not configured");
   }
-  return await getOrgByClerkIdOrThrow(ctx, clerkOrgId, "HX_WORKSPACE_ORG_ID matches no workspace");
+  const org = await findOrgByClerkId(ctx, clerkOrgId);
+  if (org === null) {
+    refusal(SERVER_ERROR, "HX_WORKSPACE_ORG_ID matches no workspace");
+  }
+  return org;
 }
 
 /** A read names its agent too; the name is checked, but no row is written. */

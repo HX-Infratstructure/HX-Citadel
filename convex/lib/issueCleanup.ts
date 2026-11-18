@@ -8,6 +8,11 @@ export async function deleteRows(ctx: MutationCtx, rows: { _id: Id<TableNames> }
   }
 }
 
+/** One count per table. */
+export function countTables<T extends string>(tables: readonly T[], count: (table: T) => number) {
+  return Object.fromEntries(tables.map((table) => [table, count(table)])) as Record<T, number>;
+}
+
 /**
  * Rows written before `attachments.create` refused shared files can still share one,
  * so a file is deleted only with the last row that uses it.
@@ -27,59 +32,48 @@ export async function deleteAttachmentFiles(ctx: MutationCtx, attachments: Doc<"
 }
 
 /** Relations name the issue on either end, so both indexes are read. */
-async function loadRelations(ctx: MutationCtx, issueId: Id<"issues">) {
+async function loadRelations(ctx: MutationCtx, issue: Doc<"issues">) {
   const outgoing = await ctx.db
     .query("issueRelations")
-    .withIndex("by_issue", (q) => q.eq("issueId", issueId))
+    .withIndex("by_issue", (q) => q.eq("issueId", issue._id))
     .collect();
   const incoming = await ctx.db
     .query("issueRelations")
-    .withIndex("by_related", (q) => q.eq("relatedIssueId", issueId))
+    .withIndex("by_related", (q) => q.eq("relatedIssueId", issue._id))
     .collect();
   return [...outgoing, ...incoming];
 }
 
-/** The issue's rows in its own workspace; a row from another workspace that points at it is left alone. */
-async function loadIssueOwnedRows(ctx: MutationCtx, issue: Doc<"issues">) {
-  const issueId = issue._id;
-  return {
-    comments: await inOrg(ctx.db.query("comments").withIndex("by_issue", (q) => q.eq("issueId", issueId)), issue.orgId).collect(),
-    activity: await inOrg(ctx.db.query("activity").withIndex("by_issue", (q) => q.eq("issueId", issueId)), issue.orgId).collect(),
-    attachments: await inOrg(
-      ctx.db.query("attachments").withIndex("by_issue", (q) => q.eq("issueId", issueId)),
-      issue.orgId
-    ).collect(),
-    issueLabels: await ctx.db
-      .query("issueLabels")
-      .withIndex("by_issue", (q) => q.eq("issueId", issueId))
-      .collect(),
-    decisions: await inOrg(ctx.db.query("decisions").withIndex("by_issue", (q) => q.eq("issueId", issueId)), issue.orgId).collect(),
-    issueRelations: await loadRelations(ctx, issueId),
-  };
-}
+/**
+ * Every table whose rows belong to one issue, and how to find them: the one list the
+ * deletes, the counts and the admin validators derive from. Rows are read in the issue's
+ * own workspace, so a row from another workspace that points at it is left alone.
+ */
+const ISSUE_OWNED_ROWS = {
+  comments: (ctx: MutationCtx, issue: Doc<"issues">) =>
+    inOrg(ctx.db.query("comments").withIndex("by_issue", (q) => q.eq("issueId", issue._id)), issue.orgId).collect(),
+  activity: (ctx: MutationCtx, issue: Doc<"issues">) =>
+    inOrg(ctx.db.query("activity").withIndex("by_issue", (q) => q.eq("issueId", issue._id)), issue.orgId).collect(),
+  attachments: (ctx: MutationCtx, issue: Doc<"issues">) =>
+    inOrg(ctx.db.query("attachments").withIndex("by_issue", (q) => q.eq("issueId", issue._id)), issue.orgId).collect(),
+  issueLabels: (ctx: MutationCtx, issue: Doc<"issues">) =>
+    ctx.db.query("issueLabels").withIndex("by_issue", (q) => q.eq("issueId", issue._id)).collect(),
+  decisions: (ctx: MutationCtx, issue: Doc<"issues">) =>
+    inOrg(ctx.db.query("decisions").withIndex("by_issue", (q) => q.eq("issueId", issue._id)), issue.orgId).collect(),
+  issueRelations: loadRelations,
+};
 
-type IssueOwnedRows = Awaited<ReturnType<typeof loadIssueOwnedRows>>;
-type IssueOwnedTable = keyof IssueOwnedRows;
+type IssueOwnedTable = keyof typeof ISSUE_OWNED_ROWS;
+type IssueOwnedRows = { [T in IssueOwnedTable]: Awaited<ReturnType<(typeof ISSUE_OWNED_ROWS)[T]>> };
 export type IssueOwnedCounts = Record<IssueOwnedTable, number>;
 
-const NO_OWNED_ROWS: IssueOwnedCounts = {
-  comments: 0,
-  activity: 0,
-  attachments: 0,
-  issueLabels: 0,
-  decisions: 0,
-  issueRelations: 0,
-};
-const ISSUE_OWNED_TABLES = Object.keys(NO_OWNED_ROWS) as IssueOwnedTable[];
+export const ISSUE_OWNED_TABLES = Object.keys(ISSUE_OWNED_ROWS) as IssueOwnedTable[];
 
-function countRows(owned: IssueOwnedRows): IssueOwnedCounts {
-  const entries = ISSUE_OWNED_TABLES.map((table) => [table, owned[table].length]);
-  return Object.fromEntries(entries) as IssueOwnedCounts;
-}
-
-function addCounts(total: IssueOwnedCounts, counts: IssueOwnedCounts): IssueOwnedCounts {
-  const entries = ISSUE_OWNED_TABLES.map((table) => [table, total[table] + counts[table]]);
-  return Object.fromEntries(entries) as IssueOwnedCounts;
+async function loadIssueOwnedRows(ctx: MutationCtx, issue: Doc<"issues">): Promise<IssueOwnedRows> {
+  const entries = await Promise.all(
+    ISSUE_OWNED_TABLES.map(async (table) => [table, await ISSUE_OWNED_ROWS[table](ctx, issue)])
+  );
+  return Object.fromEntries(entries) as IssueOwnedRows;
 }
 
 /** Deletes every row that belongs to one issue, and its stored files. The issue row is the caller's. */
@@ -89,7 +83,7 @@ export async function deleteIssueOwnedRows(ctx: MutationCtx, issue: Doc<"issues"
   for (const rows of Object.values(owned)) {
     await deleteRows(ctx, rows);
   }
-  return countRows(owned);
+  return countTables(ISSUE_OWNED_TABLES, (table) => owned[table].length);
 }
 
 /**
@@ -97,10 +91,11 @@ export async function deleteIssueOwnedRows(ctx: MutationCtx, issue: Doc<"issues"
  * relation between two of them is read and deleted once.
  */
 export async function deleteIssuesWithOwnedRows(ctx: MutationCtx, issues: Doc<"issues">[]) {
-  let total = NO_OWNED_ROWS;
+  const perIssue: IssueOwnedCounts[] = [];
   for (const issue of issues) {
-    total = addCounts(total, await deleteIssueOwnedRows(ctx, issue));
+    perIssue.push(await deleteIssueOwnedRows(ctx, issue));
   }
   await deleteRows(ctx, issues);
-  return { ...total, issues: issues.length };
+  const owned = countTables(ISSUE_OWNED_TABLES, (table) => perIssue.reduce((sum, counts) => sum + counts[table], 0));
+  return { ...owned, issues: issues.length };
 }

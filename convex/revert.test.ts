@@ -38,7 +38,9 @@ async function setup() {
   const lastChange = async (issueId: Id<"issues">, type: string) =>
     (await feed(issueId)).filter((row) => row.type === type).at(-1)!._id;
   const revert = (activityId: Id<"activity">) => asOwner.mutation(api.issues.revertChange, { activityId });
-  return { t, asOwner, asMember, teamId, ownerId, memberId, story, issue, feed, lastChange, revert };
+  const revertible = async (issueId: Id<"issues">) =>
+    (await asOwner.query(api.activity.listByIssue, { issueId })).filter((row) => row.revertible).map((row) => row._id);
+  return { t, asOwner, asMember, teamId, ownerId, memberId, story, issue, feed, lastChange, revert, revertible };
 }
 
 type Setup = Awaited<ReturnType<typeof setup>>;
@@ -160,6 +162,37 @@ describe("owner revert from the activity log", () => {
     expect((await s.issue(storyId)).status).toBe("in_progress");
   });
 
+  test("a revert is not itself revertible", async () => {
+    const s = await setup();
+    const storyId = await s.story("Story");
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, priority: "low" });
+    await s.revert(await s.lastChange(storyId, "priority_changed"));
+
+    await expect(s.revert(await s.lastChange(storyId, "reverted"))).rejects.toThrow(
+      /Only status, assignee, priority and title changes can be reverted/
+    );
+    expect((await s.issue(storyId)).priority).toBe("none");
+  });
+
+  test("reverting to an assignee who left the workspace is refused and the assignee is unchanged", async () => {
+    const s = await setup();
+    const storyId = await s.story("Story", s.memberId);
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, assigneeId: s.ownerId });
+    await s.t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(storyId))!;
+      const membership = await ctx.db
+        .query("members")
+        .withIndex("by_org_and_user", (q) => q.eq("orgId", orgId).eq("userId", s.memberId))
+        .unique();
+      await ctx.db.delete(membership!._id);
+    });
+
+    await expect(s.revert(await s.lastChange(storyId, "assignee_changed"))).rejects.toThrow(
+      /Assignee Member not found/
+    );
+    expect((await s.issue(storyId)).assigneeId).toBe(s.ownerId);
+  });
+
   test("an assignee id that can't be parsed is refused and the assignee is unchanged", async () => {
     const s = await setup();
     const storyId = await s.story("Story", s.memberId);
@@ -178,6 +211,44 @@ describe("owner revert from the activity log", () => {
 
     await expect(s.revert(activityId)).rejects.toThrow(/Unknown value not-a-user-id/);
     expect((await s.issue(storyId)).assigneeId).toBe(s.memberId);
+  });
+
+  test("the feed's revertible flag matches what revertChange accepts", async () => {
+    const s = await setup();
+    const storyId = await s.story("Story");
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, priority: "low" });
+    const earlier = await s.lastChange(storyId, "priority_changed");
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, priority: "high" });
+    const latest = await s.lastChange(storyId, "priority_changed");
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, estimate: 3 });
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, title: "Renamed" });
+    const renamed = await s.lastChange(storyId, "title_changed");
+    await s.revert(renamed);
+
+    expect(await s.revertible(storyId)).toEqual([latest]);
+    await expect(s.revert(earlier)).rejects.toThrow(/has changed since/);
+  });
+
+  test("past the feed's first 500 rows, the newest change still offers Revert and reverts", async () => {
+    const s = await setup();
+    const storyId = await s.story("Story");
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, priority: "low" });
+    const old = await s.lastChange(storyId, "priority_changed");
+    await s.t.run(async (ctx) => {
+      const story = (await ctx.db.get(storyId))!;
+      for (let i = 0; i < 520; i++) {
+        await ctx.db.insert("activity", { orgId: story.orgId, issueId: storyId, actorId: s.memberId, type: "commented" });
+      }
+    });
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, priority: "high" });
+    const newest = await s.lastChange(storyId, "priority_changed");
+
+    const shown = await s.asOwner.query(api.activity.listByIssue, { issueId: storyId });
+    expect(shown).toHaveLength(500);
+    expect(shown.at(-1)).toMatchObject({ _id: newest, revertible: true });
+    expect(shown.map((row) => row._id)).not.toContain(old);
+    await s.revert(newest);
+    expect((await s.issue(storyId)).priority).toBe("low");
   });
 
   test("an agent can't reach it: no REST route and no MCP tool", () => {

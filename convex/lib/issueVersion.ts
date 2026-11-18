@@ -1,7 +1,7 @@
-import { ConvexError } from "convex/values";
+import { type Refusal, STALE } from "../../lib/api-contract";
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx } from "../_generated/server";
-import { notFound, STALE } from "./refusals";
+import { notFound, refusal } from "./refusals";
 
 export const FIRST_VERSION = 1;
 
@@ -40,12 +40,13 @@ export async function patchIssue(
   return version;
 }
 
-export type StaleData = { code: typeof STALE; message: string };
+/** The clients still read the stale code through this type; it goes once they import `lib/api-contract`. */
+export type StaleData = Refusal & { code: typeof STALE };
 
-/** A write that names a version the issue has moved past; the HTTP layer maps it to 412. */
+/** A write that names a version the issue has moved past. */
 export function assertIfMatch(issue: Doc<"issues">, label: string, ifMatch: number | undefined): void {
   if (ifMatch === undefined || ifMatch === issueVersion(issue)) {
     return;
   }
-  throw new ConvexError<StaleData>({ code: STALE, message: `${label} is at version ${issueVersion(issue)}` });
+  refusal(STALE, `${label} is at version ${issueVersion(issue)}`);
 }

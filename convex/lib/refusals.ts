@@ -1,27 +1,25 @@
 import { ConvexError } from "convex/values";
+import { type ErrorCode, NOT_FOUND, type Refusal, RULE_REFUSED, VALIDATION } from "../../lib/api-contract";
 
-/** The code for a refusal by a business rule (WIP, the Done gate, levels); the HTTP API sends it as 409. */
-export const RULE_REFUSED = "rule_refused";
-/** The code for a missing record; the HTTP API sends it as 404. */
-export const NOT_FOUND = "not_found";
-/** The code for input the write cannot take; the HTTP API sends it as 400. */
-export const VALIDATION = "validation";
-/** The code for an If-Match that names an older issue version; the HTTP API sends it as 412. */
-export const STALE = "stale";
-/** The code for an Idempotency-Key already used for another request; the HTTP API sends it as 409. */
-export const IDEMPOTENCY_KEY_REUSED = "idempotency_key_reused";
+/** The live check still imports this from here; this line goes once it imports `lib/api-contract`. */
+export { RULE_REFUSED };
 
-/** Refuse a write that breaks a business rule. Typed, so callers map it by its code and never by its words. */
+/** Refuse with a code from the wire contract. Typed, so callers map it by its code and never by its words. */
+export function refusal(code: ErrorCode, message: string): never {
+  throw new ConvexError<Refusal>({ code, message });
+}
+
+/** Refuse a write that breaks a business rule (WIP, the Done gate, levels). */
 export function refuse(message: string): never {
-  throw new ConvexError({ code: RULE_REFUSED, message });
+  return refusal(RULE_REFUSED, message);
 }
 
 /** Report a record that does not exist, or that the caller's workspace cannot see. */
 export function notFound(message: string): never {
-  throw new ConvexError({ code: NOT_FOUND, message });
+  return refusal(NOT_FOUND, message);
 }
 
 /** Refuse input the write cannot take, such as a malformed key or an empty comment. */
 export function invalid(message: string): never {
-  throw new ConvexError({ code: VALIDATION, message });
+  return refusal(VALIDATION, message);
 }
