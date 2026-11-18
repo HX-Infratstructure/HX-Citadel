@@ -121,7 +121,6 @@ async function upsertOrganization(ctx: MutationCtx, data: ClerkOrgData) {
       name: data.name ?? "Untitled",
       slug: data.slug ?? undefined,
       imageUrl: data.image_url ?? undefined,
-      plan: "free",
     });
   }
 }
