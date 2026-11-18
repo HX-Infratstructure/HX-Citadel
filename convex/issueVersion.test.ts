@@ -211,7 +211,7 @@ describe("Clerk-session patch paths bump by one", () => {
 
 describe("one home for issue patches", () => {
   /** First arguments of `ctx.db.patch(` that name a non-issue row; any other patch must be `patchIssue`'s own. */
-  const NON_ISSUE_IDS = ["team._id", "teamId", "cycle._id", "project._id", "view._id", "comment._id", "existing._id"];
+  const NON_ISSUE_IDS = ["team._id", "teamId", "cycle._id", "project._id", "view._id", "comment._id", "existing._id", "decision._id"];
 
   test("every ctx.db.patch( outside patchIssue names a non-issue row", () => {
     const sources = ["", "lib", "lib/rules"].flatMap((dir) =>

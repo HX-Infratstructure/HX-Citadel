@@ -51,6 +51,7 @@ async function setup() {
     t.run(async (ctx) => {
       const storageId = await ctx.storage.store(new Blob(["proof"]));
       await ctx.db.insert("comments", { orgId, issueId, authorId: memberId, body: "a comment" });
+      await ctx.db.insert("decisions", { orgId, issueId, askedBy: memberId, question: "Ship?", status: "open" });
       await ctx.db.insert("activity", { orgId, issueId, actorId: memberId, type: "commented" });
       await ctx.db.insert("attachments", {
         orgId,
@@ -82,6 +83,9 @@ async function setup() {
         ),
         attachments: await count(
           ctx.db.query("attachments").withIndex("by_issue", (q) => q.eq("issueId", issueId)).collect()
+        ),
+        decisions: await count(
+          ctx.db.query("decisions").withIndex("by_issue", (q) => q.eq("issueId", issueId)).collect()
         ),
         issueLabels: await count(
           ctx.db.query("issueLabels").withIndex("by_issue", (q) => q.eq("issueId", issueId)).collect()
@@ -116,6 +120,7 @@ const NONE = {
   comments: 0,
   activity: 0,
   attachments: 0,
+  decisions: 0,
   issueLabels: 0,
   relationsAsSource: 0,
   relationsAsTarget: 0,

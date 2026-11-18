@@ -17,6 +17,7 @@ const issueContentCountFields = {
   comments: v.number(),
   activity: v.number(),
   attachments: v.number(),
+  decisions: v.number(),
   issues: v.number(),
 };
 
@@ -93,6 +94,10 @@ async function loadOrgContent(ctx: QueryCtx | MutationCtx, orgId: Id<"organizati
     attachments: await collectEach(issueIds, (issueId) =>
       ctx.db.query("attachments").withIndex("by_issue", (q) => q.eq("issueId", issueId)).collect()
     ),
+    decisions: await ctx.db
+      .query("decisions")
+      .withIndex("by_org_and_status", (q) => q.eq("orgId", orgId))
+      .collect(),
     issues,
     cycles: await collectEach(teams, (team) =>
       ctx.db.query("cycles").withIndex("by_team", (q) => q.eq("teamId", team._id)).collect()

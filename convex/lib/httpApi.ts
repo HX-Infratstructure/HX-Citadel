@@ -79,7 +79,7 @@ export async function readJsonObject(request: Request): Promise<Record<string, u
 
 export const ISSUES_PATH = "/api/v1/issues";
 
-const ISSUE_ACTIONS = ["proof", "comments", "subtasks"] as const;
+const ISSUE_ACTIONS = ["proof", "comments", "subtasks", "decisions"] as const;
 export type IssueAction = (typeof ISSUE_ACTIONS)[number];
 export type IssuePath = { key: string; action: IssueAction | null };
 
@@ -96,13 +96,13 @@ export function parseIssuePath(pathname: string): IssuePath {
 const ERROR_MAP: { pattern: RegExp; status: number; code: string }[] = [
   { pattern: /HX_WORKSPACE_ORG_ID/, status: 500, code: "server_error" },
   { pattern: /ArgumentValidationError|Validator error/, status: 400, code: "validation" },
-  { pattern: /invalid (agent name|issue key)/i, status: 400, code: "validation" },
+  { pattern: /invalid (agent name|issue key|decision)/i, status: 400, code: "validation" },
   { pattern: /must be an absolute http|cannot be empty/i, status: 400, code: "validation" },
   { pattern: /not found/i, status: 404, code: "not_found" },
 ];
 
 /** Typed `ConvexError` codes the shared write logic throws, by HTTP status. */
-const TYPED_ERRORS: Record<string, number> = { stale: 412, idempotency_key_reused: 409 };
+const TYPED_ERRORS: Record<string, number> = { stale: 412, idempotency_key_reused: 409, [RULE_REFUSED]: 409 };
 
 function typedFailure(error: unknown): HttpFailure | null {
   if (!(error instanceof ConvexError)) {

@@ -20,6 +20,12 @@ import {
 } from "./lib/orgScope";
 import { expireKeys, idempotencyValidator, Idempotency, withIdempotency } from "./lib/idempotency";
 import { assertIfMatch, issueVersion } from "./lib/issueVersion";
+import {
+  askDecision as askDecisionWithRules,
+  decisionValidator,
+  listedDecisionValidator,
+  listIssueDecisions,
+} from "./lib/decisions";
 import { findTeamByKey } from "./lib/teams";
 import {
   issueKindValidator,
@@ -262,6 +268,34 @@ export const createComment = internalMutation({
       }
       return { comment };
     }),
+});
+
+export const askDecision = internalMutation({
+  args: {
+    agentName: v.string(),
+    key: v.string(),
+    question: v.string(),
+    choices: v.optional(v.array(v.string())),
+    recommended: v.optional(v.string()),
+    ifMatch,
+    idempotency,
+  },
+  returns: v.object({ decision: decisionValidator }),
+  handler: (ctx, { agentName, idempotency, key, ifMatch, ...ask }) =>
+    agentWrite(ctx, agentName, idempotency, async (scope) => {
+      const { issueId } = await resolveKeyedWrite(ctx, scope, key, ifMatch);
+      return { decision: await askDecisionWithRules(ctx, scope, { ...ask, issueId }) };
+    }),
+});
+
+export const listDecisions = internalQuery({
+  args: { agentName: v.string(), key: v.string() },
+  returns: v.object({ decisions: v.array(listedDecisionValidator) }),
+  handler: async (ctx, { agentName, key }) => {
+    const org = await resolveAgentReadScope(ctx, agentName);
+    const { issue } = await findIssueByKey(ctx, org._id, key);
+    return { decisions: await listIssueDecisions(ctx, org._id, issue._id) };
+  },
 });
 
 /** The hourly cron's TTL sweep of stored Idempotency-Key results. */

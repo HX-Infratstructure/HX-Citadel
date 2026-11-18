@@ -44,6 +44,10 @@ async function loadIssueOwnedRows(ctx: MutationCtx, issueId: Id<"issues">) {
       .query("issueLabels")
       .withIndex("by_issue", (q) => q.eq("issueId", issueId))
       .collect(),
+    decisions: await ctx.db
+      .query("decisions")
+      .withIndex("by_issue", (q) => q.eq("issueId", issueId))
+      .collect(),
     issueRelations: await loadRelations(ctx, issueId),
   };
 }
@@ -57,6 +61,7 @@ const NO_OWNED_ROWS: IssueOwnedCounts = {
   activity: 0,
   attachments: 0,
   issueLabels: 0,
+  decisions: 0,
   issueRelations: 0,
 };
 const ISSUE_OWNED_TABLES = Object.keys(NO_OWNED_ROWS) as IssueOwnedTable[];

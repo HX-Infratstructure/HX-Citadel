@@ -19,6 +19,7 @@ const CONTENT_TABLES = [
   "comments",
   "activity",
   "attachments",
+  "decisions",
   "issues",
   "cycles",
   "labels",
@@ -36,6 +37,7 @@ const SEEDED_COUNTS = {
   comments: 1,
   activity: 2,
   attachments: 1,
+  decisions: 1,
   issues: 2,
   cycles: 1,
   labels: 1,
@@ -114,6 +116,7 @@ async function seedOrg(ctx: MutationCtx & { storage: StorageActionWriter }, cler
     type: "blocks",
   });
   await ctx.db.insert("comments", { orgId, issueId: firstIssueId, authorId: userId, body: "Hi" });
+  await ctx.db.insert("decisions", { orgId, issueId: firstIssueId, askedBy: userId, question: "Ship?", status: "open" });
   const storageId = await ctx.storage.store(new Blob(["attachment"]));
   await ctx.db.insert("attachments", {
     orgId,
@@ -303,6 +306,7 @@ async function seedTeam(
     await ctx.db.insert("activity", { orgId, issueId, actorId: userId, type: "created" });
   }
   await ctx.db.insert("comments", { orgId, issueId: storyId, authorId: userId, body: key });
+  await ctx.db.insert("decisions", { orgId, issueId: storyId, askedBy: userId, question: key, status: "open" });
   await ctx.db.insert("issueRelations", { issueId: storyId, relatedIssueId: subtaskId, type: "blocks" });
   const storageId = await ctx.storage.store(new Blob([key]));
   await ctx.db.insert("attachments", {
@@ -375,6 +379,7 @@ describe("admin.clearTeamContent", () => {
       comments: 1,
       activity: 2,
       attachments: 1,
+      decisions: 1,
       issues: 2,
       cycles: 1,
       teams: 1,

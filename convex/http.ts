@@ -82,10 +82,26 @@ async function listIssuesRoute(ctx: ActionCtx, request: Request, agentName: stri
   return json(200, await ctx.runQuery(internal.agentApi.listIssues, args));
 }
 
-/** GET /api/v1/issues/{key}: a story or sub-task by its display key. */
+type ReadRoute = (ctx: ActionCtx, agentName: string, key: string) => Promise<Response>;
+
+/** GET /api/v1/issues/{key}/decisions: the story's decision requests, newest first. */
+async function listDecisionsRoute(ctx: ActionCtx, agentName: string, key: string): Promise<Response> {
+  return json(200, await ctx.runQuery(internal.agentApi.listDecisions, { agentName, key }));
+}
+
+const ISSUE_READ_ROUTES: Partial<Record<IssueAction, ReadRoute>> = { decisions: listDecisionsRoute };
+
+/** GET /api/v1/issues/{key}: a story or sub-task by its display key; GET /api/v1/issues/{key}/{action} by the read table. */
 async function getIssueRoute(ctx: ActionCtx, request: Request, agentName: string): Promise<Response> {
-  const { key } = issuePath(request, null);
-  return issueJson(200, await ctx.runQuery(internal.agentApi.getIssue, { agentName, key }));
+  const { key, action } = parseIssuePath(new URL(request.url).pathname);
+  if (action === null) {
+    return issueJson(200, await ctx.runQuery(internal.agentApi.getIssue, { agentName, key }));
+  }
+  const route = ISSUE_READ_ROUTES[action];
+  if (route === undefined) {
+    throw new HttpError(404, "not_found", `No GET route for ${new URL(request.url).pathname}`);
+  }
+  return await route(ctx, agentName, key);
 }
 
 /** PATCH /api/v1/issues/{key}: any subset of status, assignee (a name or null), priority, title and description. */
@@ -117,12 +133,19 @@ async function createSubtaskRoute(ctx: ActionCtx, { body, fields }: WriteRequest
   return issueJson(201, await ctx.runMutation(internal.agentApi.createIssue, args));
 }
 
+/** POST /api/v1/issues/{key}/decisions: ask the owner; no route answers, so an agent never answers its own. */
+async function askDecisionRoute(ctx: ActionCtx, { body, fields }: WriteRequest, key: string): Promise<Response> {
+  const args = bodyArgs<FunctionArgs<typeof internal.agentApi.askDecision>>(body, { ...fields, key });
+  return json(201, await ctx.runMutation(internal.agentApi.askDecision, args));
+}
+
 type KeyedRoute = (ctx: ActionCtx, write: WriteRequest, key: string) => Promise<Response>;
 
 const ISSUE_ACTION_ROUTES: Record<IssueAction, KeyedRoute> = {
   proof: setProofRoute,
   comments: createCommentRoute,
   subtasks: createSubtaskRoute,
+  decisions: askDecisionRoute,
 };
 
 /** The key from `/api/v1/issues/{key}[/{action}]`; a path whose action differs from the route's is 404. */
