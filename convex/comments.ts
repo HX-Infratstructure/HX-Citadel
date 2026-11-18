@@ -1,9 +1,10 @@
-import { v } from "convex/values";
+import { ObjectType, v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
-import { QueryCtx } from "./_generated/server";
+import { MutationCtx, QueryCtx } from "./_generated/server";
 import { getOrgIssue } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { OrgScope } from "./lib/orgScope";
 
 /** Comment enriched with author + mention display info for the feed. */
 const enrichedCommentValidator = v.object({
@@ -102,44 +103,46 @@ export const listByIssue = orgQuery({
   },
 });
 
+const createArgs = {
+  issueId: v.id("issues"),
+  body: v.string(),
+  mentions: v.optional(v.array(v.id("users"))),
+};
+
+/** Every comment rule in one place; the Clerk session and agent calls both come through here. */
+export async function createComment(
+  ctx: MutationCtx,
+  scope: OrgScope,
+  args: ObjectType<typeof createArgs>
+): Promise<Id<"comments">> {
+  const { org, actorId } = scope;
+  const issue = await getOrgIssue(ctx, org._id, args.issueId);
+
+  const body = args.body.trim();
+  if (!body) {
+    throw new Error("Comment cannot be empty");
+  }
+
+  const mentions = await filterToOrgMembers(ctx, org._id, args.mentions ?? []);
+
+  const commentId = await ctx.db.insert("comments", {
+    orgId: org._id,
+    issueId: issue._id,
+    authorId: actorId,
+    body,
+    mentions,
+  });
+
+  await logActivity(ctx, { orgId: org._id, issueId: issue._id, actorId, type: "commented" });
+
+  return commentId;
+}
+
 export const create = orgMutation({
-  args: {
-    issueId: v.id("issues"),
-    body: v.string(),
-    mentions: v.optional(v.array(v.id("users"))),
-  },
+  args: createArgs,
   returns: v.id("comments"),
-  handler: async (ctx, args) => {
-    const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
-
-    const body = args.body.trim();
-    if (!body) {
-      throw new Error("Comment cannot be empty");
-    }
-
-    const mentions = await filterToOrgMembers(
-      ctx,
-      ctx.org._id,
-      args.mentions ?? []
-    );
-
-    const commentId = await ctx.db.insert("comments", {
-      orgId: ctx.org._id,
-      issueId: issue._id,
-      authorId: ctx.user._id,
-      body,
-      mentions,
-    });
-
-    await logActivity(ctx, {
-      orgId: ctx.org._id,
-      issueId: issue._id,
-      actorId: ctx.user._id,
-      type: "commented",
-    });
-
-    return commentId;
-  },
+  handler: async (ctx, args) =>
+    await createComment(ctx, { org: ctx.org, actorId: ctx.user._id }, args),
 });
 
 export const update = orgMutation({

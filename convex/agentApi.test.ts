@@ -170,3 +170,126 @@ describe("REST refusals (DSH gates, 10:11Z)", () => {
     expect(await unmatched.json()).toEqual({ code: "server_error", message: "HX_WORKSPACE_ORG_ID matches no workspace" });
   });
 });
+
+describe("REST P3.2b routes", () => {
+  const agent = { "X-Agent-Id": "cc1" };
+  const send = (t: T, method: string, path: string, body?: unknown, headers: Record<string, string> = agent) =>
+    t.fetch(`/api/v1/issues${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  const failure = async (response: Response) => ({ status: response.status, code: (await response.json()).code });
+
+  test("GET ?team= lists keyed issues with assignee name and parentKey, filtered by status and assignee=me", async () => {
+    const t = await setup();
+    await post(t, { teamKey: "ENG", title: "Mine", assignee: "cc1" }, "cc1");
+    await post(t, { teamKey: "ENG", title: "Mine", assignee: "cc1" }, "cc1");
+    await post(t, { teamKey: "ENG", title: "Other" }, "cc1");
+    const all = await send(t, "GET", "?team=ENG");
+    expect(all.status).toBe(200);
+    const { issues } = await all.json();
+    expect(issues).toContainEqual(expect.objectContaining({ key: "ENG-3.1", kind: "subtask", parentKey: "ENG-3", assignee: null }));
+    const mine = await (await send(t, "GET", "?team=ENG&assignee=me&status=todo")).json();
+    expect(mine.issues.map((issue: { key: string; assignee: string }) => [issue.key, issue.assignee]).sort()).toEqual([
+      ["ENG-1", "cc1"],
+      ["ENG-1.1", "cc1"],
+      ["ENG-2", "cc1"],
+      ["ENG-2.1", "cc1"],
+    ]);
+    expect(await failure(await send(t, "GET", "?team=ENG", undefined, {}))).toEqual({ status: 400, code: "actor_required" });
+  });
+
+  test("PATCH moves, assigns and renames; a second In Progress story is 409 WIP", async () => {
+    const t = await setup();
+    await post(t, { teamKey: "ENG", title: "One" }, "cc1");
+    await post(t, { teamKey: "ENG", title: "Two" }, "cc1");
+    const moved = await send(t, "PATCH", "/ENG-1", { status: "in_progress", assignee: "cc1", title: "One!" });
+    expect(moved.status).toBe(200);
+    expect((await moved.json()).issue).toMatchObject({ key: "ENG-1", status: "in_progress", title: "One!" });
+    const second = await send(t, "PATCH", "/ENG-2", { status: "in_progress", assignee: "cc1" });
+    expect(await second.json()).toEqual({ code: "rule_refused", message: WIP_REFUSAL });
+    const unassigned = await send(t, "PATCH", "/ENG-1", { assignee: null });
+    expect((await unassigned.json()).issue.assigneeId).toBeUndefined();
+    expect(await failure(await send(t, "PATCH", "/ENG-1", { assignee: "ghost" }))).toEqual({ status: 404, code: "not_found" });
+  });
+
+  test("PATCH Done without proof is 409; an unknown key is 404; no header is 400", async () => {
+    const t = await setup();
+    await post(t, { teamKey: "ENG", title: "Story" }, "cc1");
+    expect(await failure(await send(t, "PATCH", "/ENG-1", { status: "done" }))).toEqual({ status: 409, code: "rule_refused" });
+    expect(await failure(await send(t, "PATCH", "/ENG-9", { status: "done" }))).toEqual({ status: 404, code: "not_found" });
+    expect(await failure(await send(t, "PATCH", "/ENG-1", { status: "done" }, {}))).toEqual({ status: 400, code: "actor_required" });
+  });
+
+  test("POST proof sets it on the testing sub-task; a non-testing issue is 409", async () => {
+    const t = await setup();
+    await post(t, { teamKey: "ENG", title: "Story" }, "cc1");
+    const proved = await send(t, "POST", "/ENG-1.1/proof", { proofUrl: "https://example.com/run/1" });
+    expect(proved.status).toBe(200);
+    expect((await proved.json()).issue).toMatchObject({ key: "ENG-1.1", proofUrl: "https://example.com/run/1" });
+    expect(await failure(await send(t, "POST", "/ENG-1/proof", { proofUrl: "https://example.com/x" }))).toEqual({
+      status: 409,
+      code: "rule_refused",
+    });
+  });
+
+  test("POST comments is 201 with the comment, authored and logged by the agent", async () => {
+    const t = await setup();
+    const { issue } = await (await post(t, { teamKey: "ENG", title: "Story" }, "cc1")).json();
+    const response = await send(t, "POST", "/ENG-1/comments", { body: "Started" });
+    expect(response.status).toBe(201);
+    const { comment } = await response.json();
+    expect(comment).toMatchObject({ body: "Started", authorId: issue.creatorId });
+    const activity = await t.run(async (ctx) =>
+      (await ctx.db.query("activity").collect()).filter((row) => row.type === "commented")
+    );
+    expect(activity.map((row) => row.actorId)).toEqual([issue.creatorId]);
+    expect(await failure(await send(t, "POST", "/ENG-9/comments", { body: "x" }))).toEqual({ status: 404, code: "not_found" });
+  });
+
+  test("POST subtasks is 201 with the keyed sub-task under the story", async () => {
+    const t = await setup();
+    await post(t, { teamKey: "ENG", title: "Story" }, "cc1");
+    const response = await send(t, "POST", "/ENG-1/subtasks", { title: "Write API" });
+    expect(response.status).toBe(201);
+    expect((await response.json()).issue).toMatchObject({ key: "ENG-1.2", kind: "subtask", title: "Write API" });
+    expect(await failure(await send(t, "POST", "/ENG-1/nope", {}))).toEqual({ status: 404, code: "not_found" });
+  });
+
+  test("DSH gates: list refusals, PATCH validation, proof URL and clearing, comment body, sub-task parent", async () => {
+    const t = await setup();
+    await post(t, { teamKey: "ENG", title: "Story" }, "cc1");
+    expect(await failure(await send(t, "GET", "?team=NOPE"))).toEqual({ status: 404, code: "not_found" });
+    expect(await failure(await send(t, "GET", "?team=ENG&status=doing"))).toEqual({ status: 400, code: "validation" });
+    expect(await failure(await send(t, "GET", ""))).toEqual({ status: 400, code: "validation" });
+    expect(await failure(await send(t, "POST", "/eng-x/subtasks", { title: "x" }))).toEqual({ status: 400, code: "validation" });
+    expect(await failure(await send(t, "PATCH", "/ENG-1", { status: "doing" }))).toEqual({ status: 400, code: "validation" });
+    expect(await failure(await send(t, "PATCH", "/ENG-1", { priority: "huge" }))).toEqual({ status: 400, code: "validation" });
+    expect(await failure(await send(t, "PATCH", "/ENG-1", { type: "bug" }))).toEqual({ status: 400, code: "validation" });
+
+    const badUrl = await send(t, "POST", "/ENG-1.1/proof", { proofUrl: "ftp://x" });
+    expect(await badUrl.json()).toEqual({ code: "validation", message: "The proof must be an absolute http:// or https:// URL" });
+    await send(t, "POST", "/ENG-1.1/proof", { proofUrl: "https://example.com/run/1" });
+    const cleared = await send(t, "POST", "/ENG-1.1/proof", { proofUrl: "" });
+    expect((await cleared.json()).issue.proofUrl).toBeUndefined();
+
+    expect(await failure(await send(t, "POST", "/ENG-1/comments", { body: "   " }))).toEqual({ status: 400, code: "validation" });
+    expect(await failure(await send(t, "POST", "/ENG-1.1/subtasks", { title: "Too deep" }))).toEqual({ status: 409, code: "rule_refused" });
+  });
+
+  test("DSH gate: the story's Done gate sees the proof set over REST", async () => {
+    const t = await setup();
+    await post(t, { teamKey: "ENG", title: "Story" }, "cc1");
+    await send(t, "POST", "/ENG-1.1/proof", { proofUrl: "https://example.com/run/1" });
+    expect((await send(t, "PATCH", "/ENG-1.1", { status: "done" })).status).toBe(200);
+    const done = await send(t, "PATCH", "/ENG-1", { status: "done" });
+    expect(done.status).toBe(200);
+    expect((await done.json()).issue).toMatchObject({ key: "ENG-1", status: "done" });
+  });
+
+  test("fix round: assignee=me from an agent with no row is 200 with no issues; a named unknown assignee is 404", async () => {
+    const t = await setup();
+    await post(t, { teamKey: "ENG", title: "Story" }, "cc1");
+    const fresh = await send(t, "GET", "?team=ENG&assignee=me", undefined, { "X-Agent-Id": "newbie" });
+    expect(fresh.status).toBe(200);
+    expect(await fresh.json()).toEqual({ issues: [] });
+    expect(await failure(await send(t, "GET", "?team=ENG&assignee=nobody"))).toEqual({ status: 404, code: "not_found" });
+  });
+});

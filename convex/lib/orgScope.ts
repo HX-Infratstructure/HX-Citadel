@@ -31,15 +31,28 @@ export async function resolveAgentScope(ctx: MutationCtx, agentName: string): Pr
   return { org, actorId };
 }
 
+/** The agent's user id when it is already a workspace member, otherwise null; never creates one. */
+export async function findAgentMember(
+  ctx: QueryCtx | MutationCtx,
+  orgId: Id<"organizations">,
+  name: string
+): Promise<Id<"users"> | null> {
+  const user = await findUserByClerkId(ctx, agentClerkId(name));
+  if (!user || !(await findMembership(ctx, orgId, user._id))) {
+    return null;
+  }
+  return user._id;
+}
+
 /** An assignee named in an agent call must already be an agent in the workspace; it is never created here. */
 export async function resolveAgentAssignee(
   ctx: QueryCtx | MutationCtx,
   orgId: Id<"organizations">,
   name: string
 ): Promise<Id<"users">> {
-  const user = await findUserByClerkId(ctx, agentClerkId(name));
-  if (!user || !(await findMembership(ctx, orgId, user._id))) {
+  const userId = await findAgentMember(ctx, orgId, name);
+  if (userId === null) {
     throw new Error(`Assignee ${name} not found`);
   }
-  return user._id;
+  return userId;
 }

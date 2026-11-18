@@ -41,10 +41,27 @@ export async function readJsonObject(request: Request): Promise<Record<string, u
   return body as Record<string, unknown>;
 }
 
+export const ISSUES_PATH = "/api/v1/issues";
+
+const ISSUE_ACTIONS = ["proof", "comments", "subtasks"] as const;
+export type IssueAction = (typeof ISSUE_ACTIONS)[number];
+export type IssuePath = { key: string; action: IssueAction | null };
+
+/** `/api/v1/issues/{key}` or `/api/v1/issues/{key}/{action}`; any other shape is 404. */
+export function parseIssuePath(pathname: string): IssuePath {
+  const [key, action, ...rest] = pathname.slice(ISSUES_PATH.length + 1).split("/").map(decodeURIComponent);
+  const known = ISSUE_ACTIONS.find((candidate) => candidate === action);
+  if (!key || rest.length > 0 || (action !== undefined && known === undefined)) {
+    throw new HttpError(404, "not_found", `No route for ${pathname}`);
+  }
+  return { key, action: known ?? null };
+}
+
 const ERROR_MAP: { pattern: RegExp; status: number; code: string }[] = [
   { pattern: /HX_WORKSPACE_ORG_ID/, status: 500, code: "server_error" },
   { pattern: /ArgumentValidationError|Validator error/, status: 400, code: "validation" },
   { pattern: /invalid (agent name|issue key)/i, status: 400, code: "validation" },
+  { pattern: /must be an absolute http|cannot be empty/i, status: 400, code: "validation" },
   { pattern: /not found/i, status: 404, code: "not_found" },
 ];
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { HttpError, readAgentId, toHttpError } from "./httpApi";
+import { HttpError, parseIssuePath, readAgentId, toHttpError } from "./httpApi";
 
 const withAgent = (value?: string) =>
   new Request("http://x/api/v1/issues", value === undefined ? {} : { headers: { "X-Agent-Id": value } });
@@ -55,5 +55,23 @@ describe("toHttpError", () => {
       status: 500,
       body: { code: "server_error" },
     });
+  });
+});
+
+describe("parseIssuePath", () => {
+  test.each([
+    ["/api/v1/issues/ENG-1", { key: "ENG-1", action: null }],
+    ["/api/v1/issues/ENG-1.2", { key: "ENG-1.2", action: null }],
+    ["/api/v1/issues/ENG-1/proof", { key: "ENG-1", action: "proof" }],
+    ["/api/v1/issues/ENG-1.1/comments", { key: "ENG-1.1", action: "comments" }],
+    ["/api/v1/issues/ENG-1/subtasks", { key: "ENG-1", action: "subtasks" }],
+  ])("%s", (path, expected) => {
+    expect(parseIssuePath(path)).toEqual(expected);
+  });
+
+  test("an unknown sub-path or extra segment is 404 not_found", () => {
+    for (const path of ["/api/v1/issues/ENG-1/nope", "/api/v1/issues/ENG-1/proof/x", "/api/v1/issues/"]) {
+      expect(toHttpError(captured(() => parseIssuePath(path)))).toMatchObject({ status: 404, body: { code: "not_found" } });
+    }
   });
 });

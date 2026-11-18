@@ -70,20 +70,27 @@ export async function getOrgIssue(
   return issue;
 }
 
+/** A team's issues, newest first, inside the caller's workspace. */
+export async function listTeamIssues(
+  ctx: { db: QueryCtx["db"] },
+  orgId: Id<"organizations">,
+  teamId: Id<"teams">
+): Promise<Doc<"issues">[]> {
+  const team = await ctx.db.get(teamId);
+  if (!team || team.orgId !== orgId) {
+    throw new Error("Team not found");
+  }
+  return await ctx.db
+    .query("issues")
+    .withIndex("by_team", (q) => q.eq("teamId", teamId))
+    .order("desc")
+    .take(500);
+}
+
 export const listByTeam = orgQuery({
   args: { teamId: v.id("teams") },
   returns: v.array(v.object(issueShape)),
-  handler: async (ctx, args) => {
-    const team = await ctx.db.get(args.teamId);
-    if (!team || team.orgId !== ctx.org._id) {
-      throw new Error("Team not found");
-    }
-    return await ctx.db
-      .query("issues")
-      .withIndex("by_team", (q) => q.eq("teamId", args.teamId))
-      .order("desc")
-      .take(500);
-  },
+  handler: async (ctx, args) => await listTeamIssues(ctx, ctx.org._id, args.teamId),
 });
 
 /** The backlog: open stories with no cycle, highest `sortOrder` (owner's rank) first. */
@@ -258,68 +265,77 @@ export const create = orgMutation({
     await createIssue(ctx, { org: ctx.org, actorId: ctx.user._id }, args),
 });
 
+const updateArgs = {
+  issueId: v.id("issues"),
+  title: v.optional(v.string()),
+  description: v.optional(v.string()),
+  status: v.optional(issueStatusValidator),
+  priority: v.optional(issuePriorityValidator),
+  assigneeId: v.optional(v.union(v.id("users"), v.null())),
+  projectId: v.optional(v.union(v.id("projects"), v.null())),
+  cycleId: v.optional(v.union(v.id("cycles"), v.null())),
+  estimate: v.optional(v.union(v.number(), v.null())),
+  dueDate: v.optional(v.union(v.number(), v.null())),
+  sortOrder: v.optional(v.number()),
+};
+
+export type UpdateIssueArgs = ObjectType<typeof updateArgs>;
+
+/** Every update rule in one place; the Clerk session and agent calls both come through here. */
+export async function updateIssue(ctx: MutationCtx, scope: OrgScope, args: UpdateIssueArgs): Promise<void> {
+  const issue = await getOrgIssue(ctx, scope.org._id, args.issueId);
+
+  const actor = { orgId: scope.org._id, actorId: scope.actorId };
+  const updates: Partial<Doc<"issues">> = {};
+
+  if (args.title !== undefined && args.title !== issue.title) {
+    updates.title = args.title.trim();
+  }
+  if (args.description !== undefined) {
+    updates.description = args.description;
+  }
+  if (args.status !== undefined && args.status !== issue.status) {
+    updates.status = args.status;
+  }
+  if (args.priority !== undefined && args.priority !== issue.priority) {
+    updates.priority = args.priority;
+  }
+  if (args.assigneeId !== undefined) {
+    updates.assigneeId = args.assigneeId ?? undefined;
+  }
+  if (args.projectId !== undefined) {
+    const placement = await assertValidParent(ctx, issue.kind, {
+      teamId: issue.teamId,
+      parentIssueId: issue.parentIssueId,
+      projectId: args.projectId ?? undefined,
+    });
+    updates.projectId = placement.projectId;
+    await cascadeProject(ctx, issue._id, placement.projectId, actor);
+  }
+  if (args.cycleId !== undefined) {
+    updates.cycleId = args.cycleId ?? undefined;
+  }
+  if (args.estimate !== undefined) {
+    updates.estimate = args.estimate ?? undefined;
+  }
+  if (args.dueDate !== undefined) {
+    updates.dueDate = args.dueDate ?? undefined;
+  }
+  if (args.sortOrder !== undefined) {
+    updates.sortOrder = args.sortOrder;
+  }
+
+  await assertWipFreeAfterUpdate(ctx, issue, updates);
+  await assertDoneGateAfterUpdate(ctx, issue, updates);
+  await ctx.db.patch(issue._id, updates);
+  await logFieldChanges(ctx, actor, issue._id, changedFields(issue, updates));
+}
+
 export const update = orgMutation({
-  args: {
-    issueId: v.id("issues"),
-    title: v.optional(v.string()),
-    description: v.optional(v.string()),
-    status: v.optional(issueStatusValidator),
-    priority: v.optional(issuePriorityValidator),
-    assigneeId: v.optional(v.union(v.id("users"), v.null())),
-    projectId: v.optional(v.union(v.id("projects"), v.null())),
-    cycleId: v.optional(v.union(v.id("cycles"), v.null())),
-    estimate: v.optional(v.union(v.number(), v.null())),
-    dueDate: v.optional(v.union(v.number(), v.null())),
-    sortOrder: v.optional(v.number()),
-  },
+  args: updateArgs,
   returns: v.null(),
   handler: async (ctx, args) => {
-    const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
-
-    const actor = { orgId: ctx.org._id, actorId: ctx.user._id };
-    const updates: Partial<Doc<"issues">> = {};
-
-    if (args.title !== undefined && args.title !== issue.title) {
-      updates.title = args.title.trim();
-    }
-    if (args.description !== undefined) {
-      updates.description = args.description;
-    }
-    if (args.status !== undefined && args.status !== issue.status) {
-      updates.status = args.status;
-    }
-    if (args.priority !== undefined && args.priority !== issue.priority) {
-      updates.priority = args.priority;
-    }
-    if (args.assigneeId !== undefined) {
-      updates.assigneeId = args.assigneeId ?? undefined;
-    }
-    if (args.projectId !== undefined) {
-      const placement = await assertValidParent(ctx, issue.kind, {
-        teamId: issue.teamId,
-        parentIssueId: issue.parentIssueId,
-        projectId: args.projectId ?? undefined,
-      });
-      updates.projectId = placement.projectId;
-      await cascadeProject(ctx, issue._id, placement.projectId, actor);
-    }
-    if (args.cycleId !== undefined) {
-      updates.cycleId = args.cycleId ?? undefined;
-    }
-    if (args.estimate !== undefined) {
-      updates.estimate = args.estimate ?? undefined;
-    }
-    if (args.dueDate !== undefined) {
-      updates.dueDate = args.dueDate ?? undefined;
-    }
-    if (args.sortOrder !== undefined) {
-      updates.sortOrder = args.sortOrder;
-    }
-
-    await assertWipFreeAfterUpdate(ctx, issue, updates);
-    await assertDoneGateAfterUpdate(ctx, issue, updates);
-    await ctx.db.patch(issue._id, updates);
-    await logFieldChanges(ctx, actor, issue._id, changedFields(issue, updates));
+    await updateIssue(ctx, { org: ctx.org, actorId: ctx.user._id }, args);
     return null;
   },
 });
@@ -406,18 +422,26 @@ async function logProofChange(
 }
 
 /** Sets or clears (empty string) the proof URL on a Complete testing sub-task. */
+export async function setIssueProof(
+  ctx: MutationCtx,
+  scope: OrgScope,
+  args: { issueId: Id<"issues">; proofUrl: string }
+): Promise<void> {
+  const issue = await getOrgIssue(ctx, scope.org._id, args.issueId);
+  assertTestingSubtask(issue);
+  const proofUrl = args.proofUrl.trim();
+  if (proofUrl !== "") {
+    assertProofUrl(proofUrl);
+  }
+  await ctx.db.patch(issue._id, { proofUrl: proofUrl || undefined });
+  await logProofChange(ctx, issue, proofUrl, scope.actorId);
+}
+
 export const setProof = orgMutation({
   args: { issueId: v.id("issues"), proofUrl: v.string() },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
-    assertTestingSubtask(issue);
-    const proofUrl = args.proofUrl.trim();
-    if (proofUrl !== "") {
-      assertProofUrl(proofUrl);
-    }
-    await ctx.db.patch(issue._id, { proofUrl: proofUrl || undefined });
-    await logProofChange(ctx, issue, proofUrl, ctx.user._id);
+    await setIssueProof(ctx, { org: ctx.org, actorId: ctx.user._id }, args);
     return null;
   },
 });
