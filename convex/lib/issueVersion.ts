@@ -1,7 +1,7 @@
 import { ConvexError } from "convex/values";
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx } from "../_generated/server";
-import { notFound } from "./refusals";
+import { notFound, STALE } from "./refusals";
 
 export const FIRST_VERSION = 1;
 
@@ -40,12 +40,12 @@ export async function patchIssue(
   return version;
 }
 
-export type StaleData = { code: "stale"; message: string };
+export type StaleData = { code: typeof STALE; message: string };
 
 /** A write that names a version the issue has moved past; the HTTP layer maps it to 412. */
 export function assertIfMatch(issue: Doc<"issues">, label: string, ifMatch: number | undefined): void {
   if (ifMatch === undefined || ifMatch === issueVersion(issue)) {
     return;
   }
-  throw new ConvexError<StaleData>({ code: "stale", message: `${label} is at version ${issueVersion(issue)}` });
+  throw new ConvexError<StaleData>({ code: STALE, message: `${label} is at version ${issueVersion(issue)}` });
 }

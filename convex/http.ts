@@ -14,6 +14,7 @@ import {
   WriteRequest,
   writeRoute,
 } from "./lib/httpApi";
+import { NOT_FOUND, VALIDATION } from "./lib/refusals";
 
 const http = httpRouter();
 
@@ -99,7 +100,7 @@ async function getIssueRoute(ctx: ActionCtx, request: Request, agentName: string
   }
   const route = ISSUE_READ_ROUTES[action];
   if (route === undefined) {
-    throw new HttpError(404, "not_found", `No GET route for ${new URL(request.url).pathname}`);
+    throw new HttpError(404, NOT_FOUND, `No GET route for ${new URL(request.url).pathname}`);
   }
   return await route(ctx, agentName, key);
 }
@@ -127,7 +128,7 @@ async function createCommentRoute(ctx: ActionCtx, { body, fields }: WriteRequest
 async function createSubtaskRoute(ctx: ActionCtx, { body, fields }: WriteRequest, key: string): Promise<Response> {
   const parsed = parseIssueKey(key);
   if (parsed === null) {
-    throw new HttpError(400, "validation", `invalid issue key ${key}; use KEY-12 or KEY-12.3`);
+    throw new HttpError(400, VALIDATION, `invalid issue key ${key}; use KEY-12 or KEY-12.3`);
   }
   const args = bodyArgs<CreateIssueArgs>(body, { ...fields, teamKey: parsed.teamKey, kind: "subtask", parentKey: key });
   return issueJson(201, await ctx.runMutation(internal.agentApi.createIssue, args));
@@ -152,7 +153,7 @@ const ISSUE_ACTION_ROUTES: Record<IssueAction, KeyedRoute> = {
 function issuePath(request: Request, action: IssueAction | null): { key: string } {
   const path = parseIssuePath(new URL(request.url).pathname);
   if (path.action !== action) {
-    throw new HttpError(404, "not_found", `No ${request.method} route for ${new URL(request.url).pathname}`);
+    throw new HttpError(404, NOT_FOUND, `No ${request.method} route for ${new URL(request.url).pathname}`);
   }
   return path;
 }
@@ -161,7 +162,7 @@ function issuePath(request: Request, action: IssueAction | null): { key: string 
 async function issueActionRoute(ctx: ActionCtx, request: Request, write: WriteRequest): Promise<Response> {
   const { key, action } = parseIssuePath(new URL(request.url).pathname);
   if (action === null) {
-    throw new HttpError(404, "not_found", `No POST route for ${ISSUES_PATH}/${key}`);
+    throw new HttpError(404, NOT_FOUND, `No POST route for ${ISSUES_PATH}/${key}`);
   }
   return await ISSUE_ACTION_ROUTES[action](ctx, write, key);
 }

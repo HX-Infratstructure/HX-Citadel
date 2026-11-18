@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
+import { LIST_LIMIT } from "./issues";
 import { answerDecision, askDecision } from "./lib/decisions";
 import schema from "./schema";
 
@@ -152,6 +153,40 @@ describe("answering a decision", () => {
     });
   });
 
+  test("a decision id that no longer exists is a typed not_found", async () => {
+    const { t } = await setup();
+    const { decision } = await ask(t);
+    await t.run(async (ctx) => ctx.db.delete(decision._id));
+    await expect(answer(t, decision._id, { text: "Yes" })).rejects.toMatchObject({
+      data: { code: "not_found", message: "Decision not found" },
+    });
+  });
+
+  test("another workspace's decision is a typed not_found and stays open", async () => {
+    const { t } = await setup();
+    const foreignId = await t.run(async (ctx) => {
+      const orgId = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
+      const teamId = await ctx.db.insert("teams", { orgId, name: "Other", key: "OTH", nextIssueNumber: 2 });
+      const askedBy = (await ctx.db.query("users").first())!._id;
+      const issueId = await ctx.db.insert("issues", {
+        orgId,
+        teamId,
+        number: 1,
+        title: "Foreign story",
+        kind: "story",
+        status: "backlog",
+        priority: "none",
+        sortOrder: 0,
+        creatorId: askedBy,
+      });
+      return await ctx.db.insert("decisions", { orgId, issueId, askedBy, question: "Theirs?", status: "open" });
+    });
+    await expect(answer(t, foreignId, { text: "Yes" })).rejects.toMatchObject({
+      data: { code: "not_found", message: "Decision not found" },
+    });
+    expect(await t.run(async (ctx) => (await ctx.db.get(foreignId))?.status)).toBe("open");
+  });
+
   test("an empty answer is refused", async () => {
     const { t } = await setup();
     const { decision } = await ask(t);
@@ -198,6 +233,20 @@ describe("answering a decision", () => {
 });
 
 describe("REST /api/v1/issues/{key}/decisions", () => {
+  test("GET lists at most LIST_LIMIT decisions, newest first", async () => {
+    const { t, issue } = await setup();
+    await t.run(async (ctx) => {
+      const askedBy = (await ctx.db.query("users").first())!._id;
+      for (let n = 0; n <= LIST_LIMIT; n++) {
+        await ctx.db.insert("decisions", { orgId: issue.orgId, issueId: issue._id, askedBy, question: `Q${n}`, status: "answered" });
+      }
+    });
+    const list = await t.fetch("/api/v1/issues/ENG-1/decisions", { headers: { "X-Agent-Id": "cc1" } });
+    const { decisions } = (await list.json()) as { decisions: { question: string }[] };
+    expect(decisions).toHaveLength(LIST_LIMIT);
+    expect(decisions[0].question).toBe(`Q${LIST_LIMIT}`);
+  });
+
   test("POST asks and GET lists, newest first", async () => {
     const { t, issue } = await setup();
     const first = await t.fetch("/api/v1/issues/ENG-1/decisions", {

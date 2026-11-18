@@ -2,7 +2,7 @@ import { ConvexError } from "convex/values";
 import { errorMessage } from "../../lib/error-message";
 import { ActionCtx, httpAction } from "../_generated/server";
 import { hashRequest, Idempotency, IDEMPOTENCY_HEADER, isValidKey } from "./idempotency";
-import { NOT_FOUND, RULE_REFUSED, VALIDATION } from "./refusals";
+import { IDEMPOTENCY_KEY_REUSED, NOT_FOUND, RULE_REFUSED, STALE, VALIDATION } from "./refusals";
 
 export type ErrorBody = { code: string; message: string };
 export type HttpFailure = { status: number; body: ErrorBody };
@@ -51,7 +51,7 @@ export function readIfMatch(request: Request): number | undefined {
   }
   const version = Number(header.trim().replace(/^"(.*)"$/, "$1"));
   if (!Number.isInteger(version) || version < 1) {
-    throw new HttpError(400, "validation", `If-Match must be an issue version such as "2", not ${header}`);
+    throw new HttpError(400, VALIDATION, `If-Match must be an issue version such as "2", not ${header}`);
   }
   return version;
 }
@@ -63,7 +63,7 @@ export function readIdempotencyKey(request: Request): string {
     throw new HttpError(400, "idempotency_key_required", `The ${IDEMPOTENCY_HEADER} header is required on every write`);
   }
   if (!isValidKey(key)) {
-    throw new HttpError(400, "validation", `${IDEMPOTENCY_HEADER} must be 1 to 200 visible ASCII characters`);
+    throw new HttpError(400, VALIDATION, `${IDEMPOTENCY_HEADER} must be 1 to 200 visible ASCII characters`);
   }
   return key;
 }
@@ -71,7 +71,7 @@ export function readIdempotencyKey(request: Request): string {
 export async function readJsonObject(request: Request): Promise<Record<string, unknown>> {
   const body: unknown = await request.json().catch(() => null);
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    throw new HttpError(400, "validation", "The request body must be a JSON object");
+    throw new HttpError(400, VALIDATION, "The request body must be a JSON object");
   }
   return body as Record<string, unknown>;
 }
@@ -96,7 +96,7 @@ export function parseIssuePath(pathname: string): IssuePath {
   const [key, action, ...rest] = decodeSegments(pathname);
   const known = ISSUE_ACTIONS.find((candidate) => candidate === action);
   if (!key || rest.length > 0 || (action !== undefined && known === undefined)) {
-    throw new HttpError(404, "not_found", `No route for ${pathname}`);
+    throw new HttpError(404, NOT_FOUND, `No route for ${pathname}`);
   }
   return { key, action: known ?? null };
 }
@@ -104,15 +104,15 @@ export function parseIssuePath(pathname: string): IssuePath {
 /** Errors with no typed code, matched by their words: the runtime's argument validation and a missing workspace setting. */
 const ERROR_MAP: { pattern: RegExp; status: number; code: string }[] = [
   { pattern: /HX_WORKSPACE_ORG_ID/, status: 500, code: "server_error" },
-  { pattern: /ArgumentValidationError|Validator error/, status: 400, code: "validation" },
+  { pattern: /ArgumentValidationError|Validator error/, status: 400, code: VALIDATION },
 ];
 
 /** Typed `ConvexError` codes the shared write logic throws, by HTTP status. */
 const TYPED_ERRORS: Record<string, number> = {
   [VALIDATION]: 400,
   [NOT_FOUND]: 404,
-  stale: 412,
-  idempotency_key_reused: 409,
+  [STALE]: 412,
+  [IDEMPOTENCY_KEY_REUSED]: 409,
   [RULE_REFUSED]: 409,
 };
 

@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, MutationCtx, QueryCtx } from "./_generated/server";
 import { deleteAttachmentFiles, deleteIssuesWithOwnedRows, deleteRows } from "./lib/issueCleanup";
@@ -196,18 +197,27 @@ export const deleteOrgMirror = internalMutation({
   },
 });
 
+/** Issues one backfill run reads, so each run stays inside Convex's per-transaction limits. */
+export const BACKFILL_PAGE_SIZE = 100;
+
 /**
  * One-time: give every story written before the subtask counter its counter, so a subtask that
- * leaves it later cannot free its key for reuse. Returns how many stories it set; a rerun sets none.
+ * leaves it later cannot free its key for reuse. Each run reads one page of issues and schedules
+ * the next page. Returns how many stories this run set; a rerun sets none.
  */
 export const backfillSubCounters = internalMutation({
-  args: {},
+  args: { after: v.optional(v.string()) },
   returns: v.number(),
-  handler: async (ctx) => {
-    const issues = await ctx.db.query("issues").collect();
-    const stories = issues.filter((issue) => issue.kind === "story" && issue.nextSubNumber === undefined);
+  handler: async (ctx, args): Promise<number> => {
+    const { page, isDone, continueCursor } = await ctx.db
+      .query("issues")
+      .paginate({ cursor: args.after ?? null, numItems: BACKFILL_PAGE_SIZE });
+    const stories = page.filter((issue) => issue.kind === "story" && issue.nextSubNumber === undefined);
     for (const story of stories) {
       await patchIssue(ctx, story, { nextSubNumber: await subCounter(ctx, story) });
+    }
+    if (!isDone) {
+      await ctx.scheduler.runAfter(0, internal.admin.backfillSubCounters, { after: continueCursor });
     }
     return stories.length;
   },

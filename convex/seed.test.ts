@@ -126,7 +126,7 @@ describe("seed.demoData", () => {
 
       for (const issue of issues) {
         await expect(
-          assertValidParent(ctx, issue.kind, {
+          assertValidParent(ctx, issue.orgId, issue.kind, {
             teamId: issue.teamId,
             parentIssueId: issue.parentIssueId,
             projectId: issue.projectId,

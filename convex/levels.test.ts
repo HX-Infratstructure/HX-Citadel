@@ -482,4 +482,90 @@ describe("issue levels", () => {
       type: "story",
     });
   });
+
+  test("a related sub-task whose parent is in another workspace shows no foreign story number", async () => {
+    const { t, asMember, create } = await setup();
+    const storyId = await create("story");
+    const subtaskId = await create("subtask", { parentIssueId: storyId });
+    const otherStory = await create("story");
+    await asMember.mutation(api.issueRelations.create, { issueId: otherStory, relatedIssueId: subtaskId, type: "related" });
+    await t.run(async (ctx) => {
+      const otherOrg = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
+      const otherTeam = await ctx.db.insert("teams", { orgId: otherOrg, name: "Other", key: "OTH", nextIssueNumber: 8 });
+      const { creatorId } = (await ctx.db.get(storyId))!;
+      const foreign = { orgId: otherOrg, teamId: otherTeam, creatorId, kind: "story", number: 7, sortOrder: 1 } as const;
+      const foreignId = await ctx.db.insert("issues", { ...foreign, title: "Foreign", status: "todo", priority: "none" });
+      await ctx.db.patch(subtaskId, { parentIssueId: foreignId });
+    });
+    const { title } = (await asMember.query(api.issues.get, { issueId: subtaskId }))!;
+    const related = await asMember.query(api.issueRelations.listForIssue, { issueId: otherStory });
+    expect(related.map(({ issue }) => issue.identifier)).toEqual([title]);
+  });
+
+  test("a parent in another workspace lends the issue no project on update", async () => {
+    const { t, asMember, teamId, create, insertForeignProject } = await setup();
+    const storyId = await create("story");
+    const foreignProject = await insertForeignProject();
+    await t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(foreignProject))!;
+      const { creatorId } = (await ctx.db.get(storyId))!;
+      const parentId = await ctx.db.insert("issues", {
+        orgId, teamId, creatorId, kind: "feature", projectId: foreignProject,
+        title: "Foreign", status: "todo", priority: "none", sortOrder: 1,
+      });
+      await ctx.db.patch(storyId, { parentIssueId: parentId });
+    });
+    await expect(
+      asMember.mutation(api.issues.update, { issueId: storyId, projectId: foreignProject })
+    ).rejects.toThrow("Parent issue not found");
+    expect((await t.run((ctx) => ctx.db.get(storyId)))!.projectId).toBeUndefined();
+  });
+
+  test("a row in another workspace pointing at a story is not deleted with it", async () => {
+    const { t, asMember, create, insertForeignProject } = await setup();
+    const storyId = await create("story");
+    const foreignProject = await insertForeignProject();
+    const foreignId = await t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(foreignProject))!;
+      const teamId = await ctx.db.insert("teams", { orgId, name: "Other", key: "OTH", nextIssueNumber: 1 });
+      const { creatorId } = (await ctx.db.get(storyId))!;
+      return ctx.db.insert("issues", {
+        orgId, teamId, creatorId, kind: "subtask", subNumber: 1, parentIssueId: storyId,
+        title: "Foreign", status: "todo", priority: "none", sortOrder: 1,
+      });
+    });
+    await asMember.mutation(api.issues.remove, { issueId: storyId });
+    expect(await t.run((ctx) => ctx.db.get(foreignId))).not.toBeNull();
+  });
+
+  describe("a row in another workspace pointing at an epic", () => {
+    const withForeignChild = async () => {
+      const { t, asMember, projectId, create, insertForeignProject, insertOtherProject } = await setup();
+      const epicId = await create("epic", { projectId });
+      const foreignProject = await insertForeignProject();
+      const foreignId = await t.run(async (ctx) => {
+        const { orgId } = (await ctx.db.get(foreignProject))!;
+        const teamId = await ctx.db.insert("teams", { orgId, name: "Other", key: "OTH", nextIssueNumber: 1 });
+        const { creatorId } = (await ctx.db.get(epicId))!;
+        return ctx.db.insert("issues", {
+          orgId, teamId, creatorId, kind: "feature", parentIssueId: epicId, projectId: foreignProject,
+          title: "Foreign", status: "todo", priority: "none", sortOrder: 1,
+        });
+      });
+      return { t, asMember, epicId, foreignId, foreignProject, insertOtherProject };
+    };
+
+    test("does not follow the epic's project change", async () => {
+      const { t, asMember, epicId, foreignId, foreignProject, insertOtherProject } = await withForeignChild();
+      const otherProject = await insertOtherProject();
+      await asMember.mutation(api.issues.update, { issueId: epicId, projectId: otherProject });
+      expect((await t.run((ctx) => ctx.db.get(foreignId)))!.projectId).toBe(foreignProject);
+    });
+
+    test("does not keep the epic from being deleted", async () => {
+      const { t, asMember, epicId } = await withForeignChild();
+      await asMember.mutation(api.issues.remove, { issueId: epicId });
+      expect(await t.run((ctx) => ctx.db.get(epicId))).toBeNull();
+    });
+  });
 });

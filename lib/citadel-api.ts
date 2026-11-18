@@ -32,8 +32,9 @@ export class CitadelApi {
     private readonly baseUrl?: string
   ) {}
 
-  get(path: string, query: Query = {}): Promise<ApiBody> {
-    return this.send("GET", path, query, {});
+  /** `signal` is the caller's deadline, as on `write`. */
+  get(path: string, query: Query = {}, signal?: AbortSignal): Promise<ApiBody> {
+    return this.send("GET", path, query, {}, undefined, signal);
   }
 
   write(method: "POST" | "PATCH", path: string, body: ApiBody, options: WriteOptions): Promise<ApiBody> {

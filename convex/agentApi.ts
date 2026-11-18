@@ -26,6 +26,7 @@ import {
   listedDecisionValidator,
   listIssueDecisions,
 } from "./lib/decisions";
+import { orgChildren, orgRow } from "./lib/orgRows";
 import { invalid, notFound } from "./lib/refusals";
 import { findTeamByKey } from "./lib/teams";
 import {
@@ -64,11 +65,8 @@ function withKey(issue: Doc<"issues">, teamKey: string, parentNumber?: number) {
 }
 
 async function subtasksOf(ctx: Db, orgId: Id<"organizations">, issueId: Id<"issues">): Promise<Doc<"issues">[]> {
-  const subtasks = await ctx.db
-    .query("issues")
-    .withIndex("by_parent", (q) => q.eq("parentIssueId", issueId))
-    .collect();
-  return subtasks.filter((sub) => sub.orgId === orgId).sort((a, b) => (a.subNumber ?? 0) - (b.subNumber ?? 0));
+  const subtasks = await orgChildren(ctx, orgId, issueId);
+  return subtasks.sort((a, b) => (a.subNumber ?? 0) - (b.subNumber ?? 0));
 }
 
 type FoundIssue = { issue: Doc<"issues">; team: Doc<"teams">; parentNumber?: number };
@@ -83,6 +81,9 @@ async function findIssueByKey(ctx: Db, orgId: Id<"organizations">, key: string):
   const story = await ctx.db
     .query("issues")
     .withIndex("by_team_and_number", (q) => q.eq("teamId", team._id).eq("number", parsed.number))
+    // The index leaves only rows with this team and number; dropping other orgs' rows before unique() keeps one from making it throw.
+    // eslint-disable-next-line @convex-dev/no-filter-in-query
+    .filter((q) => q.eq(q.field("orgId"), orgId))
     .unique();
   if (story === null || story.kind !== "story") {
     notFound(`Issue ${key} not found`);
@@ -227,13 +228,9 @@ export const listIssues = internalQuery({
       .paginate({ numItems: LIST_LIMIT, cursor: cursor ?? null })
       .catch((error: unknown) => pageFailure(error, cursor));
     const parents = new Map<Id<"issues">, Promise<Doc<"issues"> | null>>();
-    const orgParent = async (parentId: Id<"issues">) => {
-      const parent = await ctx.db.get(parentId);
-      return parent?.orgId === org._id ? parent : null;
-    };
     const parentOf = (parentId: Id<"issues">) => {
       if (!parents.has(parentId)) {
-        parents.set(parentId, orgParent(parentId));
+        parents.set(parentId, orgRow(ctx, org._id, parentId));
       }
       return parents.get(parentId)!;
     };

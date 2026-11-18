@@ -244,6 +244,24 @@ describe("a story written before its sub-task counter", () => {
   });
 });
 
+describe("a sub-task leaving its story", () => {
+  test("a parent reference into another workspace leaves that workspace's story counter untouched", async () => {
+    const { t, asMember, storyId, teamId } = await asMemberSetup();
+    const leavingId = await asMember.mutation(api.issues.create, { teamId, title: "Leaving", kind: "subtask", parentIssueId: storyId });
+    const foreignId = await t.run(async (ctx) => {
+      const orgId = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
+      const otherTeamId = await ctx.db.insert("teams", { orgId, name: "Other", key: "OTH", nextIssueNumber: 2 });
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { _id, _creationTime, ...story } = (await ctx.db.get(storyId))!;
+      const id = await ctx.db.insert("issues", { ...story, orgId, teamId: otherTeamId, nextSubNumber: 2 });
+      await ctx.db.patch(leavingId, { parentIssueId: id, subNumber: 7 });
+      return id;
+    });
+    await asMember.mutation(api.issues.remove, { issueId: leavingId });
+    expect(await t.run(async (ctx) => (await ctx.db.get(foreignId))?.nextSubNumber)).toBe(2);
+  });
+});
+
 describe("Clerk-session patch paths bump by one", () => {
   test("issues.update (sort order) bumps the story; its project cascade bumps the sub-task", async () => {
     const { asMember, storyId, testingId, version, projectId } = await asMemberSetup();

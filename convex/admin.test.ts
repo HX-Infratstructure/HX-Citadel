@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { StorageActionWriter } from "convex/server";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
+import { BACKFILL_PAGE_SIZE } from "./admin";
 import { Doc, Id, TableNames } from "./_generated/dataModel";
 import { MutationCtx } from "./_generated/server";
 import schema from "./schema";
@@ -519,5 +520,34 @@ describe("admin.backfillSubCounters", () => {
     expect(await counters()).toEqual([5, 7, 1, 1]);
     expect(await t.mutation(internal.admin.backfillSubCounters, {})).toBe(0);
     expect(await counters()).toEqual([5, 7, 1, 1]);
+  });
+
+  test("sets one page of stories per run and the scheduled runs set the rest", async () => {
+    vi.useFakeTimers();
+    const { t, cleared } = await setup();
+    await t.run(async (ctx) => {
+      const story = (await ctx.db.query("issues").collect()).find((issue) => issue.orgId === cleared.orgId)!;
+      for (let index = 0; index < BACKFILL_PAGE_SIZE; index++) {
+        await ctx.db.insert("issues", {
+          orgId: story.orgId,
+          teamId: story.teamId,
+          kind: "story",
+          number: 3 + index,
+          title: `Story ${index}`,
+          status: "todo",
+          priority: "none",
+          creatorId: story.creatorId,
+          sortOrder: index,
+        });
+      }
+    });
+    const counters = () =>
+      t.run(async (ctx) => (await ctx.db.query("issues").collect()).map((issue) => issue.nextSubNumber ?? null));
+
+    expect(await t.mutation(internal.admin.backfillSubCounters, {})).toBe(BACKFILL_PAGE_SIZE);
+    expect((await counters()).filter((counter) => counter === null)).toHaveLength(4);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await counters()).toEqual(Array(BACKFILL_PAGE_SIZE + 4).fill(1));
+    vi.useRealTimers();
   });
 });

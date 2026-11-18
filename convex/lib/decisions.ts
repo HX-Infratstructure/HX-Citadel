@@ -3,9 +3,10 @@ import { invalid, notFound, refuse } from "./refusals";
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { formatIssueKey } from "../../lib/issue-key";
-import { getOrgIssue } from "../issues";
+import { getOrgIssue, LIST_LIMIT } from "../issues";
 import { decisionAnswerValidator, decisionFields, decisionViaValidator } from "../schema";
 import { logActivity } from "./activity";
+import { orgRow } from "./orgRows";
 import { OrgScope } from "./orgScope";
 
 export const QUESTION_MAX = 500;
@@ -32,7 +33,7 @@ export type ListedDecision = Infer<typeof listedDecisionValidator>;
 type Db = { db: QueryCtx["db"] };
 
 function invalidDecision(message: string): never {
-  return invalid(`Invalid decision: ${message}`);
+  invalid(`Invalid decision: ${message}`);
 }
 
 function boundedText(value: string, max: number, what: string): string {
@@ -88,8 +89,8 @@ function answerSummary({ choice, text }: Answer): string {
 }
 
 async function displayKey(ctx: Db, issue: Doc<"issues">): Promise<string> {
-  const team = await ctx.db.get(issue.teamId);
-  const parent = issue.parentIssueId === undefined ? null : await ctx.db.get(issue.parentIssueId);
+  const team = await orgRow(ctx, issue.orgId, issue.teamId);
+  const parent = issue.parentIssueId === undefined ? null : await orgRow(ctx, issue.orgId, issue.parentIssueId);
   return formatIssueKey(team?.key ?? "", issue, parent?.number) ?? issue.title;
 }
 
@@ -98,7 +99,7 @@ async function assertStory(ctx: Db, issue: Doc<"issues">): Promise<void> {
   if (issue.kind === "story") {
     return;
   }
-  const parent = issue.parentIssueId === undefined ? null : await ctx.db.get(issue.parentIssueId);
+  const parent = issue.parentIssueId === undefined ? null : await orgRow(ctx, issue.orgId, issue.parentIssueId);
   if (issue.kind === "subtask" && parent !== null) {
     refuse(`Decisions are asked on stories: ask on ${await displayKey(ctx, parent)}`);
   }
@@ -174,14 +175,14 @@ async function userName(ctx: Db, userId: Id<"users"> | undefined): Promise<strin
   return user?.name ?? null;
 }
 
-/** A story's decisions, newest first, with the asker's and the answerer's names. */
+/** A story's latest LIST_LIMIT decisions, newest first, with the asker's and the answerer's names. */
 export async function listIssueDecisions(ctx: Db, orgId: Id<"organizations">, issueId: Id<"issues">): Promise<ListedDecision[]> {
   await getOrgIssue(ctx, orgId, issueId);
   const decisions = await ctx.db
     .query("decisions")
     .withIndex("by_issue", (q) => q.eq("issueId", issueId))
     .order("desc")
-    .collect();
+    .take(LIST_LIMIT);
   return await Promise.all(
     decisions.map(async (decision) => ({
       ...decision,

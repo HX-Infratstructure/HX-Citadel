@@ -6,6 +6,10 @@ export const RULE_REFUSED = "rule_refused";
 export const NOT_FOUND = "not_found";
 /** The code for input the write cannot take; the HTTP API sends it as 400. */
 export const VALIDATION = "validation";
+/** The code for an If-Match that names an older issue version; the HTTP API sends it as 412. */
+export const STALE = "stale";
+/** The code for an Idempotency-Key already used for another request; the HTTP API sends it as 409. */
+export const IDEMPOTENCY_KEY_REUSED = "idempotency_key_reused";
 
 /** Refuse a write that breaks a business rule. Typed, so callers map it by its code and never by its words. */
 export function refuse(message: string): never {

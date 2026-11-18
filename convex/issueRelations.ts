@@ -7,6 +7,7 @@ import { getOrgIssue } from "./issues";
 import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { patchIssue } from "./lib/issueVersion";
+import { orgChildren, orgRow } from "./lib/orgRows";
 import {
   assertParentOpen,
   assertValidParent,
@@ -72,8 +73,7 @@ async function parentStoryNumber(
   if (issue.kind !== "subtask" || !issue.parentIssueId) {
     return undefined;
   }
-  const parent = await ctx.db.get(issue.parentIssueId);
-  return parent?.number;
+  return (await orgRow(ctx, issue.orgId, issue.parentIssueId))?.number;
 }
 
 /** Order siblings by their own sequence: story number or subtask number. */
@@ -87,7 +87,7 @@ async function summarizeIssue(
   teamCache: TeamCache
 ): Promise<IssueSummary> {
   if (!teamCache.has(issue.teamId)) {
-    teamCache.set(issue.teamId, await ctx.db.get(issue.teamId));
+    teamCache.set(issue.teamId, await orgRow(ctx, issue.orgId, issue.teamId));
   }
   const team = teamCache.get(issue.teamId) ?? null;
   const key = formatIssueKey(
@@ -150,8 +150,8 @@ export const listForIssue = orgQuery({
 
     const result = [];
     for (const relation of outgoing) {
-      const other = await ctx.db.get(relation.relatedIssueId);
-      if (!other || other.orgId !== ctx.org._id) {
+      const other = await orgRow(ctx, ctx.org._id, relation.relatedIssueId);
+      if (other === null) {
         continue;
       }
       result.push({
@@ -161,8 +161,8 @@ export const listForIssue = orgQuery({
       });
     }
     for (const relation of incoming) {
-      const other = await ctx.db.get(relation.issueId);
-      if (!other || other.orgId !== ctx.org._id) {
+      const other = await orgRow(ctx, ctx.org._id, relation.issueId);
+      if (other === null) {
         continue;
       }
       result.push({
@@ -297,25 +297,14 @@ export const hierarchy = orgQuery({
     const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
     const teamCache: TeamCache = new Map();
 
-    let parent: IssueSummary | null = null;
-    if (issue.parentIssueId) {
-      const parentIssue = await ctx.db.get(issue.parentIssueId);
-      if (parentIssue && parentIssue.orgId === ctx.org._id) {
-        parent = await summarizeIssue(ctx, parentIssue, teamCache);
-      }
-    }
+    const parentIssue = issue.parentIssueId ? await orgRow(ctx, ctx.org._id, issue.parentIssueId) : null;
+    const parent = parentIssue ? await summarizeIssue(ctx, parentIssue, teamCache) : null;
 
-    const children = await ctx.db
-      .query("issues")
-      .withIndex("by_parent", (q) => q.eq("parentIssueId", issue._id))
-      .collect();
+    const children = await orgChildren(ctx, ctx.org._id, issue._id);
     children.sort((a, b) => siblingOrder(a) - siblingOrder(b));
 
     const subIssues = [];
     for (const child of children) {
-      if (child.orgId !== ctx.org._id) {
-        continue;
-      }
       subIssues.push(await summarizeIssue(ctx, child, teamCache));
     }
     return { parent, subIssues };
@@ -366,16 +355,13 @@ export const setParent = orgMutation({
             "Cannot set a sub-issue of this issue as its parent"
           );
         }
-        const ancestor: Doc<"issues"> | null = await ctx.db.get(ancestorId);
-        ancestorId =
-          ancestor && ancestor.orgId === ctx.org._id
-            ? ancestor.parentIssueId
-            : undefined;
+        const ancestor: Doc<"issues"> | null = await orgRow(ctx, ctx.org._id, ancestorId);
+        ancestorId = ancestor?.parentIssueId;
       }
       newParentIdentifier = await issueIdentifier(ctx, parent, teamCache);
       projectId = parent.projectId;
     }
-    const placement = await assertValidParent(ctx, issue.kind, {
+    const placement = await assertValidParent(ctx, ctx.org._id, issue.kind, {
       teamId: issue.teamId,
       parentIssueId: args.parentIssueId ?? undefined,
       projectId,
@@ -384,15 +370,10 @@ export const setParent = orgMutation({
       await assertParentOpen(ctx, newParent, issue.kind);
     }
 
-    let oldParentIdentifier: string | undefined;
-    if (issue.parentIssueId) {
-      const oldParent = await ctx.db.get(issue.parentIssueId);
-      if (oldParent && oldParent.orgId === ctx.org._id) {
-        oldParentIdentifier = await issueIdentifier(ctx, oldParent, teamCache);
-      }
-    }
+    const oldParent = issue.parentIssueId ? await orgRow(ctx, ctx.org._id, issue.parentIssueId) : null;
+    const oldParentIdentifier = oldParent ? await issueIdentifier(ctx, oldParent, teamCache) : undefined;
 
-    await retireSubNumber(ctx, issue);
+    await retireSubNumber(ctx, issue, oldParent);
     const moved = {
       parentIssueId: args.parentIssueId ?? undefined,
       projectId: placement.projectId,

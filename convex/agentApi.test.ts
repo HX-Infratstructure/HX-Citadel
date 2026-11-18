@@ -293,6 +293,39 @@ describe("REST /api/v1/issues", () => {
     expect(foreign.status).toBe(404);
   });
 
+  test("GET is 404 for a story row from another workspace that points at an in-org team, and for its sub-task", async () => {
+    const t = await setup();
+    await post(t, { teamKey: "ENG", title: "Story" }, "cc1");
+    await t.run(async (ctx) => {
+      const { teamId, creatorId } = (await ctx.db.query("issues").first())!;
+      const otherOrgId = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
+      const foreign = { orgId: otherOrgId, teamId, creatorId, kind: "story", number: 7, sortOrder: 7 } as const;
+      const parentIssueId = await ctx.db.insert("issues", { ...foreign, title: "Foreign", status: "todo", priority: "none" });
+      const { orgId } = (await ctx.db.query("teams").first())!;
+      const subtask = { orgId, teamId, creatorId, kind: "subtask", subNumber: 1, sortOrder: 8, parentIssueId } as const;
+      await ctx.db.insert("issues", { ...subtask, title: "Under foreign", status: "todo", priority: "none" });
+    });
+    const story = await t.fetch("/api/v1/issues/ENG-7", { headers: { "X-Agent-Id": "cc1" } });
+    expect(story.status).toBe(404);
+    expect(await story.json()).toMatchObject({ code: "not_found" });
+    const subtask = await t.fetch("/api/v1/issues/ENG-7.1", { headers: { "X-Agent-Id": "cc1" } });
+    expect(subtask.status).toBe(404);
+  });
+
+  test("GET still finds the in-org story when a row from another workspace has its team and number", async () => {
+    const t = await setup();
+    await post(t, { teamKey: "ENG", title: "Story" }, "cc1");
+    await t.run(async (ctx) => {
+      const { teamId, creatorId, number } = (await ctx.db.query("issues").first())!;
+      const otherOrgId = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
+      const foreign = { orgId: otherOrgId, teamId, creatorId, kind: "story", number, sortOrder: 7 } as const;
+      await ctx.db.insert("issues", { ...foreign, title: "Foreign", status: "todo", priority: "none" });
+    });
+    const story = await t.fetch("/api/v1/issues/ENG-1", { headers: { "X-Agent-Id": "cc1" } });
+    expect(story.status).toBe(200);
+    expect((await story.json()).issue).toMatchObject({ key: "ENG-1", title: "Story" });
+  });
+
   test("a story's JSON leaves out its sub-task counter", async () => {
     const t = await setup();
     await post(t, { teamKey: "ENG", title: "Story" }, "cc1");

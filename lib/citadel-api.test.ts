@@ -9,6 +9,15 @@ function stubFetch(status: number, body: unknown, headers: Record<string, string
   return fetchMock;
 }
 
+/** A fetch that never answers; like the real one, it rejects once the request's signal aborts. */
+function stubSilentFetch() {
+  const fetchMock = vi.fn(
+    (_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(init.signal?.reason)))
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
 const textOf = (result: Awaited<ReturnType<typeof toolResult>>) => JSON.parse((result.content[0] as { text: string }).text);
 
 describe("CitadelApi", () => {
@@ -52,10 +61,7 @@ describe("CitadelApi", () => {
   });
 
   it("maps a write the API does not answer before the caller's signal fires to server_error", async () => {
-    const fetchMock = vi.fn(
-      (_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(init.signal?.reason)))
-    );
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = stubSilentFetch();
     const signal = AbortSignal.timeout(20);
     const result = await toolResult(() => new CitadelApi("cc1").write("POST", issuePath("HX-1", "comments"), { body: "b" }, { idempotencyKey: "k-4", signal }));
 
@@ -63,6 +69,15 @@ describe("CitadelApi", () => {
     expect(textOf(result).code).toBe("server_error");
     expect(textOf(result).message).toMatch(/did not answer POST \/api\/v1\/issues\/HX-1\/comments before the deadline/);
     expect((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].signal).toBe(signal);
+  }, 2_000);
+
+  it("maps a read the API does not answer before the caller's signal fires to server_error", async () => {
+    stubSilentFetch();
+    const result = await toolResult(() => new CitadelApi("cc1").get(issuePath("HX-1"), {}, AbortSignal.timeout(20)));
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result).code).toBe("server_error");
+    expect(textOf(result).message).toMatch(/did not answer GET \/api\/v1\/issues\/HX-1 before the deadline/);
   }, 2_000);
 
   it.each([

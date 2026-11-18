@@ -5,11 +5,13 @@ import { RULE_REFUSED } from "../../convex/lib/refusals";
 import type { ReusedData } from "../../convex/lib/idempotency";
 import type { StaleData } from "../../convex/lib/issueVersion";
 import type { issuePriorityValidator, issueStatusValidator } from "../../convex/schema";
-import { type ApiBody, CitadelApi, CitadelApiError, issuePath } from "../../lib/citadel-api";
+import { type ApiBody, CitadelApi, CitadelApiError, issuePath, type WriteOptions } from "../../lib/citadel-api";
 import { MCP_TOOL_NAMES } from "../../lib/mcp/tools";
 
 /** The checker's own agent, so the WIP state it creates and clears is its own. */
 export const AGENT = "live-check";
+/** How long each request may wait for its answer before the step fails. */
+export const LIVE_CHECK_DEADLINE_MS = 15_000;
 const BACKLOG: Infer<typeof issueStatusValidator> = "backlog";
 const IN_PROGRESS: Infer<typeof issueStatusValidator> = "in_progress";
 const DONE: Infer<typeof issueStatusValidator> = "done";
@@ -53,8 +55,12 @@ function expect(condition: boolean, failure: string): void {
   }
 }
 
-function idempotencyKey(check: LiveCheck, step: string): string {
-  return `live-check-${check.runId}-${step}`;
+/** A fresh deadline per request, so no call inherits one that already fired. */
+const deadline = (): AbortSignal => AbortSignal.timeout(LIVE_CHECK_DEADLINE_MS);
+
+/** A write's options: this run's Idempotency-Key for `step`, and its own deadline. */
+function writeOptions(check: LiveCheck, step: string, ifMatch?: number): WriteOptions {
+  return { idempotencyKey: `live-check-${check.runId}-${step}`, ifMatch, signal: deadline() };
 }
 
 function firstStory(check: LiveCheck): Story {
@@ -90,7 +96,7 @@ function answerLost(error: unknown): boolean {
  * replays and the tidy-up learns its key; the first error still fails the step.
  */
 async function create(check: LiveCheck, body: ApiBody, step: string): Promise<ApiBody> {
-  const write = () => check.api.write("POST", issuePath(), body, { idempotencyKey: idempotencyKey(check, step) });
+  const write = () => check.api.write("POST", issuePath(), body, writeOptions(check, step));
   try {
     return await write();
   } catch (error) {
@@ -115,7 +121,7 @@ async function refusal(check: LiveCheck, write: () => Promise<ApiBody>, code: st
 }
 
 async function appStatus(check: LiveCheck, path: string): Promise<number> {
-  const response = await fetch(new URL(path, check.appUrl).toString(), { method: "GET" });
+  const response = await fetch(new URL(path, check.appUrl).toString(), { method: "GET", signal: deadline() });
   await response.body?.cancel();
   return response.status;
 }
@@ -126,6 +132,7 @@ async function mcp(check: LiveCheck, id: number, method: string, params: ApiBody
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", [AGENT_HEADER]: AGENT },
     body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+    signal: deadline(),
   });
   const text = await response.text();
   expect(response.status === 200, `${method} answered ${response.status}`);
@@ -135,6 +142,13 @@ async function mcp(check: LiveCheck, id: number, method: string, params: ApiBody
 }
 
 const createBody = (check: LiveCheck, title: string): ApiBody => ({ teamKey: check.team, title, status: BACKLOG });
+
+/** The keys of a story's Complete testing sub-tasks, read from the story's record. */
+async function testingSubtasks(check: LiveCheck, key: string): Promise<string[]> {
+  const { subtasks } = await check.api.get(issuePath(key), {}, deadline());
+  const records = Array.isArray(subtasks) ? (subtasks as { key?: unknown; testing?: unknown }[]) : [];
+  return records.flatMap((record) => (record.testing === true && typeof record.key === "string" ? [record.key] : []));
+}
 
 export const STEPS: CheckStep<LiveCheck>[] = [
   {
@@ -185,11 +199,11 @@ export const STEPS: CheckStep<LiveCheck>[] = [
     name: "stale-if-match",
     run: async (check) => {
       const first = firstStory(check);
-      const advance = { idempotencyKey: idempotencyKey(check, "advance"), ifMatch: first.version };
+      const advance = writeOptions(check, "advance", first.version);
       check.first = story(check, await check.api.write("PATCH", issuePath(first.key), { priority: LOW }, advance));
       expect(check.first.version > first.version, `If-Match ${first.version} left ${first.key} at v${check.first.version}`);
-      const stale = { idempotencyKey: idempotencyKey(check, "stale"), ifMatch: first.version };
-      return refusal(check, () => check.api.write("PATCH", issuePath(first.key), { priority: HIGH }, stale), STALE);
+      const stale = () => check.api.write("PATCH", issuePath(first.key), { priority: HIGH }, writeOptions(check, "stale", first.version));
+      return refusal(check, stale, STALE);
     },
   },
   {
@@ -197,7 +211,7 @@ export const STEPS: CheckStep<LiveCheck>[] = [
     run: async (check) => {
       const first = firstStory(check);
       const moved = { status: IN_PROGRESS, assignee: AGENT };
-      check.first = story(check, await check.api.write("PATCH", issuePath(first.key), moved, { idempotencyKey: idempotencyKey(check, "start") }));
+      check.first = story(check, await check.api.write("PATCH", issuePath(first.key), moved, writeOptions(check, "start")));
       const second = { ...createBody(check, `Live check ${check.runId} second`), ...moved };
       const message = await refusal(check, () => create(check, second, "second"), RULE_REFUSED);
       expect(message.includes(first.key), `the refusal does not name ${first.key}: ${message}`);
@@ -208,8 +222,8 @@ export const STEPS: CheckStep<LiveCheck>[] = [
     name: "done-gate",
     run: async (check) => {
       const first = firstStory(check);
-      const options = { idempotencyKey: idempotencyKey(check, "done") };
-      const message = await refusal(check, () => check.api.write("PATCH", issuePath(first.key), { status: DONE }, options), RULE_REFUSED);
+      const done = () => check.api.write("PATCH", issuePath(first.key), { status: DONE }, writeOptions(check, "done"));
+      const message = await refusal(check, done, RULE_REFUSED);
       expect(message.startsWith(`Can't move ${first.key}`), `unexpected Done-gate message: ${message}`);
       return message;
     },
@@ -218,13 +232,21 @@ export const STEPS: CheckStep<LiveCheck>[] = [
     name: "tidy-up",
     run: async (check) => {
       const failed: string[] = [];
+      const canceled: string[] = [];
       for (const key of check.created) {
-        await check.api
-          .write("PATCH", issuePath(key), { status: CANCELED }, { idempotencyKey: idempotencyKey(check, `cancel-${key}`) })
-          .catch((error: unknown) => failed.push(`${key}: ${errorLine(error)}`));
+        const subtasks = await testingSubtasks(check, key).catch((error: unknown) => {
+          failed.push(`${key} testing sub-task: ${errorLine(error)}`);
+          return [];
+        });
+        for (const target of [...subtasks, key]) {
+          canceled.push(target);
+          await check.api
+            .write("PATCH", issuePath(target), { status: CANCELED }, writeOptions(check, `cancel-${target}`))
+            .catch((error: unknown) => failed.push(`${target}: ${errorLine(error)}`));
+        }
       }
       expect(failed.length === 0, `could not cancel ${failed.join("; ")}`);
-      return `canceled ${check.created.join(", ") || "nothing"}`;
+      return `canceled ${canceled.join(", ") || "nothing"}`;
     },
   },
 ];

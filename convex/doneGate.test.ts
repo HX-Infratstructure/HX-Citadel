@@ -93,6 +93,22 @@ const GATED = [
 ] as const;
 
 describe("Done gate: a story", () => {
+  test("is not held by a row in another workspace that points at it", async () => {
+    const { t, storyWithWork, finishStory } = await setup();
+    const ids = await storyWithWork();
+    await t.run(async (ctx) => {
+      const { creatorId } = (await ctx.db.get(ids.story))!;
+      const orgId = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
+      const teamId = await ctx.db.insert("teams", { orgId, name: "Other", key: "OTH", nextIssueNumber: 1 });
+      await ctx.db.insert("issues", {
+        orgId, teamId, creatorId, kind: "subtask", subNumber: 9, parentIssueId: ids.story,
+        title: "Foreign", status: "todo", priority: "none", sortOrder: 1,
+      });
+    });
+    await finishStory(ids);
+    expect((await t.run((ctx) => ctx.db.get(ids.story)))!.status).toBe("done");
+  });
+
   test.each(GATED)("with an open sub-task can't go to %s and the refusal names it", async (label, status) => {
     const { move, storyWithWork } = await setup();
     const { story } = await storyWithWork();

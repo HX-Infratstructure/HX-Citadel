@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { EXIT_CODES } from "../cli/commands";
 import { MCP_TOOL_NAMES } from "../lib/mcp/tools";
 import { main } from "./live-check";
-import { type CheckStep, runSteps } from "./live-check/steps";
+import { type CheckStep, LIVE_CHECK_DEADLINE_MS, runSteps } from "./live-check/steps";
 
 const ENV = { HX_CITADEL_API: "http://convex.test:3211", HX_CITADEL_APP: "http://app.test:8460" };
 
@@ -13,6 +13,12 @@ const ok = (body: unknown, etag?: string): Reply => ({ status: 200, body, etag }
 const refused = (status: number, code: string, message: string): Reply => ({ status, body: { code, message } });
 const story = (key: string, version: number): Reply => ({ status: 201, body: { issue: { key } }, etag: `"${version}"` });
 const LOST = new TypeError("fetch failed");
+/** The tidy-up's three answers for one story: its record with the Complete testing sub-task, then both cancels. */
+const tidy = (key: string, version: number): Reply[] => [
+  ok({ issue: { key }, subtasks: [{ key: `${key}.1`, title: "Complete testing", testing: true }] }),
+  ok({ issue: { key: `${key}.1` } }),
+  story(key, version),
+];
 
 const HAPPY: Reply[] = [
   { status: 200, text: "<html>sign in</html>" },
@@ -27,7 +33,7 @@ const HAPPY: Reply[] = [
   story("LCK-1", 3),
   refused(409, "rule_refused", "live-check already has LCK-1 In Progress; finish it first"),
   refused(409, "rule_refused", "Can't move LCK-1 to Done: open — no proof link"),
-  story("LCK-1", 5),
+  ...tidy("LCK-1", 5),
 ];
 
 function stubFetch(replies: (Reply | Error)[]) {
@@ -78,7 +84,10 @@ describe("runSteps", () => {
 });
 
 describe("live-check", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
 
   it("passes every step against canned answers and exits 0", async () => {
     stubFetch(HAPPY);
@@ -131,7 +140,9 @@ describe("live-check", () => {
     expect(call(fetchMock, 9).body).toMatchObject({ status: "in_progress", assignee: "live-check" });
     expect(call(fetchMock, 10).body).toMatchObject({ teamKey: "LCK", status: "in_progress", assignee: "live-check" });
     expect(call(fetchMock, 11).body).toMatchObject({ status: "done" });
-    expect(call(fetchMock, 12)).toMatchObject({ url: "http://convex.test:3211/api/v1/issues/LCK-1", method: "PATCH", body: { status: "canceled" } });
+    expect(call(fetchMock, 12)).toMatchObject({ url: "http://convex.test:3211/api/v1/issues/LCK-1", method: "GET" });
+    expect(call(fetchMock, 13)).toMatchObject({ url: "http://convex.test:3211/api/v1/issues/LCK-1.1", method: "PATCH", body: { status: "canceled" } });
+    expect(call(fetchMock, 14)).toMatchObject({ url: "http://convex.test:3211/api/v1/issues/LCK-1", method: "PATCH", body: { status: "canceled" } });
   });
 
   it.each([
@@ -158,39 +169,79 @@ describe("live-check", () => {
   it("tidies up even when an earlier step failed, cancelling every story it created", async () => {
     const replies = [...HAPPY];
     replies[10] = story("LCK-2", 1);
-    replies.splice(12, 1, story("LCK-1", 5), story("LCK-2", 2));
+    replies.splice(12, 3, ...tidy("LCK-1", 5), ...tidy("LCK-2", 2));
     const fetchMock = stubFetch(replies);
     const { code, out } = await check(["--team", "LCK"]);
     expect(out).toContain(out.find((line) => line.startsWith("FAIL wip-refusal")));
     expect(out.at(-1)).toMatch(/^PASS tidy-up/);
     const cancels = fetchMock.mock.calls.map((_, index) => call(fetchMock, index)).filter((request) => request.body?.status === "canceled");
-    expect(cancels.map((request) => request.url)).toEqual(["http://convex.test:3211/api/v1/issues/LCK-1", "http://convex.test:3211/api/v1/issues/LCK-2"]);
+    expect(cancels.map((request) => request.url.split("/").at(-1))).toEqual(["LCK-1.1", "LCK-1", "LCK-2.1", "LCK-2"]);
     expect(code).toBe(EXIT_CODES.refused.code);
   });
 
+  it("cancels the Complete testing sub-task that the story's record names, and no other sub-task", async () => {
+    const record = ok({ issue: { key: "LCK-1" }, subtasks: [{ key: "LCK-1.2", testing: false }, { key: "LCK-1.3", testing: true }] });
+    const fetchMock = stubFetch([...HAPPY.slice(0, 12), record, ok({ issue: { key: "LCK-1.3" } }), story("LCK-1", 5)]);
+    const { out } = await check(["--team", "LCK"]);
+    const cancels = fetchMock.mock.calls.map((_, index) => call(fetchMock, index)).filter((request) => request.body?.status === "canceled");
+    expect(cancels.map((request) => request.url.split("/").at(-1))).toEqual(["LCK-1.3", "LCK-1"]);
+    expect(out.at(-1)).toBe("PASS tidy-up canceled LCK-1.3, LCK-1");
+  });
+
+  it("still cancels the story when its record can't be read, and fails tidy-up naming it", async () => {
+    const fetchMock = stubFetch([...HAPPY.slice(0, 12), refused(404, "not_found", "Issue LCK-1 not found"), story("LCK-1", 5)]);
+    const { out } = await check(["--team", "LCK"]);
+    expect(call(fetchMock, 13)).toMatchObject({ url: "http://convex.test:3211/api/v1/issues/LCK-1", body: { status: "canceled" } });
+    expect(out.at(-1)).toMatch(/^FAIL tidy-up could not cancel LCK-1 testing sub-task: .*not found/);
+  });
+
   it("asks once more with the same key when the create's answer is lost, and cancels the story it made", async () => {
-    const replies = [...HAPPY.slice(0, 4), { status: 502, text: "" }, story("LCK-1", 1), HAPPY[6], story("LCK-1", 2)];
+    const replies = [...HAPPY.slice(0, 4), { status: 502, text: "" }, story("LCK-1", 1), HAPPY[6], ...tidy("LCK-1", 2)];
     const fetchMock = stubFetch(replies);
     const { code, out } = await check(["--team", "LCK"]);
     expect(out[2]).toMatch(/^FAIL agent-create .*502/);
     const [create, retry] = [call(fetchMock, 4), call(fetchMock, 5)];
     expect(retry).toMatchObject({ url: create.url, method: "POST", body: create.body });
     expect(retry.headers.get("Idempotency-Key")).toBe(create.headers.get("Idempotency-Key"));
-    expect(call(fetchMock, 7)).toMatchObject({ url: "http://convex.test:3211/api/v1/issues/LCK-1", body: { status: "canceled" } });
-    expect(out.at(-1)).toMatch(/^PASS tidy-up canceled LCK-1$/);
+    expect(call(fetchMock, 9)).toMatchObject({ url: "http://convex.test:3211/api/v1/issues/LCK-1", body: { status: "canceled" } });
+    expect(out.at(-1)).toBe("PASS tidy-up canceled LCK-1.1, LCK-1");
     expect(code).toBe(EXIT_CODES.refused.code);
   });
 
   it("recovers the key when a refusal step's create was made but its answer was lost", async () => {
-    const replies = [...HAPPY.slice(0, 10), LOST, story("LCK-2", 1), HAPPY[11], story("LCK-1", 5), story("LCK-2", 2)];
+    const replies = [...HAPPY.slice(0, 10), LOST, story("LCK-2", 1), HAPPY[11], ...tidy("LCK-1", 5), ...tidy("LCK-2", 2)];
     const fetchMock = stubFetch(replies);
     const { out } = await check(["--team", "LCK"]);
     expect(out.find((line) => line.startsWith("FAIL wip-refusal"))).toContain("fetch failed");
     const [second, retry] = [call(fetchMock, 10), call(fetchMock, 11)];
     expect(retry).toMatchObject({ url: second.url, method: "POST", body: second.body });
     expect(retry.headers.get("Idempotency-Key")).toBe(second.headers.get("Idempotency-Key"));
-    expect(out.at(-1)).toMatch(/^PASS tidy-up canceled LCK-1, LCK-2$/);
+    expect(out.at(-1)).toBe("PASS tidy-up canceled LCK-1.1, LCK-1, LCK-2.1, LCK-2");
   });
+
+  it("fails every step that sends a request once its deadline passes with no answer", async () => {
+    const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => realTimeout(5));
+    const silent = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)))
+    );
+    vi.stubGlobal("fetch", silent);
+    const { code, out } = await check(["--team", "LCK"]);
+    expect(out.filter((line) => line.startsWith("FAIL")).map((line) => line.split(" ")[1])).toEqual([
+      "app",
+      "mcp",
+      "agent-create",
+      "replay",
+      "key-reuse",
+      "stale-if-match",
+      "wip-refusal",
+      "done-gate",
+    ]);
+    expect(out.at(-1)).toBe("PASS tidy-up canceled nothing");
+    expect(timeout.mock.calls.every(([ms]) => ms === LIVE_CHECK_DEADLINE_MS)).toBe(true);
+    expect(code).toBe(EXIT_CODES.refused.code);
+  }, 2000);
 
   it.each([
     ["no team", [], ENV],

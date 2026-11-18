@@ -3,6 +3,7 @@ import { refuse } from "../refusals";
 import { GATED_LABELS, isGatedStatus } from "../../../lib/issue-status";
 import { Doc } from "../../_generated/dataModel";
 import { MutationCtx } from "../../_generated/server";
+import { orgChildren, orgRow } from "../orgRows";
 import { TESTING_SUBTASK_TITLE } from "./testing";
 
 type IssueStatus = Doc<"issues">["status"];
@@ -68,11 +69,8 @@ export async function assertDoneGate(
     return;
   }
   const target = GATED_LABELS[nextStatus];
-  const children = await ctx.db
-    .query("issues")
-    .withIndex("by_parent", (q) => q.eq("parentIssueId", issue._id))
-    .collect();
-  const team = await ctx.db.get(issue.teamId);
+  const children = await orgChildren(ctx, issue.orgId, issue._id);
+  const team = await orgRow(ctx, issue.orgId, issue.teamId);
   const teamKey = team?.key ?? "";
   const open = blockers(teamKey, issue, children);
   if (open.length > 0) {

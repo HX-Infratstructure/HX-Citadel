@@ -3,10 +3,7 @@ import { refuse } from "../refusals";
 import { MutationCtx } from "../../_generated/server";
 import { cycleName } from "../../../lib/sprint";
 import { getOrgCycle } from "../cycles";
-
-async function teamKey(ctx: MutationCtx, teamId: Id<"teams">): Promise<string | undefined> {
-  return (await ctx.db.get(teamId))?.key;
-}
+import { orgRow } from "../orgRows";
 
 /** An issue's cycle must be one of its own team's cycles, in the same org. */
 export async function assertCycleInTeam(
@@ -19,7 +16,7 @@ export async function assertCycleInTeam(
   if (cycle.teamId === teamId) {
     return;
   }
-  const owner = await teamKey(ctx, cycle.teamId);
-  const wanted = await teamKey(ctx, teamId);
+  const owner = (await orgRow(ctx, orgId, cycle.teamId))?.key;
+  const wanted = (await orgRow(ctx, orgId, teamId))?.key;
   refuse(`${cycleName(cycle)} belongs to team ${owner}; pick a cycle from team ${wanted}`);
 }

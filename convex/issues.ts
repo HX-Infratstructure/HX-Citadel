@@ -9,6 +9,7 @@ import { changedFields, fieldText, FieldLogOptions, logActivity, logFieldChanges
 import { orgAdminMutation, orgMutation, orgQuery } from "./lib/customFunctions";
 import { deleteIssueOwnedRows } from "./lib/issueCleanup";
 import { FIRST_VERSION, patchIssue } from "./lib/issueVersion";
+import { orgChildren, orgRow } from "./lib/orgRows";
 import { OrgScope } from "./lib/orgScope";
 import { assertCycleInTeam } from "./lib/rules/cycles";
 import {
@@ -71,8 +72,8 @@ export async function getOrgIssue(
   orgId: Id<"organizations">,
   issueId: Id<"issues">
 ): Promise<Doc<"issues">> {
-  const issue = await ctx.db.get(issueId);
-  if (!issue || issue.orgId !== orgId) {
+  const issue = await orgRow(ctx, orgId, issueId);
+  if (issue === null) {
     notFound("Issue not found");
   }
   return issue;
@@ -171,13 +172,7 @@ export const listParentCandidates = orgQuery({
 export const get = orgQuery({
   args: { issueId: v.id("issues") },
   returns: v.union(v.object(issueShape), v.null()),
-  handler: async (ctx, args) => {
-    const issue = await ctx.db.get(args.issueId);
-    if (!issue || issue.orgId !== ctx.org._id) {
-      return null;
-    }
-    return issue;
-  },
+  handler: async (ctx, args) => await orgRow(ctx, ctx.org._id, args.issueId),
 });
 
 /** Look up a story by its display identifier (team key + number, e.g. ENG-42). */
@@ -257,7 +252,7 @@ export async function createIssue(
 
   const kind = args.kind ?? "story";
   const parent = args.parentIssueId ? await getOrgIssue(ctx, org._id, args.parentIssueId) : null;
-  const placement = await assertValidParent(ctx, kind, {
+  const placement = await assertValidParent(ctx, org._id, kind, {
     teamId: args.teamId,
     parentIssueId: args.parentIssueId,
     projectId: args.projectId,
@@ -429,7 +424,7 @@ export async function updateIssue(
     updates.assigneeId = args.assigneeId ?? undefined;
   }
   if (args.projectId !== undefined) {
-    const placement = await assertValidParent(ctx, issue.kind, {
+    const placement = await assertValidParent(ctx, scope.org._id, issue.kind, {
       teamId: issue.teamId,
       parentIssueId: issue.parentIssueId,
       projectId: args.projectId ?? undefined,
@@ -533,7 +528,7 @@ export const revertChange = orgAdminMutation({
     const issue = await getOrgIssue(ctx, ctx.org._id, change.issueId);
     const latest = await latestFieldChange(ctx, issue._id, change.field);
     if (latest?._id !== change._id || fieldText(issue, change.field) !== change.newValue) {
-      const team = await ctx.db.get(issue.teamId);
+      const team = await orgRow(ctx, issue.orgId, issue.teamId);
       const key = team ? formatIssueKey(team.key, issue) : null;
       refuse(`${key ?? issue.title} ${change.field} has changed since; revert the latest change instead`);
     }
@@ -558,19 +553,19 @@ async function deleteStorySubtasks(ctx: MutationCtx, story: Doc<"issues">): Prom
   if (story.kind !== "story") {
     return;
   }
-  const subtasks = await ctx.db
-    .query("issues")
-    .withIndex("by_parent", (q) => q.eq("parentIssueId", story._id))
-    .collect();
+  const subtasks = await orgChildren(ctx, story.orgId, story._id);
   for (const subtask of subtasks) {
     await deleteIssueRow(ctx, subtask._id);
   }
 }
 
 /** "KEY-12.2 Write API" for keyed levels, the title alone for epics and features. */
-async function keyedTitle(ctx: MutationCtx, issue: Doc<"issues">): Promise<string> {
-  const team = await ctx.db.get(issue.teamId);
-  const parent = issue.parentIssueId ? await ctx.db.get(issue.parentIssueId) : null;
+async function keyedTitle(
+  ctx: MutationCtx,
+  issue: Doc<"issues">,
+  parent: Doc<"issues"> | null
+): Promise<string> {
+  const team = await orgRow(ctx, issue.orgId, issue.teamId);
   const key = team ? formatIssueKey(team.key, issue, parent?.number) : null;
   return key ? `${key} ${issue.title}` : issue.title;
 }
@@ -579,18 +574,19 @@ async function keyedTitle(ctx: MutationCtx, issue: Doc<"issues">): Promise<strin
 async function logChildDeleted(
   ctx: MutationCtx,
   child: Doc<"issues">,
+  parent: Doc<"issues"> | null,
   actorId: Id<"users">
 ): Promise<void> {
-  if (!child.parentIssueId) {
+  if (parent === null) {
     return;
   }
   await logActivity(ctx, {
     orgId: child.orgId,
-    issueId: child.parentIssueId,
+    issueId: parent._id,
     actorId,
     type: "child_deleted",
     field: "child",
-    oldValue: await keyedTitle(ctx, child),
+    oldValue: await keyedTitle(ctx, child, parent),
   });
 }
 
@@ -601,10 +597,11 @@ export const remove = orgMutation({
     const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
     assertNotTestingSubtask(issue, "deleted");
     await assertNoChildren(ctx, issue);
+    const parent = issue.parentIssueId ? await orgRow(ctx, ctx.org._id, issue.parentIssueId) : null;
     await deleteStorySubtasks(ctx, issue);
-    await retireSubNumber(ctx, issue);
+    await retireSubNumber(ctx, issue, parent);
     await deleteIssueRow(ctx, issue._id);
-    await logChildDeleted(ctx, issue, ctx.user._id);
+    await logChildDeleted(ctx, issue, parent, ctx.user._id);
     return null;
   },
 });

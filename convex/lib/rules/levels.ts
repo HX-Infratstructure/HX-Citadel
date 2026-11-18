@@ -12,6 +12,7 @@ import {
 import { GATED_LABELS, isGatedStatus } from "../../../lib/issue-status";
 import { ActivityActor, changedFields, logFieldChanges } from "../activity";
 import { patchIssue } from "../issueVersion";
+import { orgChildren, orgRow } from "../orgRows";
 
 type Placement = {
   teamId: Id<"teams">;
@@ -76,15 +77,13 @@ function inheritedProject(
   return parent.projectId;
 }
 
-/** A root issue's project must exist in its team's organization. */
+/** A root issue's project must exist in the caller's workspace. */
 async function assertProjectInOrg(
   ctx: { db: QueryCtx["db"] },
-  teamId: Id<"teams">,
+  orgId: Id<"organizations">,
   projectId: Id<"projects">
 ): Promise<void> {
-  const team = await ctx.db.get(teamId);
-  const project = await ctx.db.get(projectId);
-  if (!team || !project || project.orgId !== team.orgId) {
+  if ((await orgRow(ctx, orgId, projectId)) === null) {
     notFound("Project not found");
   }
 }
@@ -95,6 +94,7 @@ async function assertProjectInOrg(
  */
 export async function assertValidParent(
   ctx: { db: QueryCtx["db"] },
+  orgId: Id<"organizations">,
   kind: IssueKind,
   placement: Placement
 ): Promise<ResolvedPlacement> {
@@ -110,12 +110,12 @@ export async function assertValidParent(
       );
     }
     if (placement.projectId) {
-      await assertProjectInOrg(ctx, placement.teamId, placement.projectId);
+      await assertProjectInOrg(ctx, orgId, placement.projectId);
     }
     return { teamId: placement.teamId, projectId: placement.projectId };
   }
-  const parent = await ctx.db.get(placement.parentIssueId);
-  if (!parent) {
+  const parent = await orgRow(ctx, orgId, placement.parentIssueId);
+  if (parent === null) {
     notFound("Parent issue not found");
   }
   assertParentKind(kind, parent.kind);
@@ -137,7 +137,7 @@ export async function assertParentOpen(
   if (!isGatedStatus(parent.status)) {
     return;
   }
-  const team = await ctx.db.get(parent.teamId);
+  const team = await orgRow(ctx, parent.orgId, parent.teamId);
   const name = formatIssueKey(team?.key ?? "", parent) ?? parent.title;
   refuse(
     `${name} is ${GATED_LABELS[parent.status]}; reopen it before adding ${article(childKind)} ${childKind}`
@@ -145,17 +145,14 @@ export async function assertParentOpen(
 }
 
 /** A story written before its counter existed resumes after its highest current subtask. */
-async function legacySubNumber(ctx: { db: QueryCtx["db"] }, storyId: Id<"issues">): Promise<number> {
-  const subtasks = await ctx.db
-    .query("issues")
-    .withIndex("by_parent", (q) => q.eq("parentIssueId", storyId))
-    .collect();
+async function legacySubNumber(ctx: { db: QueryCtx["db"] }, story: Doc<"issues">): Promise<number> {
+  const subtasks = await orgChildren(ctx, story.orgId, story._id);
   return Math.max(0, ...subtasks.map((subtask) => subtask.subNumber ?? 0)) + 1;
 }
 
 /** The subtask number a story hands out next. */
 export async function subCounter(ctx: { db: QueryCtx["db"] }, story: Doc<"issues">): Promise<number> {
-  return story.nextSubNumber ?? (await legacySubNumber(ctx, story._id));
+  return story.nextSubNumber ?? (await legacySubNumber(ctx, story));
 }
 
 /**
@@ -179,16 +176,17 @@ export async function nextSubNumber(
 /**
  * A subtask leaving its story, moved or deleted, retires its number there. A story written before
  * its counter existed would otherwise resume after its highest remaining subtask and reuse the key.
+ * The caller passes the parent it already loaded.
  */
 export async function retireSubNumber(
   ctx: { db: MutationCtx["db"] },
-  leaving: Doc<"issues">
+  leaving: Doc<"issues">,
+  story: Doc<"issues"> | null
 ): Promise<void> {
-  if (leaving.subNumber === undefined || leaving.parentIssueId === undefined) {
+  if (leaving.subNumber === undefined || story === null) {
     return;
   }
-  const story = await ctx.db.get(leaving.parentIssueId);
-  if (story === null) {
+  if (story.orgId !== leaving.orgId || story.kind !== "story") {
     return;
   }
   const next = Math.max(await subCounter(ctx, story), leaving.subNumber + 1);
@@ -198,16 +196,14 @@ export async function retireSubNumber(
 /** Every descendant of an issue, found by walking by_parent; leaf kinds are not queried. */
 async function descendants(
   ctx: { db: QueryCtx["db"] },
+  orgId: Id<"organizations">,
   rootId: Id<"issues">
 ): Promise<Doc<"issues">[]> {
   const found: Doc<"issues">[] = [];
   const pending = [rootId];
   while (pending.length > 0) {
     const parentId = pending.pop()!;
-    const children = await ctx.db
-      .query("issues")
-      .withIndex("by_parent", (q) => q.eq("parentIssueId", parentId))
-      .collect();
+    const children = await orgChildren(ctx, orgId, parentId);
     found.push(...children);
     const parents = children.filter((child) => childKindOf(child.kind) !== null);
     pending.push(...parents.map((child) => child._id));
@@ -222,7 +218,7 @@ export async function cascadeProject(
   projectId: Id<"projects"> | undefined,
   actor: ActivityActor
 ): Promise<void> {
-  for (const descendant of await descendants(ctx, rootId)) {
+  for (const descendant of await descendants(ctx, actor.orgId, rootId)) {
     if (descendant.projectId === projectId) {
       continue;
     }
@@ -258,10 +254,7 @@ export async function assertNoChildren(
   if (childKind === null || issue.kind === "story") {
     return;
   }
-  const children = await ctx.db
-    .query("issues")
-    .withIndex("by_parent", (q) => q.eq("parentIssueId", issue._id))
-    .collect();
+  const children = await orgChildren(ctx, issue.orgId, issue._id);
   if (children.length > 0) {
     refuse(
       `This ${issue.kind} still has ${countOf(childKind, children.length)}; move or delete them first`
