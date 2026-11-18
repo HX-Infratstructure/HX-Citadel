@@ -83,11 +83,12 @@ function CyclesPageInner() {
         </Button>
       </header>
 
-      {loading ? (
+      {loading && (
         <div className="flex flex-1 items-center justify-center">
           <Loader2 className="size-4 animate-spin text-muted-foreground" />
         </div>
-      ) : cycles.length === 0 ? (
+      )}
+      {!loading && cycles.length === 0 && (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
           <RefreshCcw className="size-8 text-muted-foreground/50" />
           <div>
@@ -107,7 +108,8 @@ function CyclesPageInner() {
             </Button>
           )}
         </div>
-      ) : (
+      )}
+      {!loading && cycles.length !== 0 && (
         <ScrollArea className="flex-1">
           {teamsWithCycles?.map((team) => (
             <section key={team._id}>

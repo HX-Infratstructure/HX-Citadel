@@ -1,16 +1,16 @@
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { logActivity } from "./lib/activity";
-import { orgAdminMutation } from "./lib/customFunctions";
+import { internalMutation } from "./_generated/server";
+import { getMembershipOrThrow, getOrgByClerkIdOrThrow, getUserByClerkIdOrThrow } from "./lib/mirror";
 
 /**
- * One-click demo workspace. Populates teams, labels, projects, cycles and a
- * few dozen issues (with sub-issues, relations, comments and activity) so a
- * fresh org shows the app in full flight.
+ * Dev-only demo workspace, run with `pnpm seed:demo` (never from the UI,
+ * a build or a deploy). Populates teams, labels, projects, cycles and a few
+ * dozen issues (with sub-issues, relations, comments and activity) so an
+ * empty development org shows the app in full flight.
  *
- * Sized to stay inside FREE_PLAN_LIMITS by construction (2 projects = the
- * free cap, 46 issues < 100), so it never trips the limit helpers and the
- * remaining headroom still lets users create their own data.
+ * Small by design: 2 projects and 43 issues.
  */
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -166,8 +166,8 @@ const RELATIONS: { from: string; to: string; type: Doc<"issueRelations">["type"]
   { from: "Migrate auth tokens to httpOnly cookies", to: "Public launch checklist", type: "blocks" },
 ];
 
-export const demoData = orgAdminMutation({
-  args: {},
+export const demoData = internalMutation({
+  args: { clerkOrgId: v.string(), clerkUserId: v.string() },
   returns: v.object({
     teams: v.number(),
     labels: v.number(),
@@ -176,18 +176,35 @@ export const demoData = orgAdminMutation({
     issues: v.number(),
     comments: v.number(),
   }),
-  handler: async (ctx) => {
+  handler: async (ctx, { clerkOrgId, clerkUserId }) => {
+    const org = await getOrgByClerkIdOrThrow(
+      ctx,
+      clerkOrgId,
+      `Organization ${clerkOrgId} is not synced to Convex.`
+    );
+    const user = await getUserByClerkIdOrThrow(
+      ctx,
+      clerkUserId,
+      `User ${clerkUserId} is not synced to Convex.`
+    );
+    await getMembershipOrThrow(
+      ctx,
+      org._id,
+      user._id,
+      `User ${clerkUserId} is not a member of organization ${clerkOrgId}.`
+    );
+
     const existingTeams = await ctx.db
       .query("teams")
-      .withIndex("by_org", (q) => q.eq("orgId", ctx.org._id))
+      .withIndex("by_org", (q) => q.eq("orgId", org._id))
       .collect();
     if (existingTeams.length > 0) {
       throw new Error("This workspace already has teams — demo data can only seed an empty workspace.");
     }
 
     const now = Date.now();
-    const orgId = ctx.org._id;
-    const userId = ctx.user._id;
+    const orgId = org._id;
+    const userId = user._id;
 
     const labelIds = new Map<string, Id<"labels">>();
     for (const label of LABELS) {
@@ -295,7 +312,7 @@ export const demoData = orgAdminMutation({
             actorId: userId,
             type: "assignee_changed",
             field: "assignee",
-            newValue: ctx.user.name,
+            newValue: user.name,
           });
         }
 
@@ -322,7 +339,7 @@ export const demoData = orgAdminMutation({
       if (!issue) {
         continue;
       }
-      const body = comment.mention ? `@${ctx.user.name} ${comment.body}` : comment.body;
+      const body = comment.mention ? `@${user.name} ${comment.body}` : comment.body;
       await ctx.db.insert("comments", {
         orgId,
         issueId: issue._id,

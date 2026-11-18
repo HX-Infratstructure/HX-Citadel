@@ -34,6 +34,25 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced;
 }
 
+type SearchView = "prompt" | "loading" | "empty" | "results";
+
+function searchView(
+  debouncedQuery: string,
+  loading: boolean,
+  resultCount: number | undefined
+): SearchView {
+  if (debouncedQuery.length === 0) {
+    return "prompt";
+  }
+  if (loading) {
+    return "loading";
+  }
+  if (resultCount === 0) {
+    return "empty";
+  }
+  return "results";
+}
+
 /**
  * Workspace-wide full-text issue search (Track A), backed by the
  * search_title / search_description indexes. Reachable via the "/" shortcut
@@ -62,6 +81,11 @@ export default function SearchPage() {
     debouncedQuery.length > 0 && results === undefined;
   const waitingForDebounce =
     query.trim().length > 0 && query.trim() !== debouncedQuery;
+  const view = searchView(
+    debouncedQuery,
+    searching || waitingForDebounce,
+    results?.length
+  );
 
   return (
     <>
@@ -98,7 +122,7 @@ export default function SearchPage() {
 
         <ScrollArea className="flex-1">
           <div className="mx-auto w-full max-w-2xl px-4 pb-8">
-            {debouncedQuery.length === 0 ? (
+            {view === "prompt" && (
               <div className="flex flex-col items-center gap-2 py-24 text-center">
                 <Search className="size-6 text-muted-foreground/50" />
                 <p className="text-sm text-muted-foreground">
@@ -112,18 +136,21 @@ export default function SearchPage() {
                   anywhere to get here.
                 </p>
               </div>
-            ) : searching || waitingForDebounce ? (
+            )}
+            {view === "loading" && (
               <div className="flex items-center justify-center py-24">
                 <Loader2 className="size-4 animate-spin text-muted-foreground" />
               </div>
-            ) : results && results.length === 0 ? (
+            )}
+            {view === "empty" && (
               <div className="flex flex-col items-center gap-2 py-24 text-center">
                 <SearchX className="size-6 text-muted-foreground/50" />
                 <p className="text-sm text-muted-foreground">
                   No issues found for “{debouncedQuery}”.
                 </p>
               </div>
-            ) : (
+            )}
+            {view === "results" && (
               <div className="flex flex-col">
                 <p className="px-1 pb-2 text-xs text-muted-foreground">
                   {results?.length}{" "}

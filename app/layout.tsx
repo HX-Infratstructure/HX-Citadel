@@ -16,11 +16,10 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Vector — Plan. Build. Ship.",
-    template: "%s · Vector",
+    default: "HX-Citadel",
+    template: "%s · HX-Citadel",
   },
-  description:
-    "Vector is the issue tracker built for speed. Plan projects, run cycles, and ship with your team — with an AI agent on call.",
+  description: "Agentic / Agile Development",
 };
 
 export default function RootLayout({

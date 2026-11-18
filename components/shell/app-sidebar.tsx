@@ -1,14 +1,14 @@
 "use client";
 
-import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
+import { UserButton } from "@clerk/nextjs";
 import { useQuery } from "convex/react";
 import {
-  Bot,
   Box,
   ChevronDown,
   Plus,
   RefreshCcw,
   Search,
+  Settings,
   SquarePen,
 } from "lucide-react";
 import Link from "next/link";
@@ -65,17 +65,14 @@ export function AppSidebar() {
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r bg-sidebar">
       <div className="flex items-center justify-between gap-2 p-3">
-        <OrganizationSwitcher
-          hidePersonal
-          afterSelectOrganizationUrl="/:slug"
-          afterCreateOrganizationUrl="/:slug"
-          appearance={{
-            elements: {
-              rootBox: "min-w-0",
-              organizationSwitcherTrigger: "max-w-44",
-            },
-          }}
-        />
+        <Link href={base} className="min-w-0 leading-tight">
+          <span className="block truncate text-sm font-semibold">
+            HX-Citadel
+          </span>
+          <span className="block truncate text-xs text-muted-foreground">
+            Agentic / Agile Development
+          </span>
+        </Link>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -110,7 +107,7 @@ export function AppSidebar() {
           <NavLink href={base} exact icon={<Box className="size-4" />}>
             Workspace
           </NavLink>
-          {/* Track B adds /projects + /cycles nav; Track D adds /ai nav */}
+          {/* Track B adds /projects + /cycles nav */}
           <NavLink href={`${base}/projects`} icon={<Box className="size-4" />}>
             Projects
           </NavLink>
@@ -120,8 +117,11 @@ export function AppSidebar() {
           >
             Cycles
           </NavLink>
-          <NavLink href={`${base}/ai`} icon={<Bot className="size-4" />}>
-            AI Agent
+          <NavLink
+            href={`${base}/settings`}
+            icon={<Settings className="size-4" />}
+          >
+            Settings
           </NavLink>
         </nav>
 

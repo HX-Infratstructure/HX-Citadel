@@ -9,16 +9,10 @@
  */
 
 import type * as activity from "../activity.js";
-import type * as agent_chat from "../agent/chat.js";
-import type * as agent_data from "../agent/data.js";
-import type * as agent_embeddings from "../agent/embeddings.js";
-import type * as agent_limiter from "../agent/limiter.js";
-import type * as agent_models from "../agent/models.js";
-import type * as agent_tools from "../agent/tools.js";
-import type * as agent_triage from "../agent/triage.js";
-import type * as agent_vectorAgent from "../agent/vectorAgent.js";
+import type * as admin from "../admin.js";
 import type * as attachments from "../attachments.js";
 import type * as comments from "../comments.js";
+import type * as crons from "../crons.js";
 import type * as cycles from "../cycles.js";
 import type * as http from "../http.js";
 import type * as issueRelations from "../issueRelations.js";
@@ -27,7 +21,8 @@ import type * as labels from "../labels.js";
 import type * as lib_activity from "../lib/activity.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_customFunctions from "../lib/customFunctions.js";
-import type * as lib_limits from "../lib/limits.js";
+import type * as lib_mirror from "../lib/mirror.js";
+import type * as mirror from "../mirror.js";
 import type * as organizations from "../organizations.js";
 import type * as presenceFns from "../presenceFns.js";
 import type * as projects from "../projects.js";
@@ -46,16 +41,10 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   activity: typeof activity;
-  "agent/chat": typeof agent_chat;
-  "agent/data": typeof agent_data;
-  "agent/embeddings": typeof agent_embeddings;
-  "agent/limiter": typeof agent_limiter;
-  "agent/models": typeof agent_models;
-  "agent/tools": typeof agent_tools;
-  "agent/triage": typeof agent_triage;
-  "agent/vectorAgent": typeof agent_vectorAgent;
+  admin: typeof admin;
   attachments: typeof attachments;
   comments: typeof comments;
+  crons: typeof crons;
   cycles: typeof cycles;
   http: typeof http;
   issueRelations: typeof issueRelations;
@@ -64,7 +53,8 @@ declare const fullApi: ApiFromModules<{
   "lib/activity": typeof lib_activity;
   "lib/auth": typeof lib_auth;
   "lib/customFunctions": typeof lib_customFunctions;
-  "lib/limits": typeof lib_limits;
+  "lib/mirror": typeof lib_mirror;
+  mirror: typeof mirror;
   organizations: typeof organizations;
   presenceFns: typeof presenceFns;
   projects: typeof projects;
@@ -103,7 +93,5 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
-  agent: import("@convex-dev/agent/_generated/component.js").ComponentApi<"agent">;
-  rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
   presence: import("@convex-dev/presence/_generated/component.js").ComponentApi<"presence">;
 };

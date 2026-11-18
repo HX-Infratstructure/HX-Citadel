@@ -144,15 +144,17 @@ export function ViewSwitcher({
           <DropdownMenuLabel className="text-xs text-muted-foreground">
             Saved views
           </DropdownMenuLabel>
-          {views === undefined ? (
+          {views === undefined && (
             <div className="px-2 py-1.5 text-xs text-muted-foreground">
               Loading…
             </div>
-          ) : views.length === 0 ? (
+          )}
+          {views !== undefined && views.length === 0 && (
             <div className="px-2 py-1.5 text-xs text-muted-foreground">
               No saved views yet. Filter the board, then save it here.
             </div>
-          ) : (
+          )}
+          {views !== undefined && views.length !== 0 && (
             views.map((view) => {
               const payload = parseSavedView(view.filters);
               const isActive =

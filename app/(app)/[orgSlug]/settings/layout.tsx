@@ -1,4 +1,4 @@
-import { SettingsNav } from "@/components/billing/settings-nav";
+import { SettingsNav } from "@/components/settings/settings-nav";
 
 export default function SettingsLayout({
   children,

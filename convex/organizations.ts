@@ -2,7 +2,8 @@ import { v } from "convex/values";
 import { query } from "./_generated/server";
 import { orgQuery } from "./lib/customFunctions";
 import { getCurrentUserOrNull } from "./lib/auth";
-import { planValidator, memberRoleValidator } from "./schema";
+import { findMembership, findOrgByClerkId } from "./lib/mirror";
+import { memberRoleValidator } from "./schema";
 
 const orgShape = {
   _id: v.id("organizations"),
@@ -11,8 +12,6 @@ const orgShape = {
   name: v.string(),
   slug: v.optional(v.string()),
   imageUrl: v.optional(v.string()),
-  plan: planValidator,
-  subscriptionStatus: v.optional(v.string()),
 };
 
 /**
@@ -35,19 +34,11 @@ export const current = query({
     if (!claims.org_id) {
       return null;
     }
-    const org = await ctx.db
-      .query("organizations")
-      .withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", claims.org_id!))
-      .unique();
+    const org = await findOrgByClerkId(ctx, claims.org_id);
     if (!org) {
       return null;
     }
-    const membership = await ctx.db
-      .query("members")
-      .withIndex("by_org_and_user", (q) =>
-        q.eq("orgId", org._id).eq("userId", user._id)
-      )
-      .unique();
+    const membership = await findMembership(ctx, org._id, user._id);
     if (!membership) {
       return null;
     }

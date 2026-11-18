@@ -1,17 +1,19 @@
 import { v } from "convex/values";
-import { Doc } from "./_generated/dataModel";
 import { internalMutation, MutationCtx } from "./_generated/server";
+import {
+  existedBeforeRead,
+  findOrgByClerkId,
+  findUserByClerkId,
+  isStaleClerkWrite,
+} from "./lib/mirror";
 
 /**
- * Clerk → Convex sync. Clerk is the source of truth for users, orgs,
- * memberships, and subscriptions; these handlers mirror them into Convex
- * tables so queries can join against them with indexes.
- *
- * Clerk billing uses dot-notation event names (subscription.updated,
- * subscriptionItem.canceled) — never Stripe-style names.
+ * Clerk → Convex sync. Clerk is the source of truth for users, orgs and
+ * memberships; these handlers mirror them into Convex tables so queries can
+ * join against them with indexes.
  */
 
-type ClerkUserData = {
+export type ClerkUserData = {
   id: string;
   first_name?: string | null;
   last_name?: string | null;
@@ -20,38 +22,26 @@ type ClerkUserData = {
   email_addresses?: { id: string; email_address: string }[];
 };
 
-type ClerkOrgData = {
+export type ClerkOrgData = {
   id: string;
   name?: string;
   slug?: string | null;
   image_url?: string | null;
 };
 
-type ClerkMembershipData = {
+export type ClerkMembershipData = {
   id: string;
   role?: string;
   organization?: { id: string };
   public_user_data?: { user_id: string };
-};
-
-type ClerkSubscriptionData = {
-  id: string;
-  status?: string;
-  payer?: { organization_id?: string; user_id?: string };
-  items?: { status?: string; plan?: { slug?: string } }[];
-};
-
-type ClerkSubscriptionItemData = {
-  id: string;
-  status?: string;
-  payer?: { organization_id?: string; user_id?: string };
-  plan?: { slug?: string };
+  updated_at?: number;
 };
 
 export const handleClerkEvent = internalMutation({
   args: {
     eventType: v.string(),
     data: v.any(),
+    readStartedAt: v.optional(v.number()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -60,7 +50,7 @@ export const handleClerkEvent = internalMutation({
     if (eventType === "user.created" || eventType === "user.updated") {
       await upsertUser(ctx, args.data as ClerkUserData);
     } else if (eventType === "user.deleted") {
-      await deleteUser(ctx, args.data as ClerkUserData);
+      await deleteUser(ctx, args.data as ClerkUserData, args.readStartedAt);
     } else if (
       eventType === "organization.created" ||
       eventType === "organization.updated"
@@ -74,15 +64,7 @@ export const handleClerkEvent = internalMutation({
     ) {
       await upsertMembership(ctx, args.data as ClerkMembershipData);
     } else if (eventType === "organizationMembership.deleted") {
-      await deleteMembership(ctx, args.data as ClerkMembershipData);
-    } else if (eventType.startsWith("subscription.")) {
-      await syncSubscription(ctx, args.data as ClerkSubscriptionData);
-    } else if (eventType.startsWith("subscriptionItem.")) {
-      await syncSubscriptionItem(
-        ctx,
-        eventType,
-        args.data as ClerkSubscriptionItemData
-      );
+      await deleteMembership(ctx, args.data as ClerkMembershipData, args.readStartedAt);
     } else {
       console.log("Unhandled Clerk webhook event", eventType);
     }
@@ -101,10 +83,7 @@ async function upsertUser(ctx: MutationCtx, data: ClerkUserData) {
     primaryEmail ||
     "Unknown";
 
-  const existing = await ctx.db
-    .query("users")
-    .withIndex("by_clerk_id", (q) => q.eq("clerkId", data.id))
-    .unique();
+  const existing = await findUserByClerkId(ctx, data.id);
 
   const fields = {
     name,
@@ -119,12 +98,13 @@ async function upsertUser(ctx: MutationCtx, data: ClerkUserData) {
   }
 }
 
-async function deleteUser(ctx: MutationCtx, data: ClerkUserData) {
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_clerk_id", (q) => q.eq("clerkId", data.id))
-    .unique();
-  if (!user) {
+async function deleteUser(
+  ctx: MutationCtx,
+  data: ClerkUserData,
+  readStartedAt: number | undefined
+) {
+  const user = await findUserByClerkId(ctx, data.id);
+  if (!user || !existedBeforeRead(user, readStartedAt)) {
     return;
   }
   const memberships = await ctx.db
@@ -138,10 +118,7 @@ async function deleteUser(ctx: MutationCtx, data: ClerkUserData) {
 }
 
 async function upsertOrganization(ctx: MutationCtx, data: ClerkOrgData) {
-  const existing = await ctx.db
-    .query("organizations")
-    .withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", data.id))
-    .unique();
+  const existing = await findOrgByClerkId(ctx, data.id);
 
   if (existing) {
     await ctx.db.patch(existing._id, {
@@ -155,16 +132,12 @@ async function upsertOrganization(ctx: MutationCtx, data: ClerkOrgData) {
       name: data.name ?? "Untitled",
       slug: data.slug ?? undefined,
       imageUrl: data.image_url ?? undefined,
-      plan: "free",
     });
   }
 }
 
 async function deleteOrganization(ctx: MutationCtx, data: ClerkOrgData) {
-  const org = await ctx.db
-    .query("organizations")
-    .withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", data.id))
-    .unique();
+  const org = await findOrgByClerkId(ctx, data.id);
   if (!org) {
     return;
   }
@@ -189,14 +162,8 @@ async function upsertMembership(ctx: MutationCtx, data: ClerkMembershipData) {
     return;
   }
 
-  const org = await ctx.db
-    .query("organizations")
-    .withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", clerkOrgId))
-    .unique();
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_clerk_id", (q) => q.eq("clerkId", clerkUserId))
-    .unique();
+  const org = await findOrgByClerkId(ctx, clerkOrgId);
+  const user = await findUserByClerkId(ctx, clerkUserId);
   if (!org || !user) {
     // Clerk fires organization.created and organizationMembership.created
     // near-simultaneously and Svix does not guarantee ordering. Throwing makes
@@ -217,115 +184,36 @@ async function upsertMembership(ctx: MutationCtx, data: ClerkMembershipData) {
     .unique();
 
   if (existing) {
-    await ctx.db.patch(existing._id, { role });
+    if (isStaleClerkWrite(existing.clerkUpdatedAt, data.updated_at)) {
+      return;
+    }
+    await ctx.db.patch(existing._id, {
+      role,
+      clerkUpdatedAt: data.updated_at ?? existing.clerkUpdatedAt,
+    });
   } else {
     await ctx.db.insert("members", {
       orgId: org._id,
       userId: user._id,
       role,
       clerkMembershipId: data.id,
+      clerkUpdatedAt: data.updated_at,
     });
   }
 }
 
-async function deleteMembership(ctx: MutationCtx, data: ClerkMembershipData) {
+async function deleteMembership(
+  ctx: MutationCtx,
+  data: ClerkMembershipData,
+  readStartedAt: number | undefined
+) {
   const existing = await ctx.db
     .query("members")
     .withIndex("by_clerk_membership_id", (q) =>
       q.eq("clerkMembershipId", data.id)
     )
     .unique();
-  if (existing) {
+  if (existing && existedBeforeRead(existing, readStartedAt)) {
     await ctx.db.delete(existing._id);
-  }
-}
-
-function planFromSlug(slug: string | undefined): Doc<"organizations">["plan"] | null {
-  if (slug === "pro" || slug === "enterprise") {
-    return slug;
-  }
-  if (slug === "free_org") {
-    return "free";
-  }
-  return null;
-}
-
-async function getOrgByClerkId(ctx: MutationCtx, clerkOrgId: string) {
-  return await ctx.db
-    .query("organizations")
-    .withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", clerkOrgId))
-    .unique();
-}
-
-async function syncSubscription(
-  ctx: MutationCtx,
-  data: ClerkSubscriptionData
-) {
-  const clerkOrgId = data.payer?.organization_id;
-  if (!clerkOrgId) {
-    return;
-  }
-  const org = await getOrgByClerkId(ctx, clerkOrgId);
-  if (!org) {
-    // Same out-of-order delivery race as memberships: fail so Svix retries.
-    throw new Error(
-      `Subscription sync: org not synced yet (${clerkOrgId}) — failing so Svix retries`
-    );
-  }
-
-  // Highest active paid plan wins; fall back to free.
-  let plan: Doc<"organizations">["plan"] = "free";
-  for (const item of data.items ?? []) {
-    const itemPlan = planFromSlug(item.plan?.slug);
-    if (
-      itemPlan &&
-      itemPlan !== "free" &&
-      (item.status === "active" || item.status === "upcoming")
-    ) {
-      plan = itemPlan === "enterprise" ? "enterprise" : plan === "enterprise" ? plan : itemPlan;
-    }
-  }
-
-  await ctx.db.patch(org._id, {
-    plan,
-    subscriptionStatus: data.status,
-  });
-}
-
-async function syncSubscriptionItem(
-  ctx: MutationCtx,
-  eventType: string,
-  data: ClerkSubscriptionItemData
-) {
-  const clerkOrgId = data.payer?.organization_id;
-  if (!clerkOrgId) {
-    return;
-  }
-  const org = await getOrgByClerkId(ctx, clerkOrgId);
-  if (!org) {
-    // Same out-of-order delivery race as memberships: fail so Svix retries.
-    throw new Error(
-      `Subscription item sync: org not synced yet (${clerkOrgId}) — failing so Svix retries`
-    );
-  }
-
-  const itemPlan = planFromSlug(data.plan?.slug);
-  if (!itemPlan || itemPlan === "free") {
-    return;
-  }
-
-  const activated =
-    eventType === "subscriptionItem.active" ||
-    (eventType === "subscriptionItem.updated" && data.status === "active");
-  const deactivated =
-    eventType === "subscriptionItem.canceled" ||
-    eventType === "subscriptionItem.ended" ||
-    eventType === "subscriptionItem.expired" ||
-    eventType === "subscriptionItem.abandoned";
-
-  if (activated) {
-    await ctx.db.patch(org._id, { plan: itemPlan, subscriptionStatus: "active" });
-  } else if (deactivated && org.plan === itemPlan) {
-    await ctx.db.patch(org._id, { plan: "free" });
   }
 }

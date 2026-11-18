@@ -213,16 +213,18 @@ export function ActivitySection({ issue }: IssueDetailSlotProps) {
         </div>
       </div>
 
-      {loading ? (
+      {loading && (
         <div className="flex flex-col gap-3">
           <Skeleton className="h-5 w-2/3" />
           <Skeleton className="h-16 w-full" />
         </div>
-      ) : items.length === 0 ? (
+      )}
+      {!loading && items.length === 0 && (
         <p className="py-2 text-xs text-muted-foreground">
           No comments yet — start the conversation.
         </p>
-      ) : (
+      )}
+      {!loading && items.length !== 0 && (
         <div className="flex flex-col gap-3">
           {items.map((item) =>
             item.kind === "comment" ? (

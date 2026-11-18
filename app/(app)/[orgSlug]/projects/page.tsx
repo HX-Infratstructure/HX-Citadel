@@ -60,11 +60,12 @@ function ProjectsPageInner() {
         </Button>
       </header>
 
-      {projects === undefined ? (
+      {projects === undefined && (
         <div className="flex flex-1 items-center justify-center">
           <Loader2 className="size-4 animate-spin text-muted-foreground" />
         </div>
-      ) : projects.length === 0 ? (
+      )}
+      {projects !== undefined && projects.length === 0 && (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
           <FolderKanban className="size-8 text-muted-foreground/50" />
           <div>
@@ -78,7 +79,8 @@ function ProjectsPageInner() {
             Create project
           </Button>
         </div>
-      ) : (
+      )}
+      {projects !== undefined && projects.length !== 0 && (
         <ScrollArea className="flex-1">
           <div className="flex h-8 items-center gap-3 border-b bg-muted/50 px-4 text-xs text-muted-foreground">
             <span className="flex-1 pl-8">Name</span>
