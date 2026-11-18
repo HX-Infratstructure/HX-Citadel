@@ -38,15 +38,28 @@ describe("hasDisplayKey", () => {
 
 describe("parentChoices", () => {
   const issues = [
-    { id: "e1", kind: "epic" },
-    { id: "f1", kind: "feature" },
-    { id: "s1", kind: "story" },
-    { id: "t1", kind: "subtask" },
+    { id: "e1", kind: "epic", status: "todo" },
+    { id: "f1", kind: "feature", status: "in_progress" },
+    { id: "s1", kind: "story", status: "todo" },
+    { id: "t1", kind: "subtask", status: "todo" },
   ] as const;
 
   test("a story may move under a feature or stand alone", () => {
     expect(parentChoices([...issues], "story")).toEqual({
       parents: [issues[1]],
+      allowsNone: true,
+    });
+  });
+
+  test("an In Review or Done parent is not offered, a canceled one is", () => {
+    const features = [
+      { id: "f-open", kind: "feature", status: "todo" },
+      { id: "f-review", kind: "feature", status: "in_review" },
+      { id: "f-done", kind: "feature", status: "done" },
+      { id: "f-canceled", kind: "feature", status: "canceled" },
+    ] as const;
+    expect(parentChoices([...features], "story")).toEqual({
+      parents: [features[0], features[3]],
       allowsNone: true,
     });
   });

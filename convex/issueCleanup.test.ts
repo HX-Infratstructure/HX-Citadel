@@ -47,23 +47,28 @@ async function setup() {
 
   const remove = (issueId: Id<"issues">) => asMember.mutation(api.issues.remove, { issueId });
 
+  const attachmentRow = (issueId: Id<"issues">, storageId: Id<"_storage">) => ({
+    orgId,
+    issueId,
+    storageId,
+    fileName: "proof.txt",
+    fileType: "text/plain",
+    fileSize: 5,
+    uploadedBy: memberId,
+  });
+
   const addOwnedRows = (issueId: Id<"issues">) =>
     t.run(async (ctx) => {
       const storageId = await ctx.storage.store(new Blob(["proof"]));
       await ctx.db.insert("comments", { orgId, issueId, authorId: memberId, body: "a comment" });
       await ctx.db.insert("activity", { orgId, issueId, actorId: memberId, type: "commented" });
-      await ctx.db.insert("attachments", {
-        orgId,
-        issueId,
-        storageId,
-        fileName: "proof.txt",
-        fileType: "text/plain",
-        fileSize: 5,
-        uploadedBy: memberId,
-      });
+      await ctx.db.insert("attachments", attachmentRow(issueId, storageId));
       await ctx.db.insert("issueLabels", { issueId, labelId });
       return storageId;
     });
+
+  const attachFile = (issueId: Id<"issues">, storageId: Id<"_storage">) =>
+    t.run((ctx) => ctx.db.insert("attachments", attachmentRow(issueId, storageId)));
 
   const relate = (issueId: Id<"issues">, relatedIssueId: Id<"issues">) =>
     t.run((ctx) =>
@@ -100,6 +105,8 @@ async function setup() {
 
   const storedFile = (storageId: Id<"_storage">) => t.run((ctx) => ctx.db.system.get(storageId));
 
+  const issueDoc = (issueId: Id<"issues">) => t.run((ctx) => ctx.db.get(issueId));
+
   const childDeletedRows = (parentId: Id<"issues">) =>
     t.run(async (ctx) => {
       const rows = await ctx.db
@@ -109,7 +116,17 @@ async function setup() {
       return rows.filter((row) => row.type === "child_deleted");
     });
 
-  return { create, remove, addOwnedRows, relate, ownedRowCounts, storedFile, childDeletedRows };
+  return {
+    create,
+    remove,
+    addOwnedRows,
+    attachFile,
+    relate,
+    ownedRowCounts,
+    storedFile,
+    issueDoc,
+    childDeletedRows,
+  };
 }
 
 const NONE = {
@@ -123,7 +140,8 @@ const NONE = {
 
 describe("issues.remove leaves nothing behind", () => {
   test("a story and its sub-task lose every owned row and stored file", async () => {
-    const { create, remove, addOwnedRows, relate, ownedRowCounts, storedFile } = await setup();
+    const { create, remove, addOwnedRows, relate, ownedRowCounts, storedFile, issueDoc } =
+      await setup();
     const storyId = await create("story");
     const subtaskId = await create("subtask", storyId);
     const otherId = await create("story");
@@ -138,6 +156,34 @@ describe("issues.remove leaves nothing behind", () => {
     expect(await ownedRowCounts(subtaskId)).toEqual(NONE);
     expect(await storedFile(storyFile)).toBeNull();
     expect(await storedFile(subtaskFile)).toBeNull();
+    expect(await issueDoc(storyId)).toBeNull();
+    expect(await issueDoc(subtaskId)).toBeNull();
+  });
+
+  test("a stored file stays while another issue's attachment still uses it", async () => {
+    const { create, remove, addOwnedRows, attachFile, storedFile } = await setup();
+    const firstId = await create("story");
+    const secondId = await create("story");
+    const sharedFile = await addOwnedRows(firstId);
+    await attachFile(secondId, sharedFile);
+
+    await remove(firstId);
+    expect(await storedFile(sharedFile)).not.toBeNull();
+
+    await remove(secondId);
+    expect(await storedFile(sharedFile)).toBeNull();
+  });
+
+  test("a file two attachments of one issue share is deleted once with the issue", async () => {
+    const { create, remove, addOwnedRows, attachFile, storedFile, issueDoc } = await setup();
+    const storyId = await create("story");
+    const sharedFile = await addOwnedRows(storyId);
+    await attachFile(storyId, sharedFile);
+
+    await remove(storyId);
+
+    expect(await storedFile(sharedFile)).toBeNull();
+    expect(await issueDoc(storyId)).toBeNull();
   });
 
   test("a relation where the deleted issue is the target goes too", async () => {

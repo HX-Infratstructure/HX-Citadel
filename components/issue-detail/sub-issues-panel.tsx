@@ -23,6 +23,7 @@ import { PriorityIcon } from "@/components/shared/priority-icon";
 import { StatusIcon } from "@/components/shared/status-icon";
 import { UserAvatar } from "@/components/shared/user-avatar";
 import { childKindOf, hasDisplayKey, ParentChoices, parentChoices } from "@/lib/issue-key";
+import { isGatedStatus } from "@/lib/issue-status";
 
 const NO_PARENT = "none";
 
@@ -61,6 +62,7 @@ function ParentPicker({
   choices: ParentChoices<Doc<"issues">>;
 }) {
   const setParent = useMutation(api.issueRelations.setParent);
+  const projects = useQuery(api.projects.list);
   const move = (value: string) => {
     const parentIssueId = value === NO_PARENT ? null : (value as Id<"issues">);
     setParent({ issueId: issue._id, parentIssueId }).catch((error: unknown) => {
@@ -81,16 +83,31 @@ function ParentPicker({
         {choices.allowsNone && (
           <SelectItem value={NO_PARENT}>No parent</SelectItem>
         )}
-        {choices.parents.map((parent) => (
-          <SelectItem key={parent._id} value={parent._id}>
-            <IssueKey
-              teamKey={teamKey}
-              issue={parent}
-              className="font-mono text-xs text-muted-foreground"
-            />
-            <span className="truncate">{parent.title}</span>
-          </SelectItem>
-        ))}
+        {!choices.allowsNone && choices.parents.length === 0 && (
+          <div className="px-2 py-1.5 text-xs text-muted-foreground">
+            No other open parent
+          </div>
+        )}
+        {choices.parents.map((parent) => {
+          const project = projects?.find(
+            (candidate) => candidate._id === parent.projectId
+          );
+          return (
+            <SelectItem key={parent._id} value={parent._id}>
+              <IssueKey
+                teamKey={teamKey}
+                issue={parent}
+                className="font-mono text-xs text-muted-foreground"
+              />
+              <span className="truncate">{parent.title}</span>
+              {project && (
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {project.name}
+                </span>
+              )}
+            </SelectItem>
+          );
+        })}
       </SelectContent>
     </Select>
   );
@@ -98,11 +115,11 @@ function ParentPicker({
 
 /** The issue's parent, with a picker to move it; a testing sub-task cannot move, so it gets none. */
 function ParentRow({ issue, team }: IssueDetailSlotProps) {
-  const issues = useQuery(
-    api.issues.listByTeam,
-    issue.testing ? "skip" : { teamId: team._id }
+  const candidates = useQuery(
+    api.issues.listParentCandidates,
+    issue.testing ? "skip" : { teamId: team._id, kind: issue.kind }
   );
-  const choices = issue.testing ? null : parentChoices(issues ?? [], issue.kind);
+  const choices = issue.testing ? null : parentChoices(candidates ?? [], issue.kind);
   if (!issue.parentIssueId && !choices) {
     return null;
   }
@@ -137,12 +154,13 @@ export function SubIssuesPanel({ issue, team }: IssueDetailSlotProps) {
   const [submitting, setSubmitting] = useState(false);
 
   const childKind = childKindOf(issue.kind);
+  const gated = isGatedStatus(issue.status);
   const subIssues = hierarchy?.subIssues ?? [];
   const doneCount = subIssues.filter((sub) => sub.status === "done").length;
 
   const addSubIssue = async () => {
     const trimmed = title.trim();
-    if (!trimmed || submitting || !childKind) {
+    if (!trimmed || submitting || !childKind || gated) {
       return;
     }
     setSubmitting(true);
@@ -181,6 +199,7 @@ export function SubIssuesPanel({ issue, team }: IssueDetailSlotProps) {
             variant="ghost"
             size="icon"
             onClick={() => setAdding((value) => !value)}
+            disabled={gated}
             aria-label="Add sub-issue"
             className="size-6 text-muted-foreground"
           >
@@ -224,7 +243,7 @@ export function SubIssuesPanel({ issue, team }: IssueDetailSlotProps) {
         </div>
       )}
 
-      {adding && childKind && (
+      {adding && childKind && !gated && (
         <div className="-mx-2 flex h-9 items-center gap-2 rounded-md border border-dashed px-2">
           <StatusIcon status="todo" className="opacity-50" />
           <Input

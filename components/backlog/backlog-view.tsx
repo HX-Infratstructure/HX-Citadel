@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  closestCenter,
   DndContext,
   DragEndEvent,
   KeyboardSensor,
@@ -21,6 +20,7 @@ import { api } from "@/convex/_generated/api";
 import { Doc, Id } from "@/convex/_generated/dataModel";
 import { errorMessage } from "@/lib/error-message";
 import { sortOrderBetween } from "@/lib/sort-order";
+import { rankAnnouncements, rankCollision } from "./backlog-dnd";
 import { BacklogRow } from "./backlog-row";
 
 /** The new `sortOrder` for the row moved from `from` to `to`, or undefined when it stays put. */
@@ -109,7 +109,8 @@ export function BacklogView({
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={rankCollision}
+      accessibility={{ announcements: rankAnnouncements(issues) }}
       onDragEnd={handleDragEnd}
     >
       <SortableContext

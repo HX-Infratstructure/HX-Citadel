@@ -24,11 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { inputDateToMs, msToInputDate } from "@/components/projects/dates";
-import { sprintEnd } from "@/lib/sprint";
-
-function defaultSprintEnd(): string {
-  return msToInputDate(sprintEnd(Date.now()));
-}
+import { sprintEndDate } from "@/lib/sprint";
 
 export function CreateCycleDialog({
   open,
@@ -49,7 +45,7 @@ export function CreateCycleDialog({
   >(undefined);
   const [name, setName] = useState("");
   const [start, setStart] = useState(() => msToInputDate(Date.now()));
-  const [end, setEnd] = useState(() => defaultSprintEnd());
+  const [end, setEnd] = useState(() => sprintEndDate(start));
   const [submitting, setSubmitting] = useState(false);
 
   // Fall back to the default/first team without needing an effect.
@@ -75,8 +71,9 @@ export function CreateCycleDialog({
       toast.success("Cycle created");
       onOpenChange(false);
       setName("");
-      setStart(msToInputDate(Date.now()));
-      setEnd(defaultSprintEnd());
+      const today = msToInputDate(Date.now());
+      setStart(today);
+      setEnd(sprintEndDate(today));
       if (params.orgSlug) {
         router.push(`/${params.orgSlug}/cycles/${cycleId}`);
       }

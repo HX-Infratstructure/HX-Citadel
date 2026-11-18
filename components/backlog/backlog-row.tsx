@@ -30,8 +30,8 @@ export function BacklogRow({
     >
       <button
         type="button"
-        aria-label="Drag to rank"
-        className="cursor-grab px-1 text-muted-foreground"
+        aria-label={`Drag to rank ${issue.title}`}
+        className="cursor-grab touch-none px-1 text-muted-foreground"
         {...attributes}
         {...listeners}
       >

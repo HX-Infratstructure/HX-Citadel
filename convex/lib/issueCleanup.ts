@@ -7,9 +7,21 @@ export async function deleteRows(ctx: MutationCtx, rows: { _id: Id<TableNames> }
   }
 }
 
+/**
+ * Rows written before `attachments.create` refused shared files can still share one,
+ * so a file is deleted only with the last row that uses it.
+ */
 export async function deleteAttachmentFiles(ctx: MutationCtx, attachments: Doc<"attachments">[]) {
-  for (const attachment of attachments) {
-    await ctx.storage.delete(attachment.storageId);
+  const leaving = new Set(attachments.map((attachment) => attachment._id));
+  const files = new Set(attachments.map((attachment) => attachment.storageId));
+  for (const storageId of files) {
+    const users = await ctx.db
+      .query("attachments")
+      .withIndex("by_storage", (q) => q.eq("storageId", storageId))
+      .collect();
+    if (users.every((row) => leaving.has(row._id))) {
+      await ctx.storage.delete(storageId);
+    }
   }
 }
 

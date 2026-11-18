@@ -155,6 +155,7 @@ describe("one story In Progress per person", () => {
       });
 
       await expect(move(other, "in_progress")).resolves.toBeNull();
+      expect((await t.run((ctx) => ctx.db.get(other)))?.status).toBe("in_progress");
       await move(holder, "todo");
       await expect(move(holder, "in_progress")).resolves.toBeNull();
     }

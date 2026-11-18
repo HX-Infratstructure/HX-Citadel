@@ -14,8 +14,8 @@ const TEAM_KEY = "HXT";
 
 type Kind = "epic" | "feature" | "story" | "subtask";
 
-async function setup() {
-  const t = convexTest(schema, modules);
+async function setup(transactionLimits: { databaseQueries?: number } | boolean = false) {
+  const t = convexTest({ schema, modules, transactionLimits });
   const { teamId, projectId } = await t.run(async (ctx) => {
     const memberId = await ctx.db.insert("users", {
       clerkId: MEMBER_CLERK_ID,
@@ -81,6 +81,16 @@ async function setup() {
       });
     });
 
+  const insertForeignProject = () =>
+    t.run(async (ctx) => {
+      const orgId = await ctx.db.insert("organizations", {
+        clerkOrgId: "org_other",
+        name: "Other Org",
+        slug: "other-org",
+      });
+      return ctx.db.insert("projects", { orgId, name: "Foreign", status: "planned" });
+    });
+
   const insertOtherTeam = () =>
     t.run(async (ctx) => {
       const team = await ctx.db.get(teamId);
@@ -100,6 +110,7 @@ async function setup() {
     create,
     tree,
     insertOtherProject,
+    insertForeignProject,
     insertOtherTeam,
   };
 }
@@ -286,6 +297,33 @@ describe("issue levels", () => {
     }
   });
 
+  test("moves an epic's project without querying subtasks for children", async () => {
+    const { t, asMember, tree, insertOtherProject } = await setup({ databaseQueries: 300 });
+    const { epic, feature, story } = await tree();
+    await t.run(async (ctx) => {
+      const shared = (await ctx.db.get(story))!;
+      const fields = {
+        orgId: shared.orgId,
+        teamId: shared.teamId,
+        title: "Bulk",
+        status: shared.status,
+        priority: shared.priority,
+        creatorId: shared.creatorId,
+        projectId: shared.projectId,
+        sortOrder: 0,
+      };
+      for (let i = 0; i < 199; i++) {
+        const bulkStory = await ctx.db.insert("issues", { ...fields, kind: "story", parentIssueId: feature });
+        await ctx.db.insert("issues", { ...fields, kind: "subtask", parentIssueId: bulkStory });
+      }
+    });
+    const newProject = await insertOtherProject();
+
+    await asMember.mutation(api.issues.update, { issueId: epic, projectId: newProject });
+
+    expect((await asMember.query(api.issues.get, { issueId: story }))!.projectId).toBe(newProject);
+  });
+
   test("refuses deleting a project that has an epic", async () => {
     const { asMember, projectId, tree } = await setup();
     await tree();
@@ -301,7 +339,35 @@ describe("issue levels", () => {
 
     await asMember.mutation(api.projects.remove, { projectId });
 
-    expect((await asMember.query(api.issues.get, { issueId: story }))?.projectId).toBeUndefined();
+    const kept = await asMember.query(api.issues.get, { issueId: story });
+    expect(kept).not.toBeNull();
+    expect(kept!.projectId).toBeUndefined();
+    expect(await asMember.query(api.projects.get, { projectId })).toBeNull();
+  });
+
+  test("refuses an epic whose project belongs to another organization", async () => {
+    const { create, insertForeignProject } = await setup();
+    const foreignProject = await insertForeignProject();
+
+    await expect(create("epic", { projectId: foreignProject })).rejects.toThrow("Project not found");
+  });
+
+  test("refuses an epic whose project was deleted", async () => {
+    const { t, create, insertOtherProject } = await setup();
+    const deleted = await insertOtherProject();
+    await t.run((ctx) => ctx.db.delete(deleted));
+
+    await expect(create("epic", { projectId: deleted })).rejects.toThrow("Project not found");
+  });
+
+  test("refuses moving an epic to another organization's project", async () => {
+    const { asMember, tree, insertForeignProject } = await setup();
+    const { epic } = await tree();
+    const foreignProject = await insertForeignProject();
+
+    await expect(
+      asMember.mutation(api.issues.update, { issueId: epic, projectId: foreignProject })
+    ).rejects.toThrow("Project not found");
   });
 
   test("refuses deleting an epic that has a feature, naming 1 feature", async () => {

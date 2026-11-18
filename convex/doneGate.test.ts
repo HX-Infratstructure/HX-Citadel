@@ -133,6 +133,18 @@ describe("Done gate: a story", () => {
     await expect(move(story, "done")).resolves.toBeNull();
   });
 
+  test.each(GATED)("a canceled Complete testing sub-task holds the story back from %s, even with proof", async (label, status) => {
+    const { move, setProof, storyWithWork } = await setup();
+    const { story, work, testing } = await storyWithWork();
+    await move(work, "done");
+    await setProof(testing, PROOF);
+    await move(testing, "canceled");
+
+    await expect(move(story, status)).rejects.toThrow(
+      `Can't move ENG-1 to ${label}: open — ENG-1.1 Complete testing`
+    );
+  });
+
   test.each(["backlog", "todo", "in_progress", "canceled"] as const)(
     "a move to %s is never gated",
     async (status) => {

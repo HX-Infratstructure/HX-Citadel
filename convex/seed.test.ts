@@ -131,8 +131,8 @@ describe("seed.demoData", () => {
             parentIssueId: issue.parentIssueId,
             projectId: issue.projectId,
           }),
-          `${issue.title} sits at a valid level`
-        ).resolves.toBeDefined();
+          `${issue.title} sits at a valid level with its parent's team and project`
+        ).resolves.toEqual({ teamId: issue.teamId, projectId: issue.projectId });
       }
 
       for (const issue of issues.filter((row) => row.kind === "story" || row.kind === "subtask")) {

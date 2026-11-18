@@ -1,7 +1,9 @@
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
-import { formatIssueKey } from "../lib/issue-key";
+import { formatIssueKey, PARENT_KIND } from "../lib/issue-key";
+import { isGatedStatus } from "../lib/issue-status";
+import { respaceTie, SORT_GAP } from "../lib/sort-order";
 import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { deleteIssueOwnedRows } from "./lib/issueCleanup";
@@ -85,7 +87,14 @@ export const listByTeam = orgQuery({
   },
 });
 
-/** The backlog: open stories with no cycle, highest `sortOrder` (owner's rank) first. */
+const OPEN_STATUSES = issueStatusValidator.members
+  .map((member) => member.value)
+  .filter((status) => !CLOSED_STATUSES.has(status));
+
+/**
+ * The backlog: open stories with no cycle, highest `sortOrder` (owner's rank) first.
+ * Reads open statuses only, so a long closed history never counts against the read limit.
+ */
 export const listBacklog = orgQuery({
   args: { teamId: v.id("teams") },
   returns: v.array(v.object(issueShape)),
@@ -94,18 +103,51 @@ export const listBacklog = orgQuery({
     if (!team || team.orgId !== ctx.org._id) {
       throw new Error("Team not found");
     }
-    const issues = await ctx.db
-      .query("issues")
-      .withIndex("by_team", (q) => q.eq("teamId", args.teamId))
-      .collect();
-    return issues
-      .filter(
-        (issue) =>
-          issue.kind === "story" &&
-          issue.cycleId === undefined &&
-          !CLOSED_STATUSES.has(issue.status)
+    const byStatus = await Promise.all(
+      OPEN_STATUSES.map((status) =>
+        ctx.db
+          .query("issues")
+          .withIndex("by_team_and_status", (q) =>
+            q.eq("teamId", args.teamId).eq("status", status)
+          )
+          .collect()
       )
+    );
+    return byStatus
+      .flat()
+      .filter((issue) => issue.kind === "story" && issue.cycleId === undefined)
       .sort((a, b) => b.sortOrder - a.sortOrder);
+  },
+});
+
+const PARENT_STATUSES = issueStatusValidator.members
+  .map((member) => member.value)
+  .filter((status) => !isGatedStatus(status));
+
+/** The issues a child of `kind` may sit under: the team's issues one level up that are not In Review or Done, newest first. */
+export const listParentCandidates = orgQuery({
+  args: { teamId: v.id("teams"), kind: issueKindValidator },
+  returns: v.array(v.object(issueShape)),
+  handler: async (ctx, args) => {
+    const team = await ctx.db.get(args.teamId);
+    if (!team || team.orgId !== ctx.org._id) {
+      throw new Error("Team not found");
+    }
+    const parentKind = PARENT_KIND[args.kind];
+    if (parentKind === null) {
+      return [];
+    }
+    const byStatus = await Promise.all(
+      PARENT_STATUSES.map((status) =>
+        ctx.db
+          .query("issues")
+          .withIndex("by_team_kind_status", (q) =>
+            q.eq("teamId", args.teamId).eq("kind", parentKind).eq("status", status)
+          )
+          .collect()
+      )
+    );
+    return byStatus.flat().sort((a, b) => b._creationTime - a._creationTime);
   },
 });
 
@@ -206,12 +248,12 @@ export const create = orgMutation({
     const numbering = await claimNumbering(ctx, team, kind, args.parentIssueId);
 
     // New issues sort to the top of their column.
-    const newest = await ctx.db
+    const highest = await ctx.db
       .query("issues")
-      .withIndex("by_team", (q) => q.eq("teamId", args.teamId))
+      .withIndex("by_team_and_sort_order", (q) => q.eq("teamId", placement.teamId))
       .order("desc")
       .first();
-    const sortOrder = (newest?.sortOrder ?? 0) + 1000;
+    const sortOrder = (highest?.sortOrder ?? 0) + SORT_GAP;
 
     const issueId = await ctx.db.insert("issues", {
       orgId: ctx.org._id,
@@ -250,6 +292,40 @@ export const create = orgMutation({
     return issueId;
   },
 });
+
+/**
+ * The rank to store for an issue moved to `rank`. Other issues in the team that
+ * already hold `rank` are re-spaced first, in creation order, and the moved
+ * issue takes a rank inside their run, so it never ties a neighbour.
+ */
+async function placeRank(
+  ctx: MutationCtx,
+  issue: Doc<"issues">,
+  rank: number
+): Promise<number> {
+  const atRank = await ctx.db
+    .query("issues")
+    .withIndex("by_team_and_sort_order", (q) =>
+      q.eq("teamId", issue.teamId).eq("sortOrder", rank)
+    )
+    .collect();
+  const tied = atRank.filter((other) => other._id !== issue._id);
+  if (tied.length === 0) {
+    return rank;
+  }
+  const nextLower = await ctx.db
+    .query("issues")
+    .withIndex("by_team_and_sort_order", (q) =>
+      q.eq("teamId", issue.teamId).lt("sortOrder", rank)
+    )
+    .order("desc")
+    .first();
+  const ranks = respaceTie(rank, tied.length, nextLower?.sortOrder);
+  for (const [index, other] of tied.entries()) {
+    await ctx.db.patch(other._id, { sortOrder: ranks.tied[index] });
+  }
+  return ranks.moved;
+}
 
 export const update = orgMutation({
   args: {
@@ -293,8 +369,16 @@ export const update = orgMutation({
         parentIssueId: issue.parentIssueId,
         projectId: args.projectId ?? undefined,
       });
+      if (args.projectId === null && placement.projectId !== undefined) {
+        const parentKind = PARENT_KIND[issue.kind];
+        throw new Error(
+          `This ${issue.kind}'s project comes from its ${parentKind}; move it out of the ${parentKind} to clear the project`
+        );
+      }
       updates.projectId = placement.projectId;
-      await cascadeProject(ctx, issue._id, placement.projectId, actor);
+      if (placement.projectId !== issue.projectId) {
+        await cascadeProject(ctx, issue._id, placement.projectId, actor);
+      }
     }
     if (args.cycleId !== undefined) {
       updates.cycleId = args.cycleId ?? undefined;
@@ -305,8 +389,8 @@ export const update = orgMutation({
     if (args.dueDate !== undefined) {
       updates.dueDate = args.dueDate ?? undefined;
     }
-    if (args.sortOrder !== undefined) {
-      updates.sortOrder = args.sortOrder;
+    if (args.sortOrder !== undefined && args.sortOrder !== issue.sortOrder) {
+      updates.sortOrder = await placeRank(ctx, issue, args.sortOrder);
     }
 
     await assertWipFreeAfterUpdate(ctx, issue, updates);

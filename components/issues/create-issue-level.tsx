@@ -11,7 +11,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { KIND_LABELS, STORY_TYPE_LABELS } from "@/components/issues/issue-key";
-import { parentChoices } from "@/lib/issue-key";
+import { IssueKind, PARENT_KIND, parentChoices, PROJECT_REQUIRED } from "@/lib/issue-key";
+import { missingPlacement } from "@/lib/level-placement";
 
 type StoryType = NonNullable<Doc<"issues">["type"]>;
 type CreatableKind = "epic" | "feature" | "story";
@@ -50,6 +51,8 @@ export function LevelPickers({
   value: LevelChoice;
   onChange: (value: LevelChoice) => void;
 }) {
+  const missing = missingPlacement(value);
+  const parentKind = PARENT_KIND[value.kind];
   return (
     <>
       <Select
@@ -84,9 +87,17 @@ export function LevelPickers({
           </SelectContent>
         </Select>
       )}
-      {value.kind === "epic" && <ProjectPicker value={value} onChange={onChange} />}
-      {value.kind !== "epic" && teamId && (
-        <ParentPicker teamId={teamId} value={value} onChange={onChange} />
+      {PROJECT_REQUIRED[value.kind] && (
+        <ProjectPicker value={value} onChange={onChange} invalid={missing === "project"} />
+      )}
+      {parentKind && teamId && (
+        <ParentPicker
+          teamId={teamId}
+          parentKind={parentKind}
+          value={value}
+          onChange={onChange}
+          invalid={missing === "parent"}
+        />
       )}
     </>
   );
@@ -95,9 +106,11 @@ export function LevelPickers({
 function ProjectPicker({
   value,
   onChange,
+  invalid,
 }: {
   value: LevelChoice;
   onChange: (value: LevelChoice) => void;
+  invalid: boolean;
 }) {
   const projects = useQuery(api.projects.list);
   return (
@@ -107,7 +120,12 @@ function ProjectPicker({
         onChange({ ...value, projectId: projectId as Id<"projects"> })
       }
     >
-      <SelectTrigger size="sm" className="w-auto gap-1.5" aria-label="Project">
+      <SelectTrigger
+        size="sm"
+        className="w-auto gap-1.5"
+        aria-label="Project"
+        aria-invalid={invalid}
+      >
         <SelectValue placeholder="Project" />
       </SelectTrigger>
       <SelectContent>
@@ -123,17 +141,21 @@ function ProjectPicker({
 
 function ParentPicker({
   teamId,
+  parentKind,
   value,
   onChange,
+  invalid,
 }: {
   teamId: Id<"teams">;
+  parentKind: IssueKind;
   value: LevelChoice;
   onChange: (value: LevelChoice) => void;
+  invalid: boolean;
 }) {
-  const issues = useQuery(api.issues.listByTeam, { teamId });
-  const choices = parentChoices(issues ?? [], value.kind);
+  const candidates = useQuery(api.issues.listParentCandidates, { teamId, kind: value.kind });
+  const choices = parentChoices(candidates ?? [], value.kind);
   const parents = choices?.parents ?? [];
-  const parentLabel = value.kind === "feature" ? "Epic" : "Feature";
+  const parentLabel = KIND_LABELS[parentKind];
   const selectParent = (parentId: string) =>
     onChange({
       ...value,
@@ -142,12 +164,17 @@ function ParentPicker({
 
   return (
     <Select value={value.parentIssueId ?? ""} onValueChange={selectParent}>
-      <SelectTrigger size="sm" className="w-auto gap-1.5" aria-label={parentLabel}>
+      <SelectTrigger
+        size="sm"
+        className="w-auto gap-1.5"
+        aria-label={parentLabel}
+        aria-invalid={invalid}
+      >
         <SelectValue placeholder={parentLabel} />
       </SelectTrigger>
       <SelectContent>
         {choices?.allowsNone && (
-          <SelectItem value={NO_PARENT}>No feature</SelectItem>
+          <SelectItem value={NO_PARENT}>No {parentLabel.toLowerCase()}</SelectItem>
         )}
         {parents.map((parent) => (
           <SelectItem key={parent._id} value={parent._id}>

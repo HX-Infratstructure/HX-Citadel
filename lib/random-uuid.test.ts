@@ -29,12 +29,16 @@ describe("randomUuidV4", () => {
 });
 
 describe("installRandomUuidFallback", () => {
-  test("installs a working randomUUID on a crypto without one", () => {
-    const insecureCrypto: { getRandomValues: typeof fillRandom; randomUUID?: () => string } = {
-      getRandomValues: fillRandom,
+  test("installs a working randomUUID on the global crypto, called on that crypto", () => {
+    const insecureCrypto: { getRandomValues(bytes: Uint8Array): Uint8Array; randomUUID?: () => string } = {
+      getRandomValues(bytes) {
+        if (this !== insecureCrypto) throw new TypeError("Illegal invocation");
+        return bytes.fill(0x07);
+      },
     };
-    installRandomUuidFallback(insecureCrypto);
-    expect(insecureCrypto.randomUUID?.()).toMatch(UUID_V4);
+    vi.stubGlobal("crypto", insecureCrypto);
+    installRandomUuidFallback();
+    expect(insecureCrypto.randomUUID?.()).toBe("07070707-0707-4707-8707-070707070707");
   });
 
   test("leaves a native randomUUID unchanged", () => {

@@ -13,17 +13,24 @@ import { Input } from "@/components/ui/input";
 /** The Complete testing sub-task's badge and proof link, which the Done gate reads. */
 export function TestingProof({ issue }: { issue: Doc<"issues"> }) {
   const setProof = useMutation(api.issues.setProof);
-  const [proofUrl, setProofUrl] = useState(issue.proofUrl ?? "");
+  const savedUrl = issue.proofUrl ?? "";
+  // null until the user edits, so the input follows the saved proof, including a save from another tab.
+  const [draft, setDraft] = useState<string | null>(null);
 
   const saveProof = () => {
-    const trimmed = proofUrl.trim();
-    if (trimmed === (issue.proofUrl ?? "")) {
+    if (draft === null) {
       return;
     }
-    setProof({ issueId: issue._id, proofUrl: trimmed }).catch((error: unknown) => {
-      setProofUrl(issue.proofUrl ?? "");
-      toast.error(errorMessage(error, "Failed to save proof"));
-    });
+    const trimmed = draft.trim();
+    if (trimmed === savedUrl) {
+      setDraft(null);
+      return;
+    }
+    setProof({ issueId: issue._id, proofUrl: trimmed })
+      .then(() => setDraft((current) => (current === draft ? null : current)))
+      .catch((error: unknown) => {
+        toast.error(errorMessage(error, "Failed to save proof"));
+      });
   };
 
   return (
@@ -45,9 +52,9 @@ export function TestingProof({ issue }: { issue: Doc<"issues"> }) {
       </div>
       <Input
         type="url"
-        value={proofUrl}
+        value={draft ?? savedUrl}
         placeholder="https://… (Enter to save)"
-        onChange={(e) => setProofUrl(e.target.value)}
+        onChange={(e) => setDraft(e.target.value)}
         onBlur={saveProof}
         onKeyDown={(e) => {
           if (e.key === "Enter") {

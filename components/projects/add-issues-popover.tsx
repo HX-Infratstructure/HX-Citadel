@@ -1,5 +1,6 @@
 "use client";
 
+import { defaultFilter } from "cmdk";
 import { Plus } from "lucide-react";
 import { useState } from "react";
 import { Doc, Id } from "@/convex/_generated/dataModel";
@@ -21,6 +22,11 @@ import { StatusIcon } from "@/components/shared/status-icon";
  * caller — this component only renders candidates and reports selections.
  * Stays open after a pick so several issues can be added in a row; the
  * candidate list shrinks reactively as issues are assigned.
+ *
+ * Each item's cmdk value is the issue id, so two issues with the same display
+ * text stay separately selectable. cmdk only re-reads an item's search text when
+ * its value changes, and a subtask's key arrives after its parent query loads,
+ * so the items filter themselves against the live key and title instead.
  */
 export function AddIssuesPopover({
   candidates,
@@ -34,9 +40,16 @@ export function AddIssuesPopover({
   emptyText?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        setSearch("");
+      }}
+    >
       <PopoverTrigger asChild>
         <Button size="sm" variant="outline">
           <Plus className="size-4" />
@@ -44,8 +57,12 @@ export function AddIssuesPopover({
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-96 p-0">
-        <Command>
-          <CommandInput placeholder="Add existing issues…" />
+        <Command shouldFilter={false}>
+          <CommandInput
+            placeholder="Add existing issues…"
+            value={search}
+            onValueChange={setSearch}
+          />
           <CommandList>
             <CommandEmpty>{emptyText}</CommandEmpty>
             {candidates?.map((issue) => (
@@ -53,6 +70,7 @@ export function AddIssuesPopover({
                 key={issue._id}
                 issue={issue}
                 teamKey={teamKeyFor(issue.teamId)}
+                search={search}
                 onAdd={onAdd}
               />
             ))}
@@ -66,15 +84,20 @@ export function AddIssuesPopover({
 function CandidateItem({
   issue,
   teamKey,
+  search,
   onAdd,
 }: {
   issue: Doc<"issues">;
   teamKey: string;
+  search: string;
   onAdd: (issueId: Id<"issues">) => void;
 }) {
   const keyText = useIssueKeyText(teamKey, issue);
+  if (search && defaultFilter(`${keyText} ${issue.title}`, search) === 0) {
+    return null;
+  }
   return (
-    <CommandItem value={`${keyText} ${issue.title}`} onSelect={() => onAdd(issue._id)}>
+    <CommandItem value={issue._id} onSelect={() => onAdd(issue._id)}>
       <StatusIcon status={issue.status} />
       <IssueKey
         teamKey={teamKey}
