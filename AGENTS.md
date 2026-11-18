@@ -5,7 +5,7 @@ HX-Citadel is the HX team's work tracker for agentic and agile development, with
 ## Architecture rules
 
 - **Clerk is the source of truth** for users, organizations and memberships. Convex mirrors them in the `users`, `organizations` and `members` tables. Clerk webhooks do not arrive, so `mirror:syncCurrent` and a cron that runs `mirror:reconcileAll` keep the mirror current. The README's [Clerk sync](README.md#clerk-sync) section says when each one runs. Feature code never writes to those tables.
-  - The one exception: `ensureAgent` in `convex/lib/agents.ts` creates agent users and their HX workspace membership (owner and DSH approved, phase 3).
+  - The one exception: `convex/lib/agents.ts` writes agent users and their HX workspace membership. `ensureAgent` creates them (owner and DSH approved, phase 3), and `removeAgentMembership` deletes a membership for the operator command `agentAdmin:removeAgent`.
 - **Every Convex function uses a wrapper** from `convex/lib/customFunctions.ts`:
   - `orgQuery` and `orgMutation` resolve `ctx.user`, `ctx.org` and `ctx.membership` through `getAuthContext` in `convex/lib/auth.ts`. The JWT `subject` selects the user by `clerkId`, the `org_id` claim selects the organization, and the caller must have a `members` row in it.
   - `orgAdminMutation` does the same and also requires `ctx.membership.role === "admin"`.
@@ -61,6 +61,7 @@ The owner set these rules on 2026-11-17.
 - If you create the team again with the same key, its issue numbers start at 1 again (`nextIssueNumber: 1` in `convex/teams.ts`), so an old key can name a new story. Don't reuse a story key or an [`If-Match`](docs/AGENT-API.md#send-the-three-headers) version you held from before the clear. Read the issue again.
 - Never run `admin:clearOrgContent` once real work exists. It deletes the content of the whole workspace.
 - Keep the `LCK` team. `pnpm live-check -- --team LCK` uses it (`docs/AGENT-API.md`). Clearing `LCK` deletes it, so create it again before the next check.
+- Remove a mistyped or retired agent from the workspace with `npx convex run agentAdmin:removeAgent '{"clerkOrgId":"…","agentName":"…"}'`. It refuses while the agent is still an issue's assignee or a project's lead and names them, keeps the agent's user row so its comments and activity still show its name, and the agent's next request makes it a member again (`removeAgentMembership` in `convex/lib/agents.ts`).
 
 ## Verifying your work
 

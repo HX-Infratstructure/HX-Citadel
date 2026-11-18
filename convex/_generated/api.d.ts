@@ -10,6 +10,7 @@
 
 import type * as activity from "../activity.js";
 import type * as admin from "../admin.js";
+import type * as agentAdmin from "../agentAdmin.js";
 import type * as agentApi from "../agentApi.js";
 import type * as attachments from "../attachments.js";
 import type * as comments from "../comments.js";
@@ -28,6 +29,7 @@ import type * as lib_decisions from "../lib/decisions.js";
 import type * as lib_httpApi from "../lib/httpApi.js";
 import type * as lib_idempotency from "../lib/idempotency.js";
 import type * as lib_issueCleanup from "../lib/issueCleanup.js";
+import type * as lib_issueKeys from "../lib/issueKeys.js";
 import type * as lib_issueVersion from "../lib/issueVersion.js";
 import type * as lib_mirror from "../lib/mirror.js";
 import type * as lib_orgRows from "../lib/orgRows.js";
@@ -59,6 +61,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   activity: typeof activity;
   admin: typeof admin;
+  agentAdmin: typeof agentAdmin;
   agentApi: typeof agentApi;
   attachments: typeof attachments;
   comments: typeof comments;
@@ -77,6 +80,7 @@ declare const fullApi: ApiFromModules<{
   "lib/httpApi": typeof lib_httpApi;
   "lib/idempotency": typeof lib_idempotency;
   "lib/issueCleanup": typeof lib_issueCleanup;
+  "lib/issueKeys": typeof lib_issueKeys;
   "lib/issueVersion": typeof lib_issueVersion;
   "lib/mirror": typeof lib_mirror;
   "lib/orgRows": typeof lib_orgRows;

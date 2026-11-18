@@ -1,13 +1,16 @@
 import { ObjectType, v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx } from "./_generated/server";
-import { getOrgIssue } from "./issues";
+import { getOrgIssue, LIST_LIMIT } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { findMembership } from "./lib/mirror";
 import { inOrg, requireOrgRow } from "./lib/orgRows";
 import { OrgScope } from "./lib/orgScope";
-import { invalid } from "./lib/refusals";
+import { invalid, refuse } from "./lib/refusals";
+
+/** The most people one comment can mention; each mention is one membership read. */
+export const MAX_MENTIONS = 50;
 
 /** Comment enriched with author + mention display info for the feed. */
 const enrichedCommentValidator = v.object({
@@ -32,6 +35,9 @@ async function filterToOrgMembers(
   userIds: Id<"users">[]
 ): Promise<Id<"users">[]> {
   const unique = [...new Set(userIds)];
+  if (unique.length > MAX_MENTIONS) {
+    invalid(`A comment can mention at most ${MAX_MENTIONS} people`);
+  }
   const valid: Id<"users">[] = [];
   for (const userId of unique) {
     if (await findMembership(ctx, orgId, userId)) {
@@ -41,16 +47,26 @@ async function filterToOrgMembers(
   return valid;
 }
 
+function commentBody(body: string): string {
+  const trimmed = body.trim();
+  if (!trimmed) {
+    invalid("Comment cannot be empty");
+  }
+  return trimmed;
+}
+
+/** The issue's newest `LIST_LIMIT` comments, oldest first. */
 export const listByIssue = orgQuery({
   args: { issueId: v.id("issues") },
   returns: v.array(enrichedCommentValidator),
   handler: async (ctx, args) => {
     await getOrgIssue(ctx, ctx.org._id, args.issueId);
 
-    const comments = await inOrg(
-      ctx.db.query("comments").withIndex("by_issue", (q) => q.eq("issueId", args.issueId)),
+    const newestFirst = await inOrg(
+      ctx.db.query("comments").withIndex("by_issue", (q) => q.eq("issueId", args.issueId)).order("desc"),
       ctx.org._id
-    ).collect();
+    ).take(LIST_LIMIT);
+    const comments = [...newestFirst].reverse();
 
     const userCache = new Map<Id<"users">, Doc<"users"> | null>();
     const getUser = async (userId: Id<"users">) => {
@@ -101,12 +117,7 @@ export async function createComment(
 ): Promise<Id<"comments">> {
   const { org, actorId } = scope;
   const issue = await getOrgIssue(ctx, org._id, args.issueId);
-
-  const body = args.body.trim();
-  if (!body) {
-    invalid("Comment cannot be empty");
-  }
-
+  const body = commentBody(args.body);
   const mentions = await filterToOrgMembers(ctx, org._id, args.mentions ?? []);
 
   const commentId = await ctx.db.insert("comments", {
@@ -139,14 +150,10 @@ export const update = orgMutation({
   handler: async (ctx, args) => {
     const comment = await requireOrgRow(ctx, ctx.org._id, args.commentId, "Comment");
     if (comment.authorId !== ctx.user._id) {
-      throw new Error("Only the author can edit a comment");
+      refuse("Only the author can edit a comment");
     }
 
-    const body = args.body.trim();
-    if (!body) {
-      invalid("Comment cannot be empty");
-    }
-
+    const body = commentBody(args.body);
     const mentions =
       args.mentions !== undefined
         ? await filterToOrgMembers(ctx, ctx.org._id, args.mentions)
@@ -168,7 +175,7 @@ export const remove = orgMutation({
     const isAuthor = comment.authorId === ctx.user._id;
     const isAdmin = ctx.membership.role === "admin";
     if (!isAuthor && !isAdmin) {
-      throw new Error("Only the author or an admin can delete a comment");
+      refuse("Only the author or an admin can delete a comment");
     }
     await ctx.db.delete(comment._id);
     return null;

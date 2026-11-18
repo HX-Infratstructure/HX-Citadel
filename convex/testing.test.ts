@@ -53,12 +53,13 @@ async function setup() {
   ) => asMember.mutation(api.issues.create, { teamId, title: `A ${kind}`, kind, ...extra });
 
   const children = (parentIssueId: Id<"issues">) =>
-    t.run((ctx) =>
-      ctx.db
+    t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(parentIssueId))!;
+      return await ctx.db
         .query("issues")
-        .withIndex("by_parent", (q) => q.eq("parentIssueId", parentIssueId))
-        .collect()
-    );
+        .withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", parentIssueId))
+        .collect();
+    });
 
   const testingSubtaskOf = async (storyId: Id<"issues">) => {
     const testing = (await children(storyId)).filter((child) => child.testing);

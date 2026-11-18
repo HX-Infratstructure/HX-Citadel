@@ -3,8 +3,9 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
+import { QueryCtx } from "./_generated/server";
 import { LIST_LIMIT } from "./issues";
-import { answerDecision, askDecision } from "./lib/decisions";
+import { answerDecision, askDecision, DECISION_PAGE_MAX, listIssueDecisions, pageIssueDecisions } from "./lib/decisions";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -202,8 +203,11 @@ describe("answering a decision", () => {
     expect({ status: after.status, version: after.version }).toEqual({ status: before.status, version: before.version });
     expect(after.activity.length - before.activity.length).toBe(1);
     expect(after.activity.at(-1)).toMatchObject({ type: "decided", newValue: "Yes: Ship it after the gate." });
-    const listed = await as(t, MEMBER).query(api.decisions.listForIssue, { issueId: issue._id });
-    expect(listed[0]).toMatchObject({
+    const listed = await as(t, MEMBER).query(api.decisions.listForIssue, {
+      issueId: issue._id,
+      paginationOpts: { cursor: null, numItems: DECISION_PAGE_MAX },
+    });
+    expect(listed.page[0]).toMatchObject({
       status: "answered",
       answer: { choice: "Yes", text: "Ship it after the gate." },
       answeredVia: "story",
@@ -229,6 +233,106 @@ describe("answering a decision", () => {
       return await ctx.db.get(decision._id);
     });
     expect(stored).toMatchObject({ status: "answered", answeredVia: "inbox" });
+  });
+});
+
+/** `count` answered decisions on the story, asked by the agent and answered by the admin, oldest first. */
+async function seedDecisions(t: T, issueId: Id<"issues">, count: number) {
+  return await t.run(async (ctx) => {
+    const { orgId } = (await ctx.db.get(issueId))!;
+    const user = async (clerkId: string) =>
+      (await ctx.db.query("users").withIndex("by_clerk_id", (q) => q.eq("clerkId", clerkId)).unique())!._id;
+    const askedBy = await user("agent:cc1");
+    const answeredBy = await user(ADMIN);
+    for (let n = 1; n <= count; n++) {
+      await ctx.db.insert("decisions", { orgId, issueId, askedBy, answeredBy, question: `Q${n}`, status: "answered" });
+    }
+    return { orgId, userIds: [askedBy, answeredBy] };
+  });
+}
+
+const questions = (from: number, to: number) => Array.from({ length: from - to + 1 }, (_, i) => `Q${from - i}`);
+
+/** A context whose `db.get` counts the reads of the given users. */
+function countingUserReads(ctx: QueryCtx, userIds: Id<"users">[]) {
+  const reads = { users: 0 };
+  const db = new Proxy(ctx.db, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (typeof value !== "function") {
+        return value;
+      }
+      if (property !== "get") {
+        return value.bind(target);
+      }
+      return (...args: unknown[]) => {
+        reads.users += args.some((arg) => userIds.includes(arg as Id<"users">)) ? 1 : 0;
+        return value.apply(target, args);
+      };
+    },
+  });
+  return { ctx: { db }, reads };
+}
+
+describe("a story's decision history", () => {
+  const page = (t: T, issueId: Id<"issues">, cursor: string | null, numItems = DECISION_PAGE_MAX) =>
+    as(t, MEMBER).query(api.decisions.listForIssue, { issueId, paginationOpts: { cursor, numItems } });
+
+  test("with 10 more than a page, the first page holds the newest and its cursor reaches the other 10", async () => {
+    const { t, issue } = await setup();
+    await seedDecisions(t, issue._id, DECISION_PAGE_MAX + 10);
+    const first = await page(t, issue._id, null);
+    expect(first.page.map((d) => d.question)).toEqual(questions(DECISION_PAGE_MAX + 10, 11));
+    expect(first.isDone).toBe(false);
+    const rest = await page(t, issue._id, first.continueCursor);
+    expect(rest.page.map((d) => d.question)).toEqual(questions(10, 1));
+    expect(rest.isDone).toBe(true);
+  });
+
+  test("a client asking for more than a page still gets one page", async () => {
+    const { t, issue } = await setup();
+    await seedDecisions(t, issue._id, DECISION_PAGE_MAX + 10);
+    const first = await page(t, issue._id, null, LIST_LIMIT);
+    expect(first.page).toHaveLength(DECISION_PAGE_MAX);
+  });
+
+  test("another workspace's decision on our story never appears and takes no place on the page", async () => {
+    const { t, issue } = await setup();
+    await seedDecisions(t, issue._id, DECISION_PAGE_MAX);
+    await t.run(async (ctx) => {
+      const orgId = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
+      const askedBy = (await ctx.db.query("users").first())!._id;
+      await ctx.db.insert("decisions", { orgId, issueId: issue._id, askedBy, question: "Theirs?", status: "open" });
+    });
+    const first = await page(t, issue._id, null);
+    expect(first.page.map((d) => d.question)).toEqual(questions(DECISION_PAGE_MAX, 1));
+  });
+
+  type Listing = (
+    ctx: { db: QueryCtx["db"] },
+    orgId: Id<"organizations">,
+    issueId: Id<"issues">
+  ) => Promise<{ asker: string | null; answerer: string | null }[]>;
+  const listings: [string, Listing][] = [
+    [
+      "a panel page",
+      async (ctx, orgId, issueId) =>
+        (await pageIssueDecisions(ctx, orgId, issueId, { cursor: null, numItems: DECISION_PAGE_MAX })).page,
+    ],
+    ["the REST list", listIssueDecisions],
+  ];
+
+  test.each(listings)("%s reads each of the 2 users once for a full page of their decisions", async (_, list) => {
+    const { t, issue } = await setup();
+    const { orgId, userIds } = await seedDecisions(t, issue._id, DECISION_PAGE_MAX);
+    const { reads, rows } = await t.run(async (ctx) => {
+      const counting = countingUserReads(ctx, userIds);
+      const listed = await list(counting.ctx, orgId, issue._id);
+      return { reads: counting.reads.users, rows: listed };
+    });
+    expect(rows).toHaveLength(DECISION_PAGE_MAX);
+    expect(rows.every((row) => row.asker === "cc1" && row.answerer === ADMIN)).toBe(true);
+    expect(reads).toBe(2);
   });
 });
 

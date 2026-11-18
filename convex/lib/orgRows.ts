@@ -1,7 +1,7 @@
 import { FilterBuilder, GenericTableInfo, OrderedQuery } from "convex/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { QueryCtx } from "../_generated/server";
-import { notFound } from "./refusals";
+import { notFound, refuse } from "./refusals";
 
 type Db = { db: QueryCtx["db"] };
 
@@ -54,14 +54,24 @@ export function inOrg<TableInfo extends GenericTableInfo & { document: { orgId: 
   return query.filter((q: FilterBuilder<GenericTableInfo>) => q.eq(q.field("orgId"), orgId));
 }
 
-/** An issue's children inside the workspace; a row from another workspace pointing at it is not one. */
+/**
+ * The most children one issue may have. Above the largest fan-out in use (a feature with 200 stories) and well
+ * below where a story delete, at seven index reads per sub-task, would reach Convex's 4,096 per transaction.
+ */
+export const MAX_CHILDREN = 250;
+
+/** An issue's children inside the workspace; more than `MAX_CHILDREN` is refused, never cut short. */
 export async function orgChildren(
   ctx: Db,
   orgId: Id<"organizations">,
   parentId: Id<"issues">
 ): Promise<Doc<"issues">[]> {
-  return await inOrg(
-    ctx.db.query("issues").withIndex("by_parent", (q) => q.eq("parentIssueId", parentId)),
-    orgId
-  ).collect();
+  const children = await ctx.db
+    .query("issues")
+    .withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", parentId))
+    .take(MAX_CHILDREN + 1);
+  if (children.length > MAX_CHILDREN) {
+    refuse(`Issue ${parentId} has more than ${MAX_CHILDREN} children, the most one issue can have`);
+  }
+  return children;
 }

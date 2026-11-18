@@ -56,14 +56,15 @@ type Setup = Awaited<ReturnType<typeof setup>>;
 
 /** In Review and Done need the Complete testing sub-task done with its proof (P2.4). */
 async function passDoneGate(t: Setup["t"], asMember: Setup["asMember"], storyId: Id<"issues">) {
-  const testing = await t.run(async (ctx) =>
-    (
+  const testing = await t.run(async (ctx) => {
+    const { orgId } = (await ctx.db.get(storyId))!;
+    return (
       await ctx.db
         .query("issues")
-        .withIndex("by_parent", (q) => q.eq("parentIssueId", storyId))
+        .withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", storyId))
         .collect()
-    ).find((child) => child.testing)
-  );
+    ).find((child) => child.testing);
+  });
   await asMember.mutation(api.issues.setProof, {
     issueId: testing!._id,
     proofUrl: "https://ci.example.com/run/1",

@@ -53,7 +53,7 @@ describe("internal.agentApi.createIssue", () => {
       creator: await ctx.db.get(issue.creatorId),
       subtasks: await ctx.db
         .query("issues")
-        .withIndex("by_parent", (q) => q.eq("parentIssueId", issue._id))
+        .withIndex("by_org_and_parent", (q) => q.eq("orgId", issue.orgId).eq("parentIssueId", issue._id))
         .collect(),
     }));
     expect(creator).toMatchObject({ kind: "agent", clerkId: "agent:cc1" });

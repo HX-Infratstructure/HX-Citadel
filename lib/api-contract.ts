@@ -39,3 +39,8 @@ export type ErrorBody = { code: string; message: string };
 export function isErrorCode(code: unknown): code is ErrorCode {
   return typeof code === "string" && Object.hasOwn(ERROR_STATUS, code);
 }
+
+const MAX_ATTACHMENT_MB = 25;
+/** The server refuses a larger attachment; the upload panel checks first so a too-large file is never uploaded. */
+export const MAX_ATTACHMENT_BYTES = MAX_ATTACHMENT_MB * 1024 * 1024;
+export const ATTACHMENT_TOO_LARGE = `Attachments are limited to ${MAX_ATTACHMENT_MB} MB`;

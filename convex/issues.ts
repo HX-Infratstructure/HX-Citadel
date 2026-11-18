@@ -1,5 +1,5 @@
 import { ObjectType, v } from "convex/values";
-import { notFound, refuse } from "./lib/refusals";
+import { invalid, notFound, refuse } from "./lib/refusals";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
 import { PARENT_KIND } from "../lib/issue-key";
@@ -104,8 +104,9 @@ const OPEN_STATUSES = issueStatusValidator.members
   .filter((status) => !CLOSED_STATUSES.has(status));
 
 /**
- * The backlog: open stories with no cycle, highest `sortOrder` (owner's rank) first.
- * Reads open statuses only, so a long closed history never counts against the read limit.
+ * The backlog: open stories with no cycle, the top `LIST_LIMIT` by `sortOrder` (owner's rank).
+ * Reads the newest `LIST_LIMIT` of each open status only, so neither a long closed history nor a crowded status
+ * counts against the read limit. New stories rank on top, so a crowded status gives up its oldest.
  */
 export const listBacklog = orgQuery({
   args: { teamId: v.id("teams") },
@@ -115,15 +116,19 @@ export const listBacklog = orgQuery({
     const byStatus = await Promise.all(
       OPEN_STATUSES.map((status) =>
         inOrg(
-          ctx.db.query("issues").withIndex("by_team_and_status", (q) => q.eq("teamId", args.teamId).eq("status", status)),
+          ctx.db
+            .query("issues")
+            .withIndex("by_team_and_status", (q) => q.eq("teamId", args.teamId).eq("status", status))
+            .order("desc"),
           ctx.org._id
-        ).collect()
+        ).take(LIST_LIMIT)
       )
     );
     return byStatus
       .flat()
       .filter((issue) => issue.kind === "story" && issue.cycleId === undefined)
-      .sort((a, b) => b.sortOrder - a.sortOrder);
+      .sort((a, b) => b.sortOrder - a.sortOrder)
+      .slice(0, LIST_LIMIT);
   },
 });
 
@@ -131,7 +136,7 @@ const PARENT_STATUSES = issueStatusValidator.members
   .map((member) => member.value)
   .filter((status) => !isGatedStatus(status));
 
-/** The issues a child of `kind` may sit under: the team's issues one level up that are not In Review or Done, newest first. */
+/** The issues a child of `kind` may sit under: the team's newest `LIST_LIMIT` issues one level up that are not In Review or Done. */
 export const listParentCandidates = orgQuery({
   args: { teamId: v.id("teams"), kind: issueKindValidator },
   returns: v.array(v.object(issueShape)),
@@ -146,12 +151,16 @@ export const listParentCandidates = orgQuery({
         inOrg(
           ctx.db
             .query("issues")
-            .withIndex("by_team_kind_status", (q) => q.eq("teamId", args.teamId).eq("kind", parentKind).eq("status", status)),
+            .withIndex("by_team_kind_status", (q) => q.eq("teamId", args.teamId).eq("kind", parentKind).eq("status", status))
+            .order("desc"),
           ctx.org._id
-        ).collect()
+        ).take(LIST_LIMIT)
       )
     );
-    return byStatus.flat().sort((a, b) => b._creationTime - a._creationTime);
+    return byStatus
+      .flat()
+      .sort((a, b) => b._creationTime - a._creationTime)
+      .slice(0, LIST_LIMIT);
   },
 });
 
@@ -177,13 +186,20 @@ export const getByNumber = orgQuery({
   },
 });
 
-/** An assignee must be a member of the workspace. */
+/** An assignee must be a member of the workspace. A non-member is never loaded, so the refusal can't name them. */
 async function assertAssignee(ctx: MutationCtx, orgId: Id<"organizations">, userId: Id<"users">): Promise<void> {
-  if ((await findMembership(ctx, orgId, userId)) !== null) {
-    return;
+  if ((await findMembership(ctx, orgId, userId)) === null) {
+    notFound("Assignee not found");
   }
-  const user = await ctx.db.get(userId);
-  notFound(`Assignee ${user?.name ?? userId} not found`);
+}
+
+/** A title as stored: trimmed, and never empty. Every create and update path comes through here. */
+function issueTitle(text: string): string {
+  const title = text.trim();
+  if (title === "") {
+    invalid("Title cannot be empty");
+  }
+  return title;
 }
 
 /** Stories carry a type (default story); other levels carry none. */
@@ -240,6 +256,7 @@ export async function createIssue(
   args: CreateIssueArgs
 ): Promise<Id<"issues">> {
   const { org, actorId } = scope;
+  const title = issueTitle(args.title);
   const team = await requireOrgRow(ctx, org._id, args.teamId, "Team");
 
   const kind = args.kind ?? "story";
@@ -275,7 +292,7 @@ export async function createIssue(
     kind,
     type: storyType(kind, args.type),
     ...numbering,
-    title: args.title.trim(),
+    title,
     description: args.description,
     status,
     priority: args.priority ?? "none",
@@ -308,7 +325,11 @@ export const create = orgMutation({
     await createIssue(ctx, { org: ctx.org, actorId: ctx.user._id }, args),
 });
 
-/** The team's issues at `rank`, other than `issue`, in creation order. */
+/**
+ * The team's issues at `rank`, other than `issue`, in creation order. Bounded by design: every write gives a team
+ * distinct ranks (create takes the highest + `SORT_GAP`, `placeRank` re-spaces every row it ties, the seed spaces
+ * by position), so a rank holds only rows a legacy write left tied.
+ */
 async function othersAtRank(
   ctx: MutationCtx,
   issue: Doc<"issues">,
@@ -401,8 +422,11 @@ export async function updateIssue(
   const actor = { orgId: scope.org._id, actorId: scope.actorId };
   const updates: Partial<Doc<"issues">> = {};
 
-  if (args.title !== undefined && args.title !== issue.title) {
-    updates.title = args.title.trim();
+  if (args.title !== undefined) {
+    const title = issueTitle(args.title);
+    if (title !== issue.title) {
+      updates.title = title;
+    }
   }
   if (args.description !== undefined) {
     updates.description = args.description;
@@ -534,14 +558,13 @@ export function revertibleRows(issue: Doc<"issues">, newestFirst: Doc<"activity"
   return revertible;
 }
 
-/** Whether `row` is the newest activity row for its field; the walk stops at `row` itself. */
+/**
+ * Whether `row` is the newest activity row for its field among the issue's newest `LIST_LIMIT` rows, the window
+ * the feed offers Revert in. A row outside it is not offered, so `revertChange` refuses it too.
+ */
 async function isNewestForField(ctx: MutationCtx, issue: Doc<"issues">, row: Doc<"activity">) {
-  for await (const newer of activityNewestFirst(ctx, issue)) {
-    if (newer.field === row.field) {
-      return newer._id === row._id;
-    }
-  }
-  return false;
+  const recent = await activityNewestFirst(ctx, issue).take(LIST_LIMIT);
+  return recent.find((newer) => newer.field === row.field)?._id === row._id;
 }
 
 /** Apply an activity row's old value back through `updateIssue`, logged as one `reverted` row. */

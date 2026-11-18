@@ -1,12 +1,13 @@
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
-import { QueryCtx } from "./_generated/server";
-import { issueShape } from "./issues";
+import { MutationCtx, QueryCtx } from "./_generated/server";
+import { issueShape, LIST_LIMIT } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { findMembership } from "./lib/mirror";
 import { inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
 import { patchIssue } from "./lib/issueVersion";
+import { invalid, notFound } from "./lib/refusals";
 import { assertNoEpics } from "./lib/rules/levels";
 import { projectStatusValidator } from "./schema";
 
@@ -33,15 +34,8 @@ export const progressShape = v.object({
   canceled: v.number(),
 });
 
-async function countProgress(
-  ctx: { db: QueryCtx["db"] },
-  orgId: Id<"organizations">,
-  projectId: Id<"projects">
-) {
-  const issues = await inOrg(
-    ctx.db.query("issues").withIndex("by_project", (q) => q.eq("projectId", projectId)),
-    orgId
-  ).collect();
+/** Issue counts by status, the one progress rule for projects and cycles. */
+export function countByStatus(issues: Doc<"issues">[]) {
   const progress = {
     total: 0,
     backlog: 0,
@@ -58,16 +52,41 @@ async function countProgress(
   return progress;
 }
 
+/** A project's issues, at most `LIST_LIMIT`. */
+async function projectIssues(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">, projectId: Id<"projects">) {
+  return await inOrg(
+    ctx.db.query("issues").withIndex("by_project", (q) => q.eq("projectId", projectId)),
+    orgId
+  ).take(LIST_LIMIT);
+}
+
+/** Bounded by design: people create projects by hand, a few dozen per workspace; no agent route creates one. */
+async function orgProjects(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">) {
+  return await ctx.db
+    .query("projects")
+    .withIndex("by_org", (q) => q.eq("orgId", orgId))
+    .collect();
+}
+
+function projectName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    invalid("Project name is required");
+  }
+  return trimmed;
+}
+
+async function assertLead(ctx: MutationCtx, orgId: Id<"organizations">, leadId: Id<"users">): Promise<void> {
+  if (!(await findMembership(ctx, orgId, leadId))) {
+    notFound("Project lead must be a member of this organization");
+  }
+}
+
 /** Lightweight project list for pickers (no progress computation). */
 export const list = orgQuery({
   args: {},
   returns: v.array(v.object(projectShape)),
-  handler: async (ctx) => {
-    return await ctx.db
-      .query("projects")
-      .withIndex("by_org", (q) => q.eq("orgId", ctx.org._id))
-      .collect();
-  },
+  handler: async (ctx) => await orgProjects(ctx, ctx.org._id),
 });
 
 /** Projects with issue counts by status — powers the projects index page. */
@@ -75,14 +94,11 @@ export const listWithProgress = orgQuery({
   args: {},
   returns: v.array(v.object({ ...projectShape, progress: progressShape })),
   handler: async (ctx) => {
-    const projects = await ctx.db
-      .query("projects")
-      .withIndex("by_org", (q) => q.eq("orgId", ctx.org._id))
-      .collect();
+    const projects = await orgProjects(ctx, ctx.org._id);
     return await Promise.all(
       projects.map(async (project) => ({
         ...project,
-        progress: await countProgress(ctx, ctx.org._id, project._id),
+        progress: countByStatus(await projectIssues(ctx, ctx.org._id, project._id)),
       }))
     );
   },
@@ -100,10 +116,7 @@ export const listIssues = orgQuery({
   returns: v.array(v.object(issueShape)),
   handler: async (ctx, args) => {
     await requireOrgRow(ctx, ctx.org._id, args.projectId, "Project");
-    return await inOrg(
-      ctx.db.query("issues").withIndex("by_project", (q) => q.eq("projectId", args.projectId)),
-      ctx.org._id
-    ).collect();
+    return await projectIssues(ctx, ctx.org._id, args.projectId);
   },
 });
 
@@ -121,7 +134,7 @@ export const candidateIssues = orgQuery({
       .query("issues")
       .withIndex("by_org", (q) => q.eq("orgId", ctx.org._id))
       .order("desc")
-      .take(500);
+      .take(LIST_LIMIT);
     return issues
       .filter((issue) => issue.projectId !== args.projectId)
       .slice(0, 200);
@@ -139,13 +152,9 @@ export const create = orgMutation({
   },
   returns: v.id("projects"),
   handler: async (ctx, args) => {
-    const name = args.name.trim();
-    if (!name) {
-      throw new Error("Project name is required");
-    }
-
-    if (args.leadId && !(await findMembership(ctx, ctx.org._id, args.leadId))) {
-      throw new Error("Project lead must be a member of this organization");
+    const name = projectName(args.name);
+    if (args.leadId) {
+      await assertLead(ctx, ctx.org._id, args.leadId);
     }
 
     return await ctx.db.insert("projects", {
@@ -176,11 +185,7 @@ export const update = orgMutation({
 
     const updates: Partial<Doc<"projects">> = {};
     if (args.name !== undefined) {
-      const name = args.name.trim();
-      if (!name) {
-        throw new Error("Project name is required");
-      }
-      updates.name = name;
+      updates.name = projectName(args.name);
     }
     if (args.description !== undefined) {
       updates.description = args.description ?? undefined;
@@ -189,8 +194,8 @@ export const update = orgMutation({
       updates.status = args.status;
     }
     if (args.leadId !== undefined) {
-      if (args.leadId !== null && !(await findMembership(ctx, ctx.org._id, args.leadId))) {
-        throw new Error("Project lead must be a member of this organization");
+      if (args.leadId !== null) {
+        await assertLead(ctx, ctx.org._id, args.leadId);
       }
       updates.leadId = args.leadId ?? undefined;
     }
@@ -213,6 +218,7 @@ export const remove = orgMutation({
   handler: async (ctx, args) => {
     const project = await requireOrgRow(ctx, ctx.org._id, args.projectId, "Project");
 
+    // Bounded by design: assertNoEpics must see every issue, and the mutation is atomic, so a project too big to read fails whole and detaches nothing.
     const issues = await inOrg(
       ctx.db.query("issues").withIndex("by_project", (q) => q.eq("projectId", project._id)),
       ctx.org._id

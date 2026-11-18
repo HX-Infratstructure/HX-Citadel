@@ -3,7 +3,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { ConvexError } from "convex/values";
 import { api } from "./_generated/api";
-import { MAX_ATTACHMENT_BYTES } from "./attachments";
+import { MAX_ATTACHMENT_BYTES } from "../lib/api-contract";
 import { LIST_LIMIT } from "./issues";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
@@ -83,7 +83,7 @@ async function setup() {
     return t.withIdentity({ subject: "user_other", org_id: ORG_CLAIM });
   };
 
-  return { t, orgId, asMember, createIssue, storeFile, attach, insertSharedRow, removeAttachment, storedFile, asOtherMember };
+  return { t, orgId, memberId, asMember, createIssue, storeFile, attach, insertSharedRow, removeAttachment, storedFile, asOtherMember };
 }
 
 describe("attachments keep one owner per stored file", () => {
@@ -186,33 +186,87 @@ describe("attachments.create", () => {
     });
 
     await expect(attach(issueId, file)).rejects.toThrow("This file is already attached");
-    expect(await asMember.query(api.attachments.listByIssue, { issueId })).toEqual([]);
+    const listed = await asMember.query(api.attachments.listByIssue, {
+      issueId,
+      paginationOpts: { cursor: null, numItems: 50 },
+    });
+    expect(listed.page).toEqual([]);
   });
 });
 
 describe("attachments.listByIssue", () => {
-  test("lists the latest LIST_LIMIT attachments, oldest first", async () => {
-    const { t, orgId, asMember, createIssue, storeFile } = await setup();
+  const PAGE_SIZE = 50;
+  const COUNT = LIST_LIMIT + 1;
+  /** Newest first: file-500 down to file-0. */
+  const allNames = Array.from({ length: COUNT }, (_, index) => `file-${COUNT - 1 - index}`);
+
+  /** An issue with file-0 (oldest) to file-500, each with its own file, and another workspace's row pointing at it. */
+  async function crowdedIssue() {
+    const context = await setup();
+    const { t, orgId, memberId, asMember, createIssue } = context;
     const issueId = await createIssue();
-    const storageId = await storeFile();
-    const uploadedBy = await t.run(async (ctx) => (await ctx.db.query("users").first())!._id);
     await t.run(async (ctx) => {
-      for (let index = 0; index <= LIST_LIMIT; index += 1) {
-        await ctx.db.insert("attachments", {
-          orgId,
+      const foreignOrgId = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
+      const insert = async (rowOrgId: Id<"organizations">, fileName: string) =>
+        ctx.db.insert("attachments", {
+          orgId: rowOrgId,
           issueId,
-          storageId,
-          fileName: `file-${index}`,
+          storageId: await ctx.storage.store(new Blob([fileName])),
+          fileName,
           fileType: "text/plain",
           fileSize: 5,
-          uploadedBy,
+          uploadedBy: memberId,
         });
+      for (let index = 0; index < COUNT; index += 1) {
+        await insert(orgId, `file-${index}`);
+        if (index === LIST_LIMIT / 2) {
+          await insert(foreignOrgId, "foreign.txt");
+        }
       }
     });
 
-    const listed = await asMember.query(api.attachments.listByIssue, { issueId });
-    expect(listed).toHaveLength(LIST_LIMIT);
-    expect(listed[0].fileName).toBe("file-1");
-    expect(listed.at(-1)?.fileName).toBe(`file-${LIST_LIMIT}`);
+    const page = (cursor: string | null, numItems = PAGE_SIZE) =>
+      asMember.query(api.attachments.listByIssue, { issueId, paginationOpts: { cursor, numItems } });
+    const loadAll = async () => {
+      let result = await page(null);
+      const listed = [...result.page];
+      while (!result.isDone) {
+        result = await page(result.continueCursor);
+        listed.push(...result.page);
+      }
+      return listed;
+    };
+    return { ...context, page, loadAll };
+  }
+
+  test("the first page and load-more pages reach all LIST_LIMIT + 1 attachments, newest first, and no foreign row", async () => {
+    const { page, loadAll } = await crowdedIssue();
+
+    const first = await page(null);
+    expect(first.page.map((row) => row.fileName)).toEqual(allNames.slice(0, PAGE_SIZE));
+    expect(first.isDone).toBe(false);
+
+    expect((await loadAll()).map((row) => row.fileName)).toEqual(allNames);
+  });
+
+  test("a page holds at most LIST_LIMIT attachments, whatever size the client asks for", async () => {
+    const { page } = await crowdedIssue();
+
+    const asked = await page(null, COUNT);
+    expect(asked.page.map((row) => row.fileName)).toEqual(allNames.slice(0, LIST_LIMIT));
+    expect(asked.isDone).toBe(false);
+  });
+
+  test("an attachment from a later page can be deleted, with its file", async () => {
+    const { t, page, loadAll, removeAttachment, storedFile } = await crowdedIssue();
+    const second = await page((await page(null)).continueCursor);
+    const target = second.page[0];
+    expect(target.fileName).toBe(allNames[PAGE_SIZE]);
+    const { storageId } = (await t.run((ctx) => ctx.db.get(target._id)))!;
+
+    await removeAttachment(target._id);
+
+    expect(await storedFile(storageId)).toBeNull();
+    expect((await loadAll()).map((row) => row.fileName)).toEqual(allNames.filter((name) => name !== target.fileName));
   });
 });

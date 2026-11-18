@@ -2,12 +2,13 @@ import { v } from "convex/values";
 import { cycleName } from "../lib/sprint";
 import { Doc, Id } from "./_generated/dataModel";
 import { QueryCtx } from "./_generated/server";
-import { issueShape } from "./issues";
+import { issueShape, LIST_LIMIT } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
 import { patchIssue } from "./lib/issueVersion";
-import { progressShape } from "./projects";
+import { invalid } from "./lib/refusals";
+import { countByStatus, progressShape } from "./projects";
 
 export const cycleShape = {
   _id: v.id("cycles"),
@@ -20,29 +21,26 @@ export const cycleShape = {
   endDate: v.number(),
 };
 
-async function countProgress(
-  ctx: { db: QueryCtx["db"] },
-  orgId: Id<"organizations">,
-  cycleId: Id<"cycles">
-) {
-  const issues = await inOrg(
+/** A cycle's issues, at most `LIST_LIMIT`. */
+async function cycleIssues(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">, cycleId: Id<"cycles">) {
+  return await inOrg(
     ctx.db.query("issues").withIndex("by_cycle", (q) => q.eq("cycleId", cycleId)),
     orgId
+  ).take(LIST_LIMIT);
+}
+
+/** A team's cycles, newest first. Bounded by design: one team's cycles, about 52 a year, and no agent route creates one. */
+async function teamCycles(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">, teamId: Id<"teams">) {
+  return await inOrg(
+    ctx.db.query("cycles").withIndex("by_team_and_number", (q) => q.eq("teamId", teamId)).order("desc"),
+    orgId
   ).collect();
-  const progress = {
-    total: 0,
-    backlog: 0,
-    todo: 0,
-    in_progress: 0,
-    in_review: 0,
-    done: 0,
-    canceled: 0,
-  };
-  for (const issue of issues) {
-    progress.total += 1;
-    progress[issue.status] += 1;
+}
+
+function assertDatesInOrder(startDate: number, endDate: number): void {
+  if (endDate <= startDate) {
+    invalid("Cycle end date must be after its start date");
   }
-  return progress;
 }
 
 /** Cycles for one team, newest first (lightweight — for pickers). */
@@ -51,10 +49,7 @@ export const listByTeam = orgQuery({
   returns: v.array(v.object(cycleShape)),
   handler: async (ctx, args) => {
     await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
-    return await inOrg(
-      ctx.db.query("cycles").withIndex("by_team_and_number", (q) => q.eq("teamId", args.teamId)).order("desc"),
-      ctx.org._id
-    ).collect();
+    return await teamCycles(ctx, ctx.org._id, args.teamId);
   },
 });
 
@@ -73,22 +68,19 @@ export const listWithProgress = orgQuery({
     })
   ),
   handler: async (ctx) => {
+    // Bounded by design: a workspace's teams, a handful, made by hand.
     const teams = await ctx.db
       .query("teams")
       .withIndex("by_org", (q) => q.eq("orgId", ctx.org._id))
       .collect();
     const result = [];
     for (const team of teams) {
-      const cycles = await inOrg(
-        ctx.db.query("cycles").withIndex("by_team_and_number", (q) => q.eq("teamId", team._id)).order("desc"),
-        ctx.org._id
-      ).collect();
-      for (const cycle of cycles) {
+      for (const cycle of await teamCycles(ctx, ctx.org._id, team._id)) {
         result.push({
           ...cycle,
           teamName: team.name,
           teamKey: team.key,
-          progress: await countProgress(ctx, ctx.org._id, cycle._id),
+          progress: countByStatus(await cycleIssues(ctx, ctx.org._id, cycle._id)),
         });
       }
     }
@@ -111,10 +103,7 @@ export const currentForTeam = orgQuery({
   returns: v.union(v.object(cycleShape), v.null()),
   handler: async (ctx, args) => {
     await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
-    const cycles = await inOrg(
-      ctx.db.query("cycles").withIndex("by_team", (q) => q.eq("teamId", args.teamId)),
-      ctx.org._id
-    ).collect();
+    const cycles = await teamCycles(ctx, ctx.org._id, args.teamId);
     const now = Date.now();
     const active = cycles
       .filter((cycle) => cycle.startDate <= now && now <= cycle.endDate)
@@ -129,10 +118,7 @@ export const listIssues = orgQuery({
   returns: v.array(v.object(issueShape)),
   handler: async (ctx, args) => {
     await requireOrgRow(ctx, ctx.org._id, args.cycleId, "Cycle");
-    return await inOrg(
-      ctx.db.query("issues").withIndex("by_cycle", (q) => q.eq("cycleId", args.cycleId)),
-      ctx.org._id
-    ).collect();
+    return await cycleIssues(ctx, ctx.org._id, args.cycleId);
   },
 });
 
@@ -149,7 +135,7 @@ export const candidateIssues = orgQuery({
     const issues = await inOrg(
       ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", cycle.teamId)).order("desc"),
       ctx.org._id
-    ).take(500);
+    ).take(LIST_LIMIT);
     return issues.filter((issue) => issue.cycleId !== args.cycleId).slice(0, 200);
   },
 });
@@ -165,9 +151,7 @@ export const create = orgMutation({
   returns: v.id("cycles"),
   handler: async (ctx, args) => {
     await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
-    if (args.endDate <= args.startDate) {
-      throw new Error("Cycle end date must be after its start date");
-    }
+    assertDatesInOrder(args.startDate, args.endDate);
 
     // Claim the next per-team cycle number.
     const latest = await inOrg(
@@ -199,11 +183,7 @@ export const update = orgMutation({
   handler: async (ctx, args) => {
     const cycle = await requireOrgRow(ctx, ctx.org._id, args.cycleId, "Cycle");
 
-    const startDate = args.startDate ?? cycle.startDate;
-    const endDate = args.endDate ?? cycle.endDate;
-    if (endDate <= startDate) {
-      throw new Error("Cycle end date must be after its start date");
-    }
+    assertDatesInOrder(args.startDate ?? cycle.startDate, args.endDate ?? cycle.endDate);
 
     const updates: Partial<Doc<"cycles">> = {};
     if (args.name !== undefined) {
@@ -229,6 +209,7 @@ export const remove = orgMutation({
   handler: async (ctx, args) => {
     const cycle = await requireOrgRow(ctx, ctx.org._id, args.cycleId, "Cycle");
 
+    // Bounded by design: one sprint's issues, and the mutation is atomic, so a cycle too big to read fails whole and unschedules nothing.
     const issues = await inOrg(
       ctx.db.query("issues").withIndex("by_cycle", (q) => q.eq("cycleId", cycle._id)),
       ctx.org._id

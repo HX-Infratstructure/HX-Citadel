@@ -207,9 +207,11 @@ async function asMemberSetup() {
   const asMember = t.withIdentity({ subject: "user_member", org_id: ORG });
   const storyId = await asMember.mutation(api.issues.create, { teamId: ids.teamId, title: "Story", kind: "story" });
   const version = (issueId: Id<"issues">) => t.run(async (ctx) => (await ctx.db.get(issueId))?.version);
-  const testingId = await t.run(
-    async (ctx) => (await ctx.db.query("issues").withIndex("by_parent", (q) => q.eq("parentIssueId", storyId)).unique())!._id
-  );
+  const testingId = await t.run(async (ctx) => {
+    const { orgId } = (await ctx.db.get(storyId))!;
+    const children = ctx.db.query("issues").withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", storyId));
+    return (await children.unique())!._id;
+  });
   return { t, asMember, storyId, testingId, version, ...ids };
 }
 
@@ -255,9 +257,10 @@ describe("a story's sub-task counter", () => {
     } finally {
       logged.mockRestore();
     }
-    const children = await t.run((ctx) =>
-      ctx.db.query("issues").withIndex("by_parent", (q) => q.eq("parentIssueId", storyId)).collect()
-    );
+    const children = await t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(storyId))!;
+      return await ctx.db.query("issues").withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", storyId)).collect();
+    });
     expect(children.map((child) => child.title)).toEqual(["Complete testing"]);
   });
 });
@@ -281,12 +284,10 @@ describe("a sub-task leaving its story", () => {
 });
 
 describe("Clerk-session patch paths bump by one", () => {
-  test("issues.update (sort order) bumps the story; its project cascade bumps the sub-task", async () => {
+  test("issues.update (project) bumps the story; its project cascade bumps the sub-task", async () => {
     const { asMember, storyId, testingId, version, projectId } = await asMemberSetup();
-    await asMember.mutation(api.issues.update, { issueId: storyId, sortOrder: 5 });
-    expect(await version(storyId)).toBe(2);
     await asMember.mutation(api.issues.update, { issueId: storyId, projectId });
-    expect(await version(storyId)).toBe(3);
+    expect(await version(storyId)).toBe(2);
     expect(await version(testingId)).toBe(2);
   });
 
@@ -302,6 +303,41 @@ describe("Clerk-session patch paths bump by one", () => {
     expect(await version(storyId)).toBe(3);
     await asMember.mutation(api.projects.remove, { projectId });
     expect(await version(storyId)).toBe(4);
+  });
+});
+
+describe("a rank change is ordering, not content", () => {
+  /** A second story, ready to drag onto the first story's rank, which its Complete testing sub-task shares. */
+  async function tiedStories() {
+    const setup = await asMemberSetup();
+    const { t, asMember, storyId, teamId } = setup;
+    const movedId = await asMember.mutation(api.issues.create, { teamId, title: "Moved", kind: "story" });
+    const rankOf = (issueId: Id<"issues">) => t.run(async (ctx) => (await ctx.db.get(issueId))!.sortOrder);
+    return { ...setup, movedId, rankOf, tie: await rankOf(storyId) };
+  }
+
+  test("dragging a story onto a tie re-spaces its neighbours and keeps every version", async () => {
+    const { asMember, storyId, testingId, movedId, rankOf, tie, version } = await tiedStories();
+    expect(await rankOf(testingId)).toBe(tie);
+    await asMember.mutation(api.issues.update, { issueId: movedId, sortOrder: tie });
+    expect(await rankOf(testingId)).not.toBe(tie);
+    expect([await version(storyId), await version(testingId), await version(movedId)]).toEqual([1, 1, 1]);
+  });
+
+  test("an agent's If-Match read before a drag still writes the re-spaced and the moved issue", async () => {
+    const { t, asMember, movedId, tie } = await tiedStories();
+    const heldNeighbour = { "If-Match": `"${await versionOf(t, "ENG-1.1")}"` };
+    const heldMoved = { "If-Match": `"${await versionOf(t, "ENG-2")}"` };
+    await asMember.mutation(api.issues.update, { issueId: movedId, sortOrder: tie });
+    expect((await send(t, "PATCH", "/ENG-1.1", { priority: "high" }, heldNeighbour)).status).toBe(200);
+    expect((await send(t, "PATCH", "/ENG-2", { priority: "high" }, heldMoved)).status).toBe(200);
+  });
+
+  test("a drag that also changes a field bumps the moved issue once and its neighbours not at all", async () => {
+    const { asMember, testingId, movedId, rankOf, tie, version } = await tiedStories();
+    await asMember.mutation(api.issues.update, { issueId: movedId, sortOrder: tie, priority: "high" });
+    expect(await rankOf(testingId)).not.toBe(tie);
+    expect([await version(movedId), await version(testingId)]).toEqual([2, 1]);
   });
 });
 

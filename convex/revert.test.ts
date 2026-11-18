@@ -5,6 +5,7 @@ import { MCP_TOOL_NAMES } from "../lib/mcp/tools";
 import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import http from "./http";
+import { LIST_LIMIT } from "./issues";
 import { parseIssuePath } from "./lib/httpApi";
 import schema from "./schema";
 
@@ -46,14 +47,15 @@ async function setup() {
 type Setup = Awaited<ReturnType<typeof setup>>;
 
 async function passDoneGate(s: Setup, storyId: Id<"issues">) {
-  const testing = await s.t.run(async (ctx) =>
-    (
+  const testing = await s.t.run(async (ctx) => {
+    const { orgId } = (await ctx.db.get(storyId))!;
+    return (
       await ctx.db
         .query("issues")
-        .withIndex("by_parent", (q) => q.eq("parentIssueId", storyId))
+        .withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", storyId))
         .collect()
-    ).find((child) => child.testing)
-  );
+    ).find((child) => child.testing);
+  });
   await s.asMember.mutation(api.issues.setProof, { issueId: testing!._id, proofUrl: "https://ci.example.com/run/1" });
   await s.asMember.mutation(api.issues.update, { issueId: testing!._id, status: "done" });
   return testing!._id;
@@ -192,7 +194,7 @@ describe("owner revert from the activity log", () => {
     expect((await s.issue(storyId)).priority).toBe("none");
   });
 
-  test("reverting to an assignee who left the workspace is refused and the assignee is unchanged", async () => {
+  test("reverting to an assignee who left the workspace is refused without naming them; the assignee stays", async () => {
     const s = await setup();
     const storyId = await s.story("Story", s.memberId);
     await s.asMember.mutation(api.issues.update, { issueId: storyId, assigneeId: s.ownerId });
@@ -205,9 +207,10 @@ describe("owner revert from the activity log", () => {
       await ctx.db.delete(membership!._id);
     });
 
-    await expect(s.revert(await s.lastChange(storyId, "assignee_changed"))).rejects.toThrow(
-      /Assignee Member not found/
-    );
+    const error = await s.revert(await s.lastChange(storyId, "assignee_changed")).catch((thrown: unknown) => thrown);
+
+    expect(error).toHaveProperty("data", { code: "not_found", message: "Assignee not found" });
+    expect(String(error)).not.toContain("Member");
     expect((await s.issue(storyId)).assigneeId).toBe(s.ownerId);
   });
 
@@ -266,6 +269,38 @@ describe("owner revert from the activity log", () => {
     expect(shown.at(-1)).toMatchObject({ _id: newest, revertible: true });
     expect(shown.map((row) => row._id)).not.toContain(old);
     await s.revert(newest);
+    expect((await s.issue(storyId)).priority).toBe("low");
+  });
+
+  test("reverting to a blank title stored before titles were checked is refused as validation; the title stays", async () => {
+    const s = await setup();
+    const storyId = await s.story("Story");
+    await s.t.run((ctx) => ctx.db.patch(storyId, { title: "" }));
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, title: "Named" });
+
+    const error = await s.revert(await s.lastChange(storyId, "title_changed")).catch((thrown: unknown) => thrown);
+
+    expect(error).toHaveProperty("data.code", "validation");
+    expect((await s.issue(storyId)).title).toBe("Named");
+  });
+
+  test("a change behind LIST_LIMIT newer rows is not in the feed, so it is refused and the field stays", async () => {
+    const s = await setup();
+    const storyId = await s.story("Story");
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, priority: "low" });
+    const change = await s.lastChange(storyId, "priority_changed");
+    await s.t.run(async (ctx) => {
+      const story = (await ctx.db.get(storyId))!;
+      for (let i = 0; i < LIST_LIMIT; i++) {
+        await ctx.db.insert("activity", { orgId: story.orgId, issueId: storyId, actorId: s.memberId, type: "commented" });
+      }
+    });
+
+    const shown = await s.asOwner.query(api.activity.listByIssue, { issueId: storyId });
+    expect(shown.map((row) => row._id)).not.toContain(change);
+    const error = await s.revert(change).catch((thrown: unknown) => thrown);
+
+    expect(error).toHaveProperty("data.code", "rule_refused");
     expect((await s.issue(storyId)).priority).toBe("low");
   });
 

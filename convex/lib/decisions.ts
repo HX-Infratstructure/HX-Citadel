@@ -1,3 +1,4 @@
+import { PaginationOptions, PaginationResult } from "convex/server";
 import { Infer, v } from "convex/values";
 import { invalid, refuse } from "./refusals";
 import { Doc, Id } from "../_generated/dataModel";
@@ -16,6 +17,8 @@ export const CHOICE_MAX = 60;
 export const ANSWER_TEXT_MAX = 2000;
 /** How much of an answer's text the `decided` activity row keeps. */
 const SUMMARY_TEXT_MAX = 80;
+/** The most decisions one page of a story's history holds. One is open at a time and a person answers each. */
+export const DECISION_PAGE_MAX = 50;
 
 export type AnswerVia = Infer<typeof decisionViaValidator>;
 type Answer = Infer<typeof decisionAnswerValidator>;
@@ -156,23 +159,34 @@ export async function answerDecision(ctx: MutationCtx, scope: OrgScope, answer: 
   });
 }
 
-async function userName(ctx: Db, userId: Id<"users"> | undefined): Promise<string | null> {
-  const user = userId === undefined ? null : await ctx.db.get(userId);
-  return user?.name ?? null;
+/** The story's decisions in the workspace, newest first. */
+async function storyDecisions(ctx: Db, orgId: Id<"organizations">, issueId: Id<"issues">) {
+  await getOrgIssue(ctx, orgId, issueId);
+  return inOrg(ctx.db.query("decisions").withIndex("by_issue", (q) => q.eq("issueId", issueId)).order("desc"), orgId);
 }
 
-/** A story's latest LIST_LIMIT decisions, newest first, with the asker's and the answerer's names. */
+/** The rows with the asker's and the answerer's names. Each user is read once, however many rows name them. */
+async function withNames(ctx: Db, decisions: Doc<"decisions">[]): Promise<ListedDecision[]> {
+  const userIds = new Set(decisions.flatMap(({ askedBy, answeredBy }) => (answeredBy === undefined ? [askedBy] : [askedBy, answeredBy])));
+  const names = new Map(await Promise.all([...userIds].map(async (id) => [id, (await ctx.db.get(id))?.name ?? null] as const)));
+  const name = (id: Id<"users"> | undefined) => (id === undefined ? null : (names.get(id) ?? null));
+  return decisions.map((decision) => ({ ...decision, asker: name(decision.askedBy), answerer: name(decision.answeredBy) }));
+}
+
+/** One page of a story's decisions for the story panel, newest first, with at most DECISION_PAGE_MAX rows. */
+export async function pageIssueDecisions(
+  ctx: Db,
+  orgId: Id<"organizations">,
+  issueId: Id<"issues">,
+  paginationOpts: PaginationOptions
+): Promise<PaginationResult<ListedDecision>> {
+  const decisions = await storyDecisions(ctx, orgId, issueId);
+  const result = await decisions.paginate({ ...paginationOpts, numItems: Math.min(paginationOpts.numItems, DECISION_PAGE_MAX) });
+  return { ...result, page: await withNames(ctx, result.page) };
+}
+
+/** A story's newest LIST_LIMIT decisions for REST GET, which takes no cursor. */
 export async function listIssueDecisions(ctx: Db, orgId: Id<"organizations">, issueId: Id<"issues">): Promise<ListedDecision[]> {
-  await getOrgIssue(ctx, orgId, issueId);
-  const decisions = await inOrg(
-    ctx.db.query("decisions").withIndex("by_issue", (q) => q.eq("issueId", issueId)).order("desc"),
-    orgId
-  ).take(LIST_LIMIT);
-  return await Promise.all(
-    decisions.map(async (decision) => ({
-      ...decision,
-      asker: await userName(ctx, decision.askedBy),
-      answerer: await userName(ctx, decision.answeredBy),
-    }))
-  );
+  const decisions = await storyDecisions(ctx, orgId, issueId);
+  return await withNames(ctx, await decisions.take(LIST_LIMIT));
 }

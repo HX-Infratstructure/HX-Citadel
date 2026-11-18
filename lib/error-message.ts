@@ -1,6 +1,10 @@
 import { ConvexError, type Value } from "convex/values";
 
-/** A server error, with the Convex client's header when it came through the client, then the thrown line when the server sends one. */
+/**
+ * The fallback for an untyped server error, which has no `ConvexError.data` to read: the browser client's
+ * `[CONVEX M(path)] ` header (convex/src/browser/logging.ts:165; the HTTP client sends none), the backend's
+ * `[Request ID: id] Server Error`, then the thrown line when the deployment sends one. error-message.test.ts pins it.
+ */
 const CONVEX_ERROR = /^(?:\[CONVEX [^\]]+\] )?\[Request ID: [^\]]+\] Server Error(?:\nUncaught \w*Error:(.*))?/;
 
 function readableLine(message: string): string {

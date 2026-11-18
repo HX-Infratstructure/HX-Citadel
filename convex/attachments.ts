@@ -1,13 +1,12 @@
+import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
+import { ATTACHMENT_TOO_LARGE, MAX_ATTACHMENT_BYTES } from "../lib/api-contract";
 import { invalid, refuse } from "./lib/refusals";
 import { getOrgIssue, LIST_LIMIT } from "./issues";
 import { logActivity } from "./lib/activity";
 import { deleteAttachmentFiles } from "./lib/issueCleanup";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { inOrg, requireOrgRow } from "./lib/orgRows";
-
-/** Server-side cap; the upload UI also enforces this before uploading. */
-export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 const attachmentValidator = v.object({
   _id: v.id("attachments"),
@@ -45,7 +44,7 @@ export const create = orgMutation({
     const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
 
     if (args.fileSize > MAX_ATTACHMENT_BYTES) {
-      invalid("Attachments are limited to 25 MB");
+      invalid(ATTACHMENT_TOO_LARGE);
     }
 
     // Every workspace's rows, on purpose: linking a file another workspace attached would hand us its download URL.
@@ -81,22 +80,22 @@ export const create = orgMutation({
   },
 });
 
+/** Newest first. The client picks the page size; the cap keeps one page a bounded read. */
 export const listByIssue = orgQuery({
-  args: { issueId: v.id("issues") },
-  returns: v.array(attachmentValidator),
+  args: { issueId: v.id("issues"), paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(attachmentValidator),
   handler: async (ctx, args) => {
     await getOrgIssue(ctx, ctx.org._id, args.issueId);
 
-    const newestFirst = await inOrg(
+    const result = await inOrg(
       ctx.db.query("attachments").withIndex("by_issue", (q) => q.eq("issueId", args.issueId)).order("desc"),
       ctx.org._id
-    ).take(LIST_LIMIT);
-    const attachments = newestFirst.reverse();
+    ).paginate({ ...args.paginationOpts, numItems: Math.min(args.paginationOpts.numItems, LIST_LIMIT) });
 
-    const result = [];
-    for (const attachment of attachments) {
+    const page = [];
+    for (const attachment of result.page) {
       const uploader = await ctx.db.get(attachment.uploadedBy);
-      result.push({
+      page.push({
         _id: attachment._id,
         _creationTime: attachment._creationTime,
         issueId: attachment.issueId,
@@ -108,7 +107,7 @@ export const listByIssue = orgQuery({
         url: await ctx.storage.getUrl(attachment.storageId),
       });
     }
-    return result;
+    return { ...result, page };
   },
 });
 

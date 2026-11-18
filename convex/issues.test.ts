@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { ConvexError } from "convex/values";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
+import { LIST_LIMIT } from "./issues";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -216,6 +217,34 @@ describe("issues.listBacklog", () => {
       asOutsider.query(api.issues.listBacklog, { teamId })
     ).rejects.toThrow();
   });
+
+  test("lists at most LIST_LIMIT stories, highest rank first", async () => {
+    const { t, teamId, memberId } = await setup();
+    const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+    const oldestFirst = await t.run(async (ctx) => {
+      const team = await ctx.db.get(teamId);
+      const ids = [];
+      for (let i = 0; i <= LIST_LIMIT; i++) {
+        ids.push(
+          await ctx.db.insert("issues", {
+            orgId: team!.orgId,
+            teamId,
+            kind: "story",
+            title: `Story ${i}`,
+            status: "todo",
+            priority: "none",
+            creatorId: memberId,
+            sortOrder: (i + 1) * 1000,
+          })
+        );
+      }
+      return ids;
+    });
+
+    const backlog = await asMember.query(api.issues.listBacklog, { teamId });
+
+    expect(backlog.map((issue) => issue._id)).toEqual(oldestFirst.slice(1).reverse());
+  });
 });
 
 describe("issues.listParentCandidates", () => {
@@ -293,6 +322,34 @@ describe("issues.listParentCandidates", () => {
     await expect(
       asOutsider.query(api.issues.listParentCandidates, { teamId, kind: "story" })
     ).rejects.toThrow();
+  });
+
+  test("offers at most LIST_LIMIT parents, newest first", async () => {
+    const { t, teamId, memberId } = await setup();
+    const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+    const oldestFirst = await t.run(async (ctx) => {
+      const team = await ctx.db.get(teamId);
+      const ids = [];
+      for (let i = 0; i <= LIST_LIMIT; i++) {
+        ids.push(
+          await ctx.db.insert("issues", {
+            orgId: team!.orgId,
+            teamId,
+            kind: "feature",
+            title: `Feature ${i}`,
+            status: i % 2 === 0 ? "todo" : "in_progress",
+            priority: "none",
+            creatorId: memberId,
+            sortOrder: 1000,
+          })
+        );
+      }
+      return ids;
+    });
+
+    const candidates = await asMember.query(api.issues.listParentCandidates, { teamId, kind: "story" });
+
+    expect(candidates.map((issue) => issue._id)).toEqual(oldestFirst.slice(1).reverse());
   });
 });
 
@@ -477,8 +534,9 @@ describe("issue ranking", () => {
 });
 
 describe("the assignee is a member of the workspace", () => {
-  const refused = { code: "not_found", message: "Assignee Outsider not found" };
+  const refused = { code: "not_found", message: "Assignee not found" };
 
+  /** The outsider is a member of another workspace, so its id is one a caller could learn. */
   async function setupWithOutsider() {
     const s = await setup();
     const outsiderId = await s.t.run(async (ctx) => {
@@ -486,6 +544,17 @@ describe("the assignee is a member of the workspace", () => {
         .query("users")
         .withIndex("by_clerk_id", (q) => q.eq("clerkId", OUTSIDER_CLERK_ID))
         .unique();
+      const otherOrgId = await ctx.db.insert("organizations", {
+        clerkOrgId: "org_other",
+        name: "Other Org",
+        slug: "other-org",
+      });
+      await ctx.db.insert("members", {
+        orgId: otherOrgId,
+        userId: outsider!._id,
+        role: "member",
+        clerkMembershipId: "mem_outsider",
+      });
       return outsider!._id;
     });
     return { ...s, outsiderId, asMember: s.t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM }) };
@@ -493,26 +562,105 @@ describe("the assignee is a member of the workspace", () => {
 
   const refusalOf = (error: unknown) => (error instanceof ConvexError ? error.data : error);
 
-  test("create refuses a non-member assignee and writes nothing", async () => {
+  test("create refuses another workspace's user without naming them and writes nothing", async () => {
     const { t, teamId, outsiderId, asMember } = await setupWithOutsider();
     const error = await asMember
       .mutation(api.issues.create, { teamId, title: "Story", assigneeId: outsiderId })
-      .catch(refusalOf);
+      .catch((thrown: unknown) => thrown);
 
-    expect(error).toEqual(refused);
+    expect(refusalOf(error)).toEqual(refused);
+    expect(String(error)).not.toContain("Outsider");
     expect(await t.run((ctx) => ctx.db.query("issues").collect())).toEqual([]);
   });
 
-  test("update refuses a non-member assignee and keeps the member, who can still be unassigned", async () => {
+  test("update refuses another workspace's user without naming them; the member stays and can be unassigned", async () => {
     const { t, teamId, memberId, outsiderId, asMember } = await setupWithOutsider();
     const issueId = await asMember.mutation(api.issues.create, { teamId, title: "Story", assigneeId: memberId });
     const assignee = async () => (await t.run((ctx) => ctx.db.get(issueId)))?.assigneeId;
+    expect(await assignee()).toBe(memberId);
 
-    const error = await asMember.mutation(api.issues.update, { issueId, assigneeId: outsiderId }).catch(refusalOf);
-    expect(error).toEqual(refused);
+    const error = await asMember
+      .mutation(api.issues.update, { issueId, assigneeId: outsiderId })
+      .catch((thrown: unknown) => thrown);
+    expect(refusalOf(error)).toEqual(refused);
+    expect(String(error)).not.toContain("Outsider");
     expect(await assignee()).toBe(memberId);
 
     await asMember.mutation(api.issues.update, { issueId, assigneeId: null });
     expect(await assignee()).toBeUndefined();
+  });
+});
+
+describe("a title is never blank", () => {
+  const blank = { code: "validation", message: "Title cannot be empty" };
+  const refusalOf = (error: unknown) => (error instanceof ConvexError ? error.data : error);
+
+  let keyCount = 0;
+  const rest = (t: Awaited<ReturnType<typeof setup>>["t"], method: string, path: string, body: unknown) =>
+    t.fetch(`/api/v1/issues${path}`, {
+      method,
+      headers: { "X-Agent-Id": "cc1", "Idempotency-Key": `blank-title-${++keyCount}` },
+      body: JSON.stringify(body),
+    });
+
+  beforeEach(() => {
+    process.env.HX_WORKSPACE_ORG_ID = ORG_CLAIM;
+  });
+
+  afterEach(() => {
+    delete process.env.HX_WORKSPACE_ORG_ID;
+  });
+
+  async function written(t: Awaited<ReturnType<typeof setup>>["t"]) {
+    return await t.run(async (ctx) => ({
+      issues: await ctx.db.query("issues").collect(),
+      activity: await ctx.db.query("activity").collect(),
+    }));
+  }
+
+  test("a create with an all-blank title is refused as validation and writes nothing", async () => {
+    const { t, teamId } = await setup();
+    const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+
+    const error = await asMember.mutation(api.issues.create, { teamId, title: "  " }).catch(refusalOf);
+
+    expect(error).toEqual(blank);
+    expect(await written(t)).toEqual({ issues: [], activity: [] });
+    expect((await t.run((ctx) => ctx.db.get(teamId)))?.nextIssueNumber).toBe(FIRST_NUMBER);
+  });
+
+  test("an update to an all-blank title is refused as validation and changes nothing", async () => {
+    const { t, teamId } = await setup();
+    const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+    const issueId = await asMember.mutation(api.issues.create, { teamId, title: "  Story  " });
+    const before = await written(t);
+    expect(before.issues.find((issue) => issue._id === issueId)?.title).toBe("Story");
+
+    const error = await asMember.mutation(api.issues.update, { issueId, title: " \t " }).catch(refusalOf);
+
+    expect(error).toEqual(blank);
+    expect(await written(t)).toEqual(before);
+  });
+
+  test("REST POST with an all-blank title is 400 validation and creates nothing", async () => {
+    const { t } = await setup();
+
+    const response = await rest(t, "POST", "", { teamKey: "ENG", title: "  " });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual(blank);
+    expect(await written(t)).toEqual({ issues: [], activity: [] });
+  });
+
+  test("REST PATCH with an empty title is 400 validation and changes nothing", async () => {
+    const { t } = await setup();
+    expect((await rest(t, "POST", "", { teamKey: "ENG", title: "Story" })).status).toBe(201);
+    const before = await written(t);
+
+    const response = await rest(t, "PATCH", `/ENG-${FIRST_NUMBER}`, { title: "" });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual(blank);
+    expect(await written(t)).toEqual(before);
   });
 });

@@ -67,12 +67,13 @@ async function setup() {
     });
 
   const testingSubtask = async (storyId: Id<"issues">) =>
-    (await t.run((ctx) =>
-      ctx.db
+    (await t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(storyId))!;
+      return await ctx.db
         .query("issues")
-        .withIndex("by_parent", (q) => q.eq("parentIssueId", storyId))
-        .collect()
-    )).find((issue) => issue.testing)!;
+        .withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", storyId))
+        .collect();
+    })).find((issue) => issue.testing)!;
 
   return { t, asMember, ids, create, rows, testingSubtask };
 }

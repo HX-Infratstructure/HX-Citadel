@@ -1,6 +1,7 @@
+import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
 import { orgAdminMutation, orgQuery } from "./lib/customFunctions";
-import { answerDecision, listedDecisionValidator, listIssueDecisions } from "./lib/decisions";
+import { answerDecision, listedDecisionValidator, pageIssueDecisions } from "./lib/decisions";
 
 /** The owner's admins answer on the story; no REST route or MCP tool answers, so agents never answer their own. */
 export const answer = orgAdminMutation({
@@ -13,7 +14,7 @@ export const answer = orgAdminMutation({
 });
 
 export const listForIssue = orgQuery({
-  args: { issueId: v.id("issues") },
-  returns: v.array(listedDecisionValidator),
-  handler: (ctx, { issueId }) => listIssueDecisions(ctx, ctx.org._id, issueId),
+  args: { issueId: v.id("issues"), paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(listedDecisionValidator),
+  handler: (ctx, { issueId, paginationOpts }) => pageIssueDecisions(ctx, ctx.org._id, issueId, paginationOpts),
 });

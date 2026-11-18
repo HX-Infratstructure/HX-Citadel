@@ -4,6 +4,7 @@ import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
 import { Id, TableNames } from "./_generated/dataModel";
+import { MAX_CHILDREN } from "./lib/orgRows";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -74,9 +75,9 @@ describe("rows from another workspace that point at our story", () => {
     await t.mutation(internal.agentApi.askDecision, { agentName: "cc1", key: "ENG-1", question: "Ours?" });
     await comment(admin, storyId);
 
-    const decisions = await admin.query(api.decisions.listForIssue, { issueId: storyId });
+    const decisions = (await admin.query(api.decisions.listForIssue, { issueId: storyId, paginationOpts: { cursor: null, numItems: 50 } })).page;
     const comments = await admin.query(api.comments.listByIssue, { issueId: storyId });
-    const attachments = await admin.query(api.attachments.listByIssue, { issueId: storyId });
+    const attachments = (await admin.query(api.attachments.listByIssue, { issueId: storyId, paginationOpts: { cursor: null, numItems: 50 } })).page;
     const activity = await admin.query(api.activity.listByIssue, { issueId: storyId });
 
     expect(decisions.map((row) => row.question)).toEqual(["Ours?"]);
@@ -276,5 +277,106 @@ describe("a row loaded by id", () => {
 
     const labels = await admin.query(api.labels.listForIssue, { issueId: storyId });
     expect(labels.map((label) => label.name)).toEqual(["Ours"]);
+  });
+});
+
+/** Sub-tasks of our story, written in our workspace or in another one. */
+async function addSubtasks(s: Setup, orgId: Id<"organizations">, count: number) {
+  await s.t.run(async (ctx) => {
+    for (let subNumber = 1; subNumber <= count; subNumber++) {
+      await ctx.db.insert("issues", {
+        orgId,
+        teamId: s.teamId,
+        kind: "subtask",
+        parentIssueId: s.storyId,
+        subNumber,
+        title: `Sub ${subNumber}`,
+        status: "todo",
+        priority: "none",
+        creatorId: s.userId,
+        sortOrder: subNumber,
+      });
+    }
+    await ctx.db.patch(s.storyId, { nextSubNumber: count + 1 });
+  });
+}
+
+const otherOrgOf = (s: Setup) => s.t.run(async (ctx) => (await ctx.db.get(s.foreignIssueId))!.orgId);
+
+const READS_OF_CHILDREN: { name: string; call: (s: Setup) => Promise<unknown> }[] = [
+  { name: "the hierarchy panel", call: (s) => s.admin.query(api.issueRelations.hierarchy, { issueId: s.storyId }) },
+  { name: "the Done gate", call: (s) => s.admin.mutation(api.issues.update, { issueId: s.storyId, status: "done" }) },
+  {
+    name: "the project cascade",
+    call: async (s) => {
+      const projectId = await s.t.run((ctx) => ctx.db.insert("projects", { orgId: s.orgId, name: "New", status: "planned" }));
+      return await s.admin.mutation(api.issues.update, { issueId: s.storyId, projectId });
+    },
+  },
+  { name: "the delete", call: (s) => s.admin.mutation(api.issues.remove, { issueId: s.storyId }) },
+];
+
+describe("an issue's children", () => {
+  test(`up to ${MAX_CHILDREN} are read, and rows from another workspace that point at the issue do not count`, async () => {
+    const s = await setup();
+    await addSubtasks(s, s.orgId, MAX_CHILDREN);
+    await addSubtasks(s, await otherOrgOf(s), 3);
+
+    const { subIssues } = await s.admin.query(api.issueRelations.hierarchy, { issueId: s.storyId });
+    expect(subIssues).toHaveLength(MAX_CHILDREN);
+  });
+
+  test.each(READS_OF_CHILDREN)(`more than ${MAX_CHILDREN} are refused by $name, naming the parent, and none is dropped`, async ({ call }) => {
+    const s = await setup();
+    await addSubtasks(s, s.orgId, MAX_CHILDREN + 1);
+
+    const refused = await call(s).catch(refusalOf);
+    const children = await s.t.run(async (ctx) =>
+      (await ctx.db.query("issues").collect()).filter((issue) => issue.parentIssueId === s.storyId)
+    );
+    expect(refused).toEqual({ code: "rule_refused", message: expect.stringContaining(s.storyId) });
+    expect(children).toHaveLength(MAX_CHILDREN + 1);
+  });
+
+  const newSubtask = (s: Setup) =>
+    s.admin.mutation(api.issues.create, { teamId: s.teamId, title: "One more", kind: "subtask", parentIssueId: s.storyId });
+
+  const childCount = (s: Setup) =>
+    s.t.run(async (ctx) => (await ctx.db.query("issues").collect()).filter((issue) => issue.parentIssueId === s.storyId).length);
+
+  test(`a story with ${MAX_CHILDREN - 1} sub-tasks takes one more`, async () => {
+    const s = await setup();
+    await addSubtasks(s, s.orgId, MAX_CHILDREN - 1);
+
+    await newSubtask(s);
+    expect(await childCount(s)).toBe(MAX_CHILDREN);
+  });
+
+  test(`a story with ${MAX_CHILDREN} sub-tasks refuses a new one, naming the story, and writes nothing`, async () => {
+    const s = await setup();
+    await addSubtasks(s, s.orgId, MAX_CHILDREN);
+
+    const refused = await newSubtask(s).catch(refusalOf);
+    expect(refused).toEqual({ code: "rule_refused", message: expect.stringContaining("ENG-1") });
+    expect(await childCount(s)).toBe(MAX_CHILDREN);
+  });
+
+  test(`a story with ${MAX_CHILDREN} sub-tasks refuses one moved in, and the moved one stays where it was`, async () => {
+    const s = await setup();
+    await addSubtasks(s, s.orgId, MAX_CHILDREN);
+    const otherStory = await s.admin.mutation(api.issues.create, { teamId: s.teamId, title: "Other story" });
+    const moving = await s.admin.mutation(api.issues.create, {
+      teamId: s.teamId,
+      title: "Moving",
+      kind: "subtask",
+      parentIssueId: otherStory,
+    });
+
+    const refused = await s.admin
+      .mutation(api.issueRelations.setParent, { issueId: moving, parentIssueId: s.storyId })
+      .catch(refusalOf);
+    expect(refused).toEqual({ code: "rule_refused", message: expect.stringContaining("ENG-1") });
+    expect(await childCount(s)).toBe(MAX_CHILDREN);
+    expect(await s.t.run(async (ctx) => (await ctx.db.get(moving))?.parentIssueId)).toBe(otherStory);
   });
 });

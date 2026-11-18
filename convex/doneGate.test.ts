@@ -59,12 +59,13 @@ async function setup() {
   const move = (issueId: Id<"issues">, status: Status) =>
     asMember.mutation(api.issues.update, { issueId, status });
   const testingOf = async (storyId: Id<"issues">) => {
-    const children = await t.run((ctx) =>
-      ctx.db
+    const children = await t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(storyId))!;
+      return await ctx.db
         .query("issues")
-        .withIndex("by_parent", (q) => q.eq("parentIssueId", storyId))
-        .collect()
-    );
+        .withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", storyId))
+        .collect();
+    });
     return children.find((child) => child.testing)!._id;
   };
   const setProof = (issueId: Id<"issues">, proofUrl: string) =>
@@ -283,12 +284,13 @@ describe("Done gate: no new child under a gated parent", () => {
     const feature = await create("feature", "Sign-in", epic);
     const story = await create("story", "Login", feature);
 
-    const children = await t.run((ctx) =>
-      ctx.db
+    const children = await t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(story))!;
+      return await ctx.db
         .query("issues")
-        .withIndex("by_parent", (q) => q.eq("parentIssueId", story))
-        .collect()
-    );
+        .withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", story))
+        .collect();
+    });
     expect(children.map((child) => [child.title, child.testing])).toEqual([["Complete testing", true]]);
   });
 

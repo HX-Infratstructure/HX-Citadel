@@ -12,7 +12,7 @@ import { GATED_LABELS, isGatedStatus } from "../../../lib/issue-status";
 import { ActivityActor, changedFields, logFieldChanges } from "../activity";
 import { IssueKeys } from "../issueKeys";
 import { patchIssue } from "../issueVersion";
-import { orgChildren, requireOrgRow } from "../orgRows";
+import { MAX_CHILDREN, orgChildren, requireOrgRow } from "../orgRows";
 
 type Placement = {
   teamId: Id<"teams">;
@@ -112,21 +112,24 @@ export async function assertValidParent(
 }
 
 /**
- * The Done gate runs only on status changes, so an In Review or Done parent takes no new
- * child.
+ * Runs where a child joins a parent (create and move). The Done gate runs only on status changes, so an In Review
+ * or Done parent takes no new child, and a parent with `MAX_CHILDREN` children takes no more.
  */
 export async function assertParentOpen(
   ctx: { db: QueryCtx["db"] },
   parent: Doc<"issues">,
   childKind: IssueKind
 ): Promise<void> {
-  if (!isGatedStatus(parent.status)) {
-    return;
+  const keys = new IssueKeys(ctx, parent.orgId);
+  if (isGatedStatus(parent.status)) {
+    refuse(
+      `${await keys.name(parent)} is ${GATED_LABELS[parent.status]}; reopen it before adding ${article(childKind)} ${childKind}`
+    );
   }
-  const name = await new IssueKeys(ctx, parent.orgId).name(parent);
-  refuse(
-    `${name} is ${GATED_LABELS[parent.status]}; reopen it before adding ${article(childKind)} ${childKind}`
-  );
+  const children = await orgChildren(ctx, parent.orgId, parent._id);
+  if (children.length >= MAX_CHILDREN) {
+    refuse(`${await keys.name(parent)} already has ${MAX_CHILDREN} children, the most one issue can have`);
+  }
 }
 
 /** The counter every story is inserted with, so its first subtask (Complete testing) is KEY-n.1. */
@@ -152,7 +155,7 @@ export async function nextSubNumber(
   return subNumber;
 }
 
-/** Every descendant of an issue, found by walking by_parent; leaf kinds are not queried. */
+/** Every descendant of an issue, found by walking each parent's children; leaf kinds are not queried. */
 async function descendants(
   ctx: { db: QueryCtx["db"] },
   orgId: Id<"organizations">,

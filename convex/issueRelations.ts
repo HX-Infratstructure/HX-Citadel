@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { notFound, refuse } from "./lib/refusals";
 import { Doc, Id } from "./_generated/dataModel";
-import { MutationCtx } from "./_generated/server";
+import { MutationCtx, QueryCtx } from "./_generated/server";
 import { getOrgIssue } from "./issues";
 import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
@@ -30,6 +30,9 @@ import {
  * inverse `blocks` row) and inverted at query time, so each side of a
  * relation sees the right direction.
  */
+
+/** Relations one issue can hold, so every read of them is one bounded read that sees them all. */
+export const RELATION_LIMIT = 100;
 
 /** Relation direction as seen from the queried issue (includes inverses). */
 const displayRelationTypeValidator = v.union(
@@ -92,6 +95,37 @@ const INVERSE: Record<StoredRelationType, DisplayRelationType> = {
   duplicate_of: "duplicated_by",
 };
 
+/** An issue's relations: those stored on it, then those stored on the other end. */
+async function relationsOf(ctx: { db: QueryCtx["db"] }, issueId: Id<"issues">) {
+  const outgoing = await ctx.db
+    .query("issueRelations")
+    .withIndex("by_issue", (q) => q.eq("issueId", issueId))
+    .take(RELATION_LIMIT);
+  const incoming = await ctx.db
+    .query("issueRelations")
+    .withIndex("by_related", (q) => q.eq("relatedIssueId", issueId))
+    .take(RELATION_LIMIT);
+  return [...outgoing, ...incoming];
+}
+
+/** A relation as one of its ends sees it: the issue at the other end, and the direction. */
+function seenFrom(
+  relation: Doc<"issueRelations">,
+  issueId: Id<"issues">
+): { otherId: Id<"issues">; type: DisplayRelationType } {
+  if (relation.issueId === issueId) {
+    return { otherId: relation.relatedIssueId, type: relation.type };
+  }
+  return { otherId: relation.issueId, type: INVERSE[relation.type] };
+}
+
+/** Refuses a new relation on an issue that already holds `RELATION_LIMIT`. */
+async function assertRoomForRelation(keys: IssueKeys, issue: Doc<"issues">, relations: Doc<"issueRelations">[]) {
+  if (relations.length >= RELATION_LIMIT) {
+    refuse(`${await keys.name(issue)} already has ${RELATION_LIMIT} relations`);
+  }
+}
+
 export const listForIssue = orgQuery({
   args: { issueId: v.id("issues") },
   returns: v.array(
@@ -105,37 +139,14 @@ export const listForIssue = orgQuery({
     await getOrgIssue(ctx, ctx.org._id, args.issueId);
     const keys = new IssueKeys(ctx, ctx.org._id);
 
-    const outgoing = await ctx.db
-      .query("issueRelations")
-      .withIndex("by_issue", (q) => q.eq("issueId", args.issueId))
-      .collect();
-    const incoming = await ctx.db
-      .query("issueRelations")
-      .withIndex("by_related", (q) => q.eq("relatedIssueId", args.issueId))
-      .collect();
-
     const result = [];
-    for (const relation of outgoing) {
-      const other = await orgRow(ctx, ctx.org._id, relation.relatedIssueId);
+    for (const relation of await relationsOf(ctx, args.issueId)) {
+      const { otherId, type } = seenFrom(relation, args.issueId);
+      const other = await orgRow(ctx, ctx.org._id, otherId);
       if (other === null) {
         continue;
       }
-      result.push({
-        relationId: relation._id,
-        type: relation.type as DisplayRelationType,
-        issue: await summarizeIssue(keys, other),
-      });
-    }
-    for (const relation of incoming) {
-      const other = await orgRow(ctx, ctx.org._id, relation.issueId);
-      if (other === null) {
-        continue;
-      }
-      result.push({
-        relationId: relation._id,
-        type: INVERSE[relation.type],
-        issue: await summarizeIssue(keys, other),
-      });
+      result.push({ relationId: relation._id, type, issue: await summarizeIssue(keys, other) });
     }
     return result;
   },
@@ -166,20 +177,13 @@ export const create = orgMutation({
     }
 
     // One relation per pair, in either direction.
-    const existingOutgoing = await ctx.db
-      .query("issueRelations")
-      .withIndex("by_issue", (q) => q.eq("issueId", issue._id))
-      .collect();
-    const existingIncoming = await ctx.db
-      .query("issueRelations")
-      .withIndex("by_related", (q) => q.eq("relatedIssueId", issue._id))
-      .collect();
-    const alreadyLinked =
-      existingOutgoing.some((r) => r.relatedIssueId === related._id) ||
-      existingIncoming.some((r) => r.issueId === related._id);
-    if (alreadyLinked) {
+    const existing = await relationsOf(ctx, issue._id);
+    if (existing.some((relation) => seenFrom(relation, issue._id).otherId === related._id)) {
       refuse("These issues are already linked");
     }
+    const keys = new IssueKeys(ctx, ctx.org._id);
+    await assertRoomForRelation(keys, issue, existing);
+    await assertRoomForRelation(keys, related, await relationsOf(ctx, related._id));
 
     const relationId = await ctx.db.insert("issueRelations", {
       issueId: fromIssue._id,
@@ -187,7 +191,6 @@ export const create = orgMutation({
       type,
     });
 
-    const keys = new IssueKeys(ctx, ctx.org._id);
     const fromIdentifier = await keys.name(fromIssue);
     const toIdentifier = await keys.name(toIssue);
     await logActivity(ctx, {

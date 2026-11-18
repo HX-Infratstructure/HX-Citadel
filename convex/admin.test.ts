@@ -193,6 +193,16 @@ async function addIssues(t: TestConvex, teamId: Id<"teams">, count: number) {
   });
 }
 
+/** Gives the team `count` more cycles. */
+async function addCycles(t: TestConvex, teamId: Id<"teams">, count: number) {
+  await t.run(async (ctx) => {
+    const { orgId } = (await ctx.db.get(teamId))!;
+    for (let number = 100; number < 100 + count; number++) {
+      await ctx.db.insert("cycles", { orgId, teamId, number, startDate: 0, endDate: 1 });
+    }
+  });
+}
+
 /** Cancels every queued run, as if the scheduled continuation had failed. */
 async function cancelScheduledRuns(t: TestConvex) {
   await t.run(async (ctx) => {
@@ -275,6 +285,33 @@ describe("admin.clearOrgContent", () => {
     vi.useRealTimers();
   });
 
+  test("deletes at most one page of cycles per run across its teams, and the scheduled runs delete the rest", async () => {
+    vi.useFakeTimers();
+    const { t, cleared } = await setup();
+    const teamCycles = Math.ceil(PAGE_SIZE / 2);
+    for (const key of ["OPS", "WEB"]) {
+      const teamId = await t.run((ctx) => ctx.db.insert("teams", { orgId: cleared.orgId, name: key, key, nextIssueNumber: 1 }));
+      await addCycles(t, teamId, teamCycles);
+    }
+    const contentBefore = await snapshot(t, CONTENT_TABLES);
+    const clearedIssueIds = new Set(
+      contentBefore.issues.filter((issue) => issue.orgId === cleared.orgId).map((issue) => issue._id)
+    );
+    const isCleared = belongsTo(cleared.orgId, clearedIssueIds);
+
+    const counts = await t.mutation(internal.admin.clearOrgContent, { clerkOrgId: CLEARED_ORG });
+
+    expect(counts).toMatchObject({ cycles: PAGE_SIZE, issues: 2 });
+    expect(counts.teams).toBeLessThan(3);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const contentAfter = await snapshot(t, CONTENT_TABLES);
+    for (const table of CONTENT_TABLES) {
+      expect(contentAfter[table], table).toEqual(contentBefore[table].filter((doc) => !isCleared(doc)));
+    }
+    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
+    vi.useRealTimers();
+  });
+
   test("a queued run leaves the workspace once its mirror is created again under the same Clerk id", async () => {
     vi.useFakeTimers();
     const { t } = await setup();
@@ -308,7 +345,9 @@ async function setupMirrorWith(
 async function expectMirrorRefused(t: TestConvex, clerkOrgId: string, message: string) {
   const mirrorBefore = await snapshot(t, MIRROR_TABLES);
 
-  await expect(t.mutation(internal.admin.deleteOrgMirror, { clerkOrgId })).rejects.toThrow(message);
+  await expect(t.mutation(internal.admin.deleteOrgMirror, { clerkOrgId })).rejects.toMatchObject({
+    data: { code: "rule_refused", message: expect.stringContaining(message) },
+  });
   expect(await snapshot(t, MIRROR_TABLES)).toEqual(mirrorBefore);
 }
 
@@ -592,6 +631,25 @@ describe("admin.clearTeamContent", () => {
       expect(contentAfter[table], table).toEqual(contentBefore[table].filter((doc) => !isCleared(doc)));
     }
     expect(await t.run((ctx) => ctx.db.get(kept.teamId))).not.toBeNull();
+    vi.useRealTimers();
+  });
+
+  test("clears a team with more cycles than one page over the scheduled runs", async () => {
+    vi.useFakeTimers();
+    const { t, cleared, kept } = await setupTeams();
+    await addCycles(t, cleared.teamId, PAGE_SIZE + 5);
+    const cyclesOf = (teamId: Id<"teams">) =>
+      t.run((ctx) => ctx.db.query("cycles").withIndex("by_team", (q) => q.eq("teamId", teamId)).collect());
+
+    const counts = await t.mutation(internal.admin.clearTeamContent, { clerkOrgId: TEAM_ORG, teamKey: CLEARED_TEAM });
+
+    expect(counts).toMatchObject({ issues: 2, cycles: PAGE_SIZE, teams: 0 });
+    expect(await t.run((ctx) => ctx.db.get(cleared.teamId))).not.toBeNull();
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await t.run((ctx) => ctx.db.get(cleared.teamId))).toBeNull();
+    expect(await cyclesOf(cleared.teamId)).toEqual([]);
+    expect(await cyclesOf(kept.teamId)).toHaveLength(1);
+    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
     vi.useRealTimers();
   });
 

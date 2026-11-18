@@ -12,8 +12,11 @@ export function issueVersion(issue: Doc<"issues">): number {
 
 type IssueFields = Partial<Omit<Doc<"issues">, "_id" | "_creationTime" | "version">>;
 
-/** Fields the server keeps for itself. No client reads or If-Match guards them, so they never move the version. */
-export const BOOKKEEPING_FIELDS: ReadonlySet<keyof IssueFields> = new Set(["nextSubNumber"]);
+/**
+ * Fields that never move the version: the sub-task counter the server keeps for itself, and the rank, which
+ * orders issues but is no part of one. If-Match guards content, and re-spacing a tie re-ranks issues nobody edited.
+ */
+export const BOOKKEEPING_FIELDS: ReadonlySet<keyof IssueFields> = new Set(["nextSubNumber", "sortOrder"]);
 
 /**
  * The only place an issue row is patched, so every change bumps its version by one, unless it

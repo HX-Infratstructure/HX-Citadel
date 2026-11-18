@@ -434,12 +434,13 @@ describe("issue levels", () => {
     const { t, asMember, create } = await setup();
     const story = await create("story");
     await create("subtask", { parentIssueId: story });
-    const subtasks = await t.run((ctx) =>
-      ctx.db
+    const subtasks = await t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(story))!;
+      return await ctx.db
         .query("issues")
-        .withIndex("by_parent", (q) => q.eq("parentIssueId", story))
-        .collect()
-    );
+        .withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", story))
+        .collect();
+    });
     expect(subtasks.map((subtask) => subtask.testing === true).sort()).toEqual([false, true]);
 
     await asMember.mutation(api.issues.remove, { issueId: story });
