@@ -27,7 +27,7 @@ Vector is the HX work tracker, a Linear-style multi-tenant app. It is built with
 - Workspace routes live under `app/(app)/[orgSlug]/`: the home page, `team/[teamId]` and its `board`, `issue/[issueId]`, `projects` and `projects/[projectId]`, `cycles` and `cycles/[cycleId]`, `search` and `settings` with `billing` and `members`.
 - Read the slug with `useParams<{ orgSlug: string }>()`.
 - `components/shell/workspace-shell.tsx` makes sure the user and organization are synced before a workspace page renders.
-- Marketing pages live under `app/(marketing)/`. Sign-in, sign-up and onboarding live under `app/sign-in`, `app/sign-up` and `app/onboarding`.
+- Sign-in, sign-up and onboarding live under `app/sign-in`, `app/sign-up` and `app/onboarding`.
 
 ## Billing gates (removed in step P1.3)
 
