@@ -72,7 +72,7 @@ pnpm build              # before tsc: tsc reads .next/types from the last build
 pnpm exec tsc --noEmit
 ```
 
-Convex function tests live next to the function as `convex/<module>.test.ts`. `convex/issues.test.ts` shows the setup.
+Convex function tests live next to the function as `convex/<module>.test.ts`. `convex/issues.test.ts` shows the setup. Tests of the agent API take their workspace from `convex/workspace.fixture.ts`.
 
 ## Reference
 
