@@ -28,10 +28,13 @@ async function setup() {
 
 type T = Awaited<ReturnType<typeof setup>>;
 
+let keyCount = 0;
+const freshKey = () => ({ "Idempotency-Key": `test-${++keyCount}` });
+
 const post = (t: T, body: unknown, agent?: string) =>
   t.fetch("/api/v1/issues", {
     method: "POST",
-    headers: agent === undefined ? {} : { "X-Agent-Id": agent },
+    headers: agent === undefined ? freshKey() : { "X-Agent-Id": agent, ...freshKey() },
     body: JSON.stringify(body),
   });
 
@@ -144,7 +147,7 @@ describe("REST refusals (DSH gates, 10:11Z)", () => {
 
   test("a bad JSON body is 400 validation", async () => {
     const t = await setup();
-    const response = await t.fetch("/api/v1/issues", { method: "POST", headers: { "X-Agent-Id": "cc1" }, body: "{not json" });
+    const response = await t.fetch("/api/v1/issues", { method: "POST", headers: { "X-Agent-Id": "cc1", ...freshKey() }, body: "{not json" });
     expect(await failure(response)).toEqual({ status: 400, code: "validation" });
   });
 
@@ -174,7 +177,11 @@ describe("REST refusals (DSH gates, 10:11Z)", () => {
 describe("REST P3.2b routes", () => {
   const agent = { "X-Agent-Id": "cc1" };
   const send = (t: T, method: string, path: string, body?: unknown, headers: Record<string, string> = agent) =>
-    t.fetch(`/api/v1/issues${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    t.fetch(`/api/v1/issues${path}`, {
+      method,
+      headers: method === "GET" ? headers : { ...freshKey(), ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
   const failure = async (response: Response) => ({ status: response.status, code: (await response.json()).code });
 
   test("GET ?team= lists keyed issues with assignee name and parentKey, filtered by status and assignee=me", async () => {

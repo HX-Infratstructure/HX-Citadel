@@ -24,6 +24,7 @@ import type * as lib_agents from "../lib/agents.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_customFunctions from "../lib/customFunctions.js";
 import type * as lib_httpApi from "../lib/httpApi.js";
+import type * as lib_idempotency from "../lib/idempotency.js";
 import type * as lib_issueCleanup from "../lib/issueCleanup.js";
 import type * as lib_issueVersion from "../lib/issueVersion.js";
 import type * as lib_mirror from "../lib/mirror.js";
@@ -66,6 +67,7 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   "lib/customFunctions": typeof lib_customFunctions;
   "lib/httpApi": typeof lib_httpApi;
+  "lib/idempotency": typeof lib_idempotency;
   "lib/issueCleanup": typeof lib_issueCleanup;
   "lib/issueVersion": typeof lib_issueVersion;
   "lib/mirror": typeof lib_mirror;

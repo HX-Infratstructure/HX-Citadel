@@ -1,6 +1,7 @@
 import { ConvexError } from "convex/values";
 import { errorMessage } from "../../lib/error-message";
 import { ActionCtx, httpAction } from "../_generated/server";
+import { hashRequest, Idempotency, IDEMPOTENCY_HEADER, isValidKey } from "./idempotency";
 
 export type ErrorBody = { code: string; message: string };
 export type HttpFailure = { status: number; body: ErrorBody };
@@ -54,6 +55,18 @@ export function readIfMatch(request: Request): number | undefined {
   return version;
 }
 
+/** Every write carries `Idempotency-Key`; absent or empty is 400 idempotency_key_required. */
+export function readIdempotencyKey(request: Request): string {
+  const key = request.headers.get(IDEMPOTENCY_HEADER) ?? "";
+  if (key === "") {
+    throw new HttpError(400, "idempotency_key_required", `The ${IDEMPOTENCY_HEADER} header is required on every write`);
+  }
+  if (!isValidKey(key)) {
+    throw new HttpError(400, "validation", `${IDEMPOTENCY_HEADER} must be 1 to 200 visible ASCII characters`);
+  }
+  return key;
+}
+
 export async function readJsonObject(request: Request): Promise<Record<string, unknown>> {
   const body: unknown = await request.json().catch(() => null);
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -87,7 +100,7 @@ const ERROR_MAP: { pattern: RegExp; status: number; code: string }[] = [
 ];
 
 /** Typed `ConvexError` codes the shared write logic throws, by HTTP status. */
-const TYPED_ERRORS: Record<string, number> = { stale: 412 };
+const TYPED_ERRORS: Record<string, number> = { stale: 412, idempotency_key_reused: 409 };
 
 function typedFailure(error: unknown): HttpFailure | null {
   if (!(error instanceof ConvexError)) {
@@ -133,5 +146,22 @@ export function agentRoute(
       const failure = toHttpError(error);
       return json(failure.status, failure.body);
     }
+  });
+}
+
+/** What every write route receives: the parsed body and the fields each internal write mutation takes. */
+export type WriteRequest = {
+  body: Record<string, unknown>;
+  fields: { agentName: string; ifMatch: number | undefined; idempotency: Idempotency };
+};
+
+/** An agent write route: `Idempotency-Key` is required, and the request is hashed once, here. */
+export function writeRoute(handle: (ctx: ActionCtx, request: Request, write: WriteRequest) => Promise<Response>) {
+  return agentRoute(async (ctx, request, agentName) => {
+    const key = readIdempotencyKey(request);
+    const body = await readJsonObject(request);
+    const ifMatch = readIfMatch(request);
+    const requestHash = await hashRequest(`${request.method} ${new URL(request.url).pathname}`, body, ifMatch);
+    return await handle(ctx, request, { body, fields: { agentName, ifMatch, idempotency: { key, requestHash } } });
   });
 }

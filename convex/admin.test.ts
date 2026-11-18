@@ -25,6 +25,7 @@ const CONTENT_TABLES = [
   "views",
   "projects",
   "teams",
+  "idempotencyKeys",
 ] as const satisfies readonly TableNames[];
 
 const MIRROR_TABLES = ["organizations", "users", "members"] as const satisfies readonly TableNames[];
@@ -41,6 +42,7 @@ const SEEDED_COUNTS = {
   views: 1,
   projects: 1,
   teams: 1,
+  idempotencyKeys: 1,
 };
 
 const ZERO_COUNTS = Object.fromEntries(CONTENT_TABLES.map((table) => [table, 0]));
@@ -128,6 +130,14 @@ async function seedOrg(ctx: MutationCtx & { storage: StorageActionWriter }, cler
     name: "Mine",
     filters: "{}",
     shared: false,
+  });
+  await ctx.db.insert("idempotencyKeys", {
+    orgId,
+    agentId: userId,
+    key: "k-1",
+    requestHash: "hash",
+    body: { done: true },
+    createdAt: 1,
   });
   return { orgId, storageId };
 }

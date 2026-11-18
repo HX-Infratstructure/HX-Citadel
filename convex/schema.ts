@@ -237,4 +237,15 @@ export default defineSchema({
   })
     .index("by_org", ["orgId"])
     .index("by_creator", ["creatorId"]),
+
+  idempotencyKeys: defineTable({
+    orgId: v.id("organizations"),
+    agentId: v.id("users"),
+    key: v.string(),
+    requestHash: v.string(),
+    body: v.any(),
+    createdAt: v.number(),
+  })
+    .index("by_org_and_key", ["orgId", "key"])
+    .index("by_created_at", ["createdAt"]),
 });

@@ -18,6 +18,7 @@ import {
   resolveAgentReadScope,
   resolveAgentScope,
 } from "./lib/orgScope";
+import { expireKeys, idempotencyValidator, Idempotency, withIdempotency } from "./lib/idempotency";
 import { assertIfMatch, issueVersion } from "./lib/issueVersion";
 import {
   issueKindValidator,
@@ -31,7 +32,21 @@ const keyedIssue = v.object({ ...issueShape, key: v.union(v.string(), v.null()),
 /** The version the client last read; a different current version refuses the write as stale. */
 const ifMatch = v.optional(v.number());
 
+/** REST and MCP always send it; the mutation stores the result under it. */
+const idempotency = v.optional(idempotencyValidator);
+
 type Db = { db: QueryCtx["db"] };
+
+/** Every agent write: resolve the agent, then run the write once per Idempotency-Key, in this mutation. */
+async function agentWrite<T>(
+  ctx: MutationCtx,
+  agentName: string,
+  key: Idempotency | undefined,
+  write: (scope: OrgScope) => Promise<T>
+): Promise<T> {
+  const scope = await resolveAgentScope(ctx, agentName);
+  return await withIdempotency(ctx, scope, key, () => write(scope));
+}
 
 function withKey(issue: Doc<"issues">, teamKey: string, parentNumber?: number) {
   return { ...issue, key: formatIssueKey(teamKey, issue, parentNumber), version: issueVersion(issue) };
@@ -95,25 +110,26 @@ export const createIssue = internalMutation({
     parentKey: v.optional(v.string()),
     assignee: v.optional(v.string()),
     ifMatch,
+    idempotency,
   },
   returns: v.object({ issue: keyedIssue }),
-  handler: async (ctx, { agentName, teamKey, parentKey, assignee, ifMatch, ...fields }) => {
-    const scope = await resolveAgentScope(ctx, agentName);
-    const team = await findTeamByKey(ctx, scope.org._id, teamKey);
-    const parent = parentKey === undefined ? null : (await findIssueByKey(ctx, scope.org._id, parentKey)).issue;
-    if (parent !== null && parentKey !== undefined) {
-      assertIfMatch(parent, parentKey, ifMatch);
-    }
-    const assigneeId = assignee === undefined ? undefined : await resolveAgentAssignee(ctx, scope.org._id, assignee);
-    const issueId = await createIssueWithRules(ctx, scope, {
-      ...fields,
-      teamId: team._id,
-      parentIssueId: parent?._id,
-      assigneeId,
-    });
-    const issue = await getOrgIssue(ctx, scope.org._id, issueId);
-    return { issue: withKey(issue, team.key, parent?.number) };
-  },
+  handler: (ctx, { agentName, idempotency, teamKey, parentKey, assignee, ifMatch, ...fields }) =>
+    agentWrite(ctx, agentName, idempotency, async (scope) => {
+      const team = await findTeamByKey(ctx, scope.org._id, teamKey);
+      const parent = parentKey === undefined ? null : (await findIssueByKey(ctx, scope.org._id, parentKey)).issue;
+      if (parent !== null && parentKey !== undefined) {
+        assertIfMatch(parent, parentKey, ifMatch);
+      }
+      const assigneeId = assignee === undefined ? undefined : await resolveAgentAssignee(ctx, scope.org._id, assignee);
+      const issueId = await createIssueWithRules(ctx, scope, {
+        ...fields,
+        teamId: team._id,
+        parentIssueId: parent?._id,
+        assigneeId,
+      });
+      const issue = await getOrgIssue(ctx, scope.org._id, issueId);
+      return { issue: withKey(issue, team.key, parent?.number) };
+    }),
 });
 
 export const getIssue = internalQuery({
@@ -131,12 +147,11 @@ export const getIssue = internalQuery({
 });
 
 /** The issue a write names, by key, checked against If-Match before any write and re-read after it. */
-async function resolveKeyedWrite(ctx: MutationCtx, agentName: string, key: string, ifMatch: number | undefined) {
-  const scope = await resolveAgentScope(ctx, agentName);
+async function resolveKeyedWrite(ctx: MutationCtx, scope: OrgScope, key: string, ifMatch: number | undefined) {
   const found = await findIssueByKey(ctx, scope.org._id, key);
   assertIfMatch(found.issue, key, ifMatch);
   const reread = async () => withKey(await getOrgIssue(ctx, scope.org._id, found.issue._id), found.team.key, found.parentNumber);
-  return { scope, issueId: found.issue._id, reread };
+  return { issueId: found.issue._id, reread };
 }
 
 /** An assignee by agent name; `null` unassigns, `undefined` leaves it alone. */
@@ -211,28 +226,31 @@ export const updateIssue = internalMutation({
     priority: v.optional(issuePriorityValidator),
     assignee: v.optional(v.union(v.string(), v.null())),
     ifMatch,
+    idempotency,
   },
   returns: v.object({ issue: keyedIssue }),
-  handler: async (ctx, { agentName, key, assignee, ifMatch, ...fields }) => {
-    const { scope, issueId, reread } = await resolveKeyedWrite(ctx, agentName, key, ifMatch);
-    const assigneeId = await assigneeIdFor(ctx, scope, assignee);
-    await updateIssueWithRules(ctx, scope, { ...fields, issueId, assigneeId });
-    return { issue: await reread() };
-  },
+  handler: (ctx, { agentName, idempotency, key, assignee, ifMatch, ...fields }) =>
+    agentWrite(ctx, agentName, idempotency, async (scope) => {
+      const { issueId, reread } = await resolveKeyedWrite(ctx, scope, key, ifMatch);
+      const assigneeId = await assigneeIdFor(ctx, scope, assignee);
+      await updateIssueWithRules(ctx, scope, { ...fields, issueId, assigneeId });
+      return { issue: await reread() };
+    }),
 });
 
 export const setProof = internalMutation({
-  args: { agentName: v.string(), key: v.string(), proofUrl: v.string(), ifMatch },
+  args: { agentName: v.string(), key: v.string(), proofUrl: v.string(), ifMatch, idempotency },
   returns: v.object({ issue: keyedIssue }),
-  handler: async (ctx, { agentName, key, proofUrl, ifMatch }) => {
-    const { scope, issueId, reread } = await resolveKeyedWrite(ctx, agentName, key, ifMatch);
-    await setIssueProof(ctx, scope, { issueId, proofUrl });
-    return { issue: await reread() };
-  },
+  handler: (ctx, { agentName, idempotency, key, proofUrl, ifMatch }) =>
+    agentWrite(ctx, agentName, idempotency, async (scope) => {
+      const { issueId, reread } = await resolveKeyedWrite(ctx, scope, key, ifMatch);
+      await setIssueProof(ctx, scope, { issueId, proofUrl });
+      return { issue: await reread() };
+    }),
 });
 
 export const createComment = internalMutation({
-  args: { agentName: v.string(), key: v.string(), body: v.string(), ifMatch },
+  args: { agentName: v.string(), key: v.string(), body: v.string(), ifMatch, idempotency },
   returns: v.object({
     comment: v.object({
       _id: v.id("comments"),
@@ -244,13 +262,21 @@ export const createComment = internalMutation({
       mentions: v.optional(v.array(v.id("users"))),
     }),
   }),
-  handler: async (ctx, { agentName, key, body, ifMatch }) => {
-    const { scope, issueId } = await resolveKeyedWrite(ctx, agentName, key, ifMatch);
-    const commentId = await createCommentWithRules(ctx, scope, { issueId, body });
-    const comment = await ctx.db.get(commentId);
-    if (comment === null) {
-      throw new Error(`Comment ${commentId} not found`);
-    }
-    return { comment };
-  },
+  handler: (ctx, { agentName, idempotency, key, body, ifMatch }) =>
+    agentWrite(ctx, agentName, idempotency, async (scope) => {
+      const { issueId } = await resolveKeyedWrite(ctx, scope, key, ifMatch);
+      const commentId = await createCommentWithRules(ctx, scope, { issueId, body });
+      const comment = await ctx.db.get(commentId);
+      if (comment === null) {
+        throw new Error(`Comment ${commentId} not found`);
+      }
+      return { comment };
+    }),
+});
+
+/** The hourly cron's TTL sweep of stored Idempotency-Key results. */
+export const expireIdempotencyKeys = internalMutation({
+  args: {},
+  returns: v.number(),
+  handler: (ctx) => expireKeys(ctx, Date.now()),
 });

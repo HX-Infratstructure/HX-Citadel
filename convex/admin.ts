@@ -22,6 +22,7 @@ const contentCountFields = {
   views: v.number(),
   projects: v.number(),
   teams: v.number(),
+  idempotencyKeys: v.number(),
 };
 
 type ContentTable = keyof typeof contentCountFields;
@@ -97,6 +98,10 @@ async function loadOrgContent(ctx: QueryCtx | MutationCtx, orgId: Id<"organizati
       .withIndex("by_org", (q) => q.eq("orgId", orgId))
       .collect(),
     teams,
+    idempotencyKeys: await ctx.db
+      .query("idempotencyKeys")
+      .withIndex("by_org_and_key", (q) => q.eq("orgId", orgId))
+      .collect(),
   };
 }
 

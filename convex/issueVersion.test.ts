@@ -12,6 +12,9 @@ const modules = import.meta.glob("./**/*.*s");
 const ORG = "org_hx";
 const agent = { "X-Agent-Id": "cc1" };
 
+let keyCount = 0;
+const freshKey = () => ({ "Idempotency-Key": `test-${++keyCount}` });
+
 beforeEach(() => {
   process.env.HX_WORKSPACE_ORG_ID = ORG;
 });
@@ -26,14 +29,18 @@ async function setup() {
     const orgId = await ctx.db.insert("organizations", { clerkOrgId: ORG, name: "HX", slug: "hx" });
     await ctx.db.insert("teams", { orgId, name: "Engineering", key: "ENG", nextIssueNumber: 1 });
   });
-  await t.fetch("/api/v1/issues", { method: "POST", headers: agent, body: JSON.stringify({ teamKey: "ENG", title: "Story" }) });
+  await t.fetch("/api/v1/issues", { method: "POST", headers: { ...agent, ...freshKey() }, body: JSON.stringify({ teamKey: "ENG", title: "Story" }) });
   return t;
 }
 
 type T = Awaited<ReturnType<typeof setup>>;
 
 const send = (t: T, method: string, path: string, body?: unknown, headers: Record<string, string> = agent) =>
-  t.fetch(`/api/v1/issues${path}`, { method, headers: { ...agent, ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
+  t.fetch(`/api/v1/issues${path}`, {
+    method,
+    headers: { ...agent, ...(method === "GET" ? {} : freshKey()), ...headers },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
 
 const versionOf = async (t: T, key: string) => (await (await send(t, "GET", `/${key}`)).json()).issue.version;
 
