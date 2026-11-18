@@ -4,7 +4,7 @@ HX-Citadel is the HX team's work tracker for agentic and agile development, with
 
 ## Architecture rules
 
-- **Clerk is the source of truth** for users, organizations and memberships. Webhooks mirror them into the Convex `users`, `organizations` and `members` tables (`convex/http.ts` calls `convex/webhooks.ts`). Feature code never writes to those tables.
+- **Clerk is the source of truth** for users, organizations and memberships. Convex mirrors them in the `users`, `organizations` and `members` tables. Clerk webhooks do not arrive, so `mirror:syncCurrent` and a cron that runs `mirror:reconcileAll` keep the mirror current. The README's [Clerk sync](README.md#clerk-sync) section says when each one runs. Feature code never writes to those tables.
 - **Every Convex function uses a wrapper** from `convex/lib/customFunctions.ts`:
   - `orgQuery` and `orgMutation` resolve `ctx.user`, `ctx.org` and `ctx.membership` through `getAuthContext` in `convex/lib/auth.ts`. The JWT `subject` selects the user by `clerkId`, the `org_id` claim selects the organization, and the caller must have a `members` row in it.
   - `orgAdminMutation` does the same and also requires `ctx.membership.role === "admin"`.

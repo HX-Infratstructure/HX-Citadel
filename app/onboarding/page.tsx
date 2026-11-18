@@ -2,8 +2,13 @@
 
 import { SignOutButton } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { FailedWithRetry } from "@/components/shell/failed-with-retry";
+import {
+  ACTIVATION_FAILED_MESSAGE,
+  MEMBERSHIP_FAILED_MESSAGE,
+} from "@/components/shell/hx-workspace";
 import {
   FullScreenLoader,
   useHxWorkspace,
@@ -31,22 +36,38 @@ function NotAMember() {
  */
 export default function OnboardingPage() {
   const router = useRouter();
-  const { workspace, setActive } = useHxWorkspace();
+  const { workspace, setActive, retry } = useHxWorkspace();
   const hx = workspace.status === "member" ? workspace.membership : null;
   const hxOrgId = hx?.orgId;
   const hxSlug = hx?.slug;
+  const [attempt, setAttempt] = useState(0);
+  const [failedAttempt, setFailedAttempt] = useState<number | null>(null);
 
   useEffect(() => {
     if (!hxOrgId || !hxSlug || !setActive) {
       return;
     }
-    void setActive({ organization: hxOrgId }).then(() =>
-      router.replace(`/${hxSlug}`)
+    void setActive({ organization: hxOrgId }).then(
+      () => router.replace(`/${hxSlug}`),
+      () => setFailedAttempt(attempt)
     );
-  }, [hxOrgId, hxSlug, setActive, router]);
+  }, [hxOrgId, hxSlug, setActive, router, attempt]);
 
   if (workspace.status === "non-member") {
     return <NotAMember />;
+  }
+  if (workspace.status === "error") {
+    return (
+      <FailedWithRetry message={MEMBERSHIP_FAILED_MESSAGE} onRetry={retry} />
+    );
+  }
+  if (failedAttempt === attempt) {
+    return (
+      <FailedWithRetry
+        message={ACTIVATION_FAILED_MESSAGE}
+        onRetry={() => setAttempt((n) => n + 1)}
+      />
+    );
   }
   return <FullScreenLoader label="Opening the HX workspace…" />;
 }

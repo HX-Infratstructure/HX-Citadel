@@ -66,6 +66,7 @@ export default defineSchema({
     userId: v.id("users"),
     role: memberRoleValidator,
     clerkMembershipId: v.string(),
+    clerkUpdatedAt: v.optional(v.number()),
   })
     .index("by_org", ["orgId"])
     .index("by_user", ["userId"])
