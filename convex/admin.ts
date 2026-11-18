@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, MutationCtx, QueryCtx } from "./_generated/server";
 import { deleteAttachmentFiles, deleteIssuesWithOwnedRows, deleteRows } from "./lib/issueCleanup";
-import { getOrgByClerkIdOrThrow } from "./lib/mirror";
+import { existedBeforeRead, getOrgByClerkIdOrThrow } from "./lib/mirror";
 import { findTeamByKey } from "./lib/teams";
 
 /**
@@ -171,10 +171,13 @@ export const clearTeamContent = internalMutation({
 });
 
 export const deleteOrgMirror = internalMutation({
-  args: { clerkOrgId: v.string() },
+  args: { clerkOrgId: v.string(), readStartedAt: v.optional(v.number()) },
   returns: deletedMirrorValidator,
   handler: async (ctx, args) => {
     const org = await getOrgByClerkId(ctx, args.clerkOrgId);
+    if (!existedBeforeRead(org, args.readStartedAt)) {
+      return { organizations: 0, members: 0 };
+    }
     await assertNoContent(ctx, org);
     const members = await ctx.db
       .query("members")

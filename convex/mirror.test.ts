@@ -12,7 +12,7 @@ const USER_ID = "user_sync";
 const ORG_ID = "org_sync";
 const MEMBERSHIP_ID = "orgmem_sync";
 const USER_URL = `https://api.clerk.com/v1/users/${USER_ID}`;
-const MEMBERSHIPS_URL = `${USER_URL}/organization_memberships?limit=100`;
+const MEMBERSHIPS_URL = `${USER_URL}/organization_memberships?limit=100&offset=0`;
 
 const clerkUser = {
   id: USER_ID,
@@ -42,14 +42,17 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
-function stubClerk(statuses: { user?: number; memberships?: number } = {}) {
+function stubClerk(
+  statuses: { user?: number; memberships?: number } = {},
+  memberships: unknown = clerkMemberships
+) {
   const fetchMock = vi.fn<typeof fetch>(async (input) => {
     const url = String(input);
     if (url === USER_URL) {
       return jsonResponse(clerkUser, statuses.user ?? 200);
     }
     if (url === MEMBERSHIPS_URL) {
-      return jsonResponse(clerkMemberships, statuses.memberships ?? 200);
+      return jsonResponse(memberships, statuses.memberships ?? 200);
     }
     return jsonResponse({ errors: [] }, 404);
   });
@@ -74,6 +77,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   delete process.env.CLERK_SECRET_KEY;
 });
@@ -151,6 +155,50 @@ describe("mirror.syncCurrent", () => {
     expect(rows).toEqual({ users: [], organizations: [], members: [] });
   });
 
+  test("mirrors memberships from every page", async () => {
+    const memberships = Array.from({ length: 101 }, (_, i) => ({
+      id: `orgmem_${i}`,
+      role: "org:member",
+      organization: { id: `org_${i}`, name: `Org ${i}`, slug: `org-${i}`, image_url: null },
+      public_user_data: { user_id: USER_ID },
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/organization_memberships")) {
+          return jsonResponse({ data: page(memberships, url), total_count: memberships.length });
+        }
+        return jsonResponse(clerkUser);
+      })
+    );
+    const t = signedIn();
+
+    const counts = await t.action(api.mirror.syncCurrent, {});
+
+    expect(counts).toEqual({ users: 1, organizations: 101, memberships: 101 });
+    const rows = await mirrorRows(t);
+    expect(rows.members.map((m) => m.clerkMembershipId).sort()).toEqual(
+      memberships.map((m) => m.id).sort()
+    );
+  });
+
+  test("keeps the stored role when Clerk returns an older membership", async () => {
+    const membershipAt = (role: string, updatedAt: number) => ({
+      ...clerkMemberships,
+      data: [{ ...clerkMemberships.data[0], role, updated_at: updatedAt }],
+    });
+    const t = signedIn();
+    stubClerk({}, membershipAt("org:member", 2000));
+    await t.action(api.mirror.syncCurrent, {});
+    stubClerk({}, membershipAt("org:admin", 1000));
+
+    await t.action(api.mirror.syncCurrent, {});
+
+    const rows = await mirrorRows(t);
+    expect(rows.members.map((m) => m.role)).toEqual(["member"]);
+  });
+
   test("refuses a caller with no identity", async () => {
     const fetchMock = stubClerk();
     const t = convexTest(schema, modules);
@@ -178,7 +226,7 @@ describe("mirror.syncCurrent", () => {
 type ClerkState = {
   users: { id: string; first_name: string }[];
   orgs: { id: string; name: string }[];
-  memberships: Record<string, { id: string; role: string; user: string }[]>;
+  memberships: Record<string, { id: string; role: string; user: string; updatedAt?: number }[]>;
 };
 
 const zeroCounts = {
@@ -223,6 +271,7 @@ function clerkBody(state: ClerkState, url: URL) {
     role: m.role,
     organization: { id: orgId },
     public_user_data: { user_id: m.user },
+    updated_at: m.updatedAt,
   }));
   return { data: page(memberships, url) };
 }
@@ -291,6 +340,34 @@ describe("mirror.reconcileAll", () => {
     const rows = await mirrorRows(t);
     const bea = rows.members.find((m) => m.clerkMembershipId === "mem_b");
     expect(bea?.role).toBe("admin");
+  });
+
+  test.each([
+    {
+      name: "ignores a directory read older than the stored role",
+      updatedAt: 1000,
+      role: "member",
+      changed: 0,
+    },
+    {
+      name: "applies a directory read newer than the stored role",
+      updatedAt: 3000,
+      role: "admin",
+      changed: 1,
+    },
+  ])("$name", async ({ updatedAt, role, changed }) => {
+    const t = convexTest(schema, modules);
+    const state = baseState();
+    state.memberships[ORG_ID][1].updatedAt = 2000;
+    await reconcile(t, state);
+    Object.assign(state.memberships[ORG_ID][1], { role: "org:admin", updatedAt });
+
+    const counts = await reconcile(t, state);
+
+    expect(counts.members).toEqual({ added: 0, changed, removed: 0 });
+    const rows = await mirrorRows(t);
+    const bea = rows.members.find((m) => m.clerkMembershipId === "mem_b");
+    expect(bea?.role).toBe(role);
   });
 
   test("keeps an organization gone from Clerk that still has a team", async () => {
@@ -372,6 +449,92 @@ describe("mirror.reconcileAll", () => {
     const rows = await mirrorRows(t);
     expect(rows.users.map((u) => u.clerkId).sort()).toEqual(["agent:cc1", "user_a", "user_b"]);
     expect(rows.members.filter((m) => m.userId === agentId)).toHaveLength(1);
+  });
+
+  test("keeps a user and membership created after the Clerk read", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(1_000);
+    const t = convexTest(schema, modules);
+    await reconcile(t, baseState());
+    const state = baseState();
+    state.users = state.users.filter((u) => u.id !== "user_b");
+    state.memberships[ORG_ID] = state.memberships[ORG_ID].filter((m) => m.user !== "user_b");
+    vi.setSystemTime(2_000);
+    let joined = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input) => {
+        const url = new URL(String(input));
+        const body = clerkBody(state, url);
+        if (!joined) {
+          joined = true;
+          vi.setSystemTime(3_000);
+          await t.mutation(internal.webhooks.handleClerkEvent, {
+            eventType: "user.updated",
+            data: { id: "user_late", first_name: "Lee" },
+          });
+          await t.mutation(internal.webhooks.handleClerkEvent, {
+            eventType: "organizationMembership.updated",
+            data: {
+              id: "mem_late",
+              role: "org:member",
+              organization: { id: ORG_ID },
+              public_user_data: { user_id: "user_late" },
+            },
+          });
+        }
+        return jsonResponse(body);
+      })
+    );
+
+    await t.action(internal.mirror.reconcileAll, {});
+
+    const rows = await mirrorRows(t);
+    expect(rows.users.map((u) => u.clerkId).sort()).toEqual(["user_a", "user_late"]);
+    expect(rows.members.map((m) => m.clerkMembershipId).sort()).toEqual(["mem_a", "mem_late"]);
+  });
+
+  test("keeps an organization created after the Clerk read and removes an older one", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(1_000);
+    const t = convexTest(schema, modules);
+    await reconcile(t, baseState());
+    const state = baseState();
+    state.orgs = [];
+    state.memberships = {};
+    vi.setSystemTime(2_000);
+    let joined = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input) => {
+        const url = new URL(String(input));
+        const body = clerkBody(state, url);
+        if (!joined) {
+          joined = true;
+          vi.setSystemTime(3_000);
+          await t.mutation(internal.webhooks.handleClerkEvent, {
+            eventType: "organization.updated",
+            data: { id: "org_late", name: "Late" },
+          });
+          await t.mutation(internal.webhooks.handleClerkEvent, {
+            eventType: "organizationMembership.updated",
+            data: {
+              id: "mem_late",
+              role: "org:admin",
+              organization: { id: "org_late" },
+              public_user_data: { user_id: "user_a" },
+            },
+          });
+        }
+        return jsonResponse(body);
+      })
+    );
+
+    await t.action(internal.mirror.reconcileAll, {});
+
+    const rows = await mirrorRows(t);
+    expect(rows.organizations.map((o) => o.clerkOrgId)).toEqual(["org_late"]);
+    expect(rows.members.map((m) => m.clerkMembershipId)).toEqual(["mem_late"]);
   });
 
   test.each(["/users", "/organizations", `/organizations/${ORG_ID}/memberships`])(

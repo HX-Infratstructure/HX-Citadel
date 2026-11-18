@@ -1,6 +1,11 @@
 import { v } from "convex/values";
 import { internalMutation, MutationCtx } from "./_generated/server";
-import { findOrgByClerkId, findUserByClerkId } from "./lib/mirror";
+import {
+  existedBeforeRead,
+  findOrgByClerkId,
+  findUserByClerkId,
+  isStaleClerkWrite,
+} from "./lib/mirror";
 
 /**
  * Clerk → Convex sync. Clerk is the source of truth for users, orgs and
@@ -29,12 +34,14 @@ export type ClerkMembershipData = {
   role?: string;
   organization?: { id: string };
   public_user_data?: { user_id: string };
+  updated_at?: number;
 };
 
 export const handleClerkEvent = internalMutation({
   args: {
     eventType: v.string(),
     data: v.any(),
+    readStartedAt: v.optional(v.number()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -43,7 +50,7 @@ export const handleClerkEvent = internalMutation({
     if (eventType === "user.created" || eventType === "user.updated") {
       await upsertUser(ctx, args.data as ClerkUserData);
     } else if (eventType === "user.deleted") {
-      await deleteUser(ctx, args.data as ClerkUserData);
+      await deleteUser(ctx, args.data as ClerkUserData, args.readStartedAt);
     } else if (
       eventType === "organization.created" ||
       eventType === "organization.updated"
@@ -57,7 +64,7 @@ export const handleClerkEvent = internalMutation({
     ) {
       await upsertMembership(ctx, args.data as ClerkMembershipData);
     } else if (eventType === "organizationMembership.deleted") {
-      await deleteMembership(ctx, args.data as ClerkMembershipData);
+      await deleteMembership(ctx, args.data as ClerkMembershipData, args.readStartedAt);
     } else {
       console.log("Unhandled Clerk webhook event", eventType);
     }
@@ -91,9 +98,13 @@ async function upsertUser(ctx: MutationCtx, data: ClerkUserData) {
   }
 }
 
-async function deleteUser(ctx: MutationCtx, data: ClerkUserData) {
+async function deleteUser(
+  ctx: MutationCtx,
+  data: ClerkUserData,
+  readStartedAt: number | undefined
+) {
   const user = await findUserByClerkId(ctx, data.id);
-  if (!user) {
+  if (!user || !existedBeforeRead(user, readStartedAt)) {
     return;
   }
   const memberships = await ctx.db
@@ -173,25 +184,36 @@ async function upsertMembership(ctx: MutationCtx, data: ClerkMembershipData) {
     .unique();
 
   if (existing) {
-    await ctx.db.patch(existing._id, { role });
+    if (isStaleClerkWrite(existing.clerkUpdatedAt, data.updated_at)) {
+      return;
+    }
+    await ctx.db.patch(existing._id, {
+      role,
+      clerkUpdatedAt: data.updated_at ?? existing.clerkUpdatedAt,
+    });
   } else {
     await ctx.db.insert("members", {
       orgId: org._id,
       userId: user._id,
       role,
       clerkMembershipId: data.id,
+      clerkUpdatedAt: data.updated_at,
     });
   }
 }
 
-async function deleteMembership(ctx: MutationCtx, data: ClerkMembershipData) {
+async function deleteMembership(
+  ctx: MutationCtx,
+  data: ClerkMembershipData,
+  readStartedAt: number | undefined
+) {
   const existing = await ctx.db
     .query("members")
     .withIndex("by_clerk_membership_id", (q) =>
       q.eq("clerkMembershipId", data.id)
     )
     .unique();
-  if (existing) {
+  if (existing && existedBeforeRead(existing, readStartedAt)) {
     await ctx.db.delete(existing._id);
   }
 }

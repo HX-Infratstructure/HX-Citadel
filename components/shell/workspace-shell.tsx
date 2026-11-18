@@ -7,13 +7,15 @@ import { useRouter } from "next/navigation";
 import { ReactNode, useEffect, useState } from "react";
 import { api } from "@/convex/_generated/api";
 import { CommandProvider } from "@/components/commands/command-provider";
-import { Button } from "@/components/ui/button";
-import {
-  findHxMembership,
-  HX_WORKSPACE_ORG_ID,
-  type HxMembership,
-} from "@/lib/workspace";
+import { findHxMembership, HX_WORKSPACE_ORG_ID } from "@/lib/workspace";
 import { AppSidebar } from "./app-sidebar";
+import { FailedWithRetry } from "./failed-with-retry";
+import {
+  ACTIVATION_FAILED_MESSAGE,
+  MEMBERSHIP_FAILED_MESSAGE,
+  toHxWorkspace,
+  type HxWorkspace,
+} from "./hx-workspace";
 
 export function FullScreenLoader({ label }: { label: string }) {
   return (
@@ -33,48 +35,20 @@ const SESSION_REJECTED_MESSAGE =
 
 type SyncIssue = { key: string; message: string };
 
-function SyncFailed({
-  message,
-  onRetry,
-}: {
-  message: string;
-  onRetry: () => void;
-}) {
-  return (
-    <div className="flex h-dvh items-center justify-center gap-3 text-sm text-muted-foreground">
-      {message}
-      <Button size="sm" variant="outline" onClick={onRetry}>
-        Retry
-      </Button>
-    </div>
-  );
-}
-
-export type HxWorkspace =
-  | { status: "loading" }
-  | { status: "member"; membership: HxMembership }
-  | { status: "non-member" };
-
-function toHxWorkspace(
-  membership: HxMembership | null,
-  allPagesLoaded: boolean
-): HxWorkspace {
-  if (membership) {
-    return { status: "member", membership };
-  }
-  if (!allPagesLoaded) {
-    return { status: "loading" };
-  }
-  return { status: "non-member" };
-}
-
 /** Loads every Clerk membership page and resolves the HX workspace. */
 export function useHxWorkspace() {
   const { isLoaded, setActive, userMemberships } = useOrganizationList({
     userMemberships: { infinite: true },
   });
-  const { data, isLoading, isFetching, hasNextPage, fetchNext } =
-    userMemberships;
+  const {
+    data,
+    isLoading,
+    isFetching,
+    isError,
+    hasNextPage,
+    fetchNext,
+    revalidate,
+  } = userMemberships;
 
   useEffect(() => {
     if (hasNextPage && !isFetching) {
@@ -83,8 +57,15 @@ export function useHxWorkspace() {
   }, [hasNextPage, isFetching, fetchNext]);
 
   const membership = findHxMembership(data ?? [], HX_WORKSPACE_ORG_ID);
-  const allPagesLoaded = isLoaded && !isLoading && !hasNextPage;
-  return { workspace: toHxWorkspace(membership, allPagesLoaded), setActive };
+  const workspace = toHxWorkspace({
+    membership,
+    clerkLoaded: isLoaded,
+    isLoading,
+    isError,
+    hasNextPage,
+  });
+  const retry = () => void revalidate?.();
+  return { workspace, setActive, retry };
 }
 
 type ShellStep =
@@ -94,7 +75,7 @@ type ShellStep =
 
 /** The URL slug must be the HX slug; anything else goes back to the workspace. */
 function shellStep(workspace: HxWorkspace, orgSlug: string): ShellStep {
-  if (workspace.status === "loading") {
+  if (workspace.status === "loading" || workspace.status === "error") {
     return { kind: "wait", target: null };
   }
   if (workspace.status === "non-member") {
@@ -122,18 +103,26 @@ export function WorkspaceShell({
   children: ReactNode;
 }) {
   const router = useRouter();
-  const { workspace, setActive } = useHxWorkspace();
-  const isLoaded = workspace.status !== "loading";
+  const { workspace, setActive, retry } = useHxWorkspace();
   const { kind, target } = shellStep(workspace, orgSlug);
+  const isLoaded = kind !== "wait";
+  const [activateAttempt, setActivateAttempt] = useState(0);
+  const [failedActivation, setFailedActivation] = useState<string | null>(
+    null
+  );
+  const activationKey = `${target}:${activateAttempt}`;
+  const retryActivation = () => setActivateAttempt((n) => n + 1);
 
   useEffect(() => {
     if (kind === "activate" && setActive) {
-      void setActive({ organization: target });
+      void setActive({ organization: target }).catch(() =>
+        setFailedActivation(activationKey)
+      );
     }
     if (kind === "redirect") {
       router.replace(target);
     }
-  }, [kind, target, setActive, router]);
+  }, [kind, target, setActive, router, activationKey]);
 
   const currentUser = useQuery(api.users.current);
   const currentOrg = useQuery(api.organizations.current);
@@ -173,6 +162,21 @@ export function WorkspaceShell({
     };
   }, [isLoaded, isAuthenticated, needsSync, syncKey, syncCurrent]);
 
+  if (workspace.status === "error") {
+    return (
+      <FailedWithRetry message={MEMBERSHIP_FAILED_MESSAGE} onRetry={retry} />
+    );
+  }
+
+  if (kind === "activate" && failedActivation === activationKey) {
+    return (
+      <FailedWithRetry
+        message={ACTIVATION_FAILED_MESSAGE}
+        onRetry={retryActivation}
+      />
+    );
+  }
+
   if (
     !isLoaded ||
     isAuthLoading ||
@@ -186,11 +190,16 @@ export function WorkspaceShell({
   }
 
   if (needsSync && !isAuthLoading && !isAuthenticated) {
-    return <SyncFailed message={SESSION_REJECTED_MESSAGE} onRetry={reloadPage} />;
+    return (
+      <FailedWithRetry
+        message={SESSION_REJECTED_MESSAGE}
+        onRetry={reloadPage}
+      />
+    );
   }
 
   if (needsSync && syncIssue?.key === syncKey) {
-    return <SyncFailed message={syncIssue.message} onRetry={retrySync} />;
+    return <FailedWithRetry message={syncIssue.message} onRetry={retrySync} />;
   }
 
   // Clerk sync in flight. Convex queries are reactive, so this resolves by
