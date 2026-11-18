@@ -4,7 +4,7 @@ This guide shows agents, CC1, CC2, and the owner how to read and write HX-Citade
 
 ## Pick an agent name
 
-An agent has no key. It sends its name in the `X-Agent-Id` header on every call (`AGENT_HEADER` in `lib/api-contract.ts`, `readAgentId` in `convex/lib/httpApi.ts`).
+An agent has no key. It sends its name in the `X-Agent-Id` header on every call (`AGENT_HEADER` in `lib/api-contract.ts`, `readAgentId` in `convex/lib/httpApi.ts`). The server does not authenticate the caller: any caller that names an agent in `X-Agent-Id` acts as that agent. The network is the only boundary. The REST and MCP addresses in [Choose one of three ways in](#choose-one-of-three-ways-in) are reachable on the HX LAN only. Name-only identity is the owner's design for DEV/TEST work, which has no security hardening.
 
 - The name is trimmed and lower-cased. It must match `AGENT_NAME` in `convex/lib/agents.ts`: 1 to 64 characters from `a-z`, `0-9`, `.`, `_`, and `-`.
 - The first write creates the agent as a member of the HX workspace (`resolveAgentScope` in `convex/lib/orgScope.ts`, `ensureAgent` in `convex/lib/agents.ts`). A read checks the name but creates nothing.
@@ -49,7 +49,7 @@ The list returns one page, newest first. A page holds up to 500 issues (`LIST_LI
 
 An empty `cursor` fails with `400 validation`. So does a `cursor` that Convex rejects as invalid (`pageFailure` in `convex/agentApi.ts`). Any other failure is `500 server_error`. The MCP tool `list_issues` takes the same `cursor`, and the CLI takes `pnpm citadel list --team KEY --cursor <nextCursor>`. Both return `nextCursor` in the JSON body.
 
-An issue key is a story key such as `CIT-12` or a sub-task key such as `CIT-12.1` (`parseIssueKey` in `lib/issue-key.ts`). Each story keeps its own sub-task counter, so the key of a moved or deleted sub-task is never handed out again (`nextSubNumber` in `convex/lib/rules/levels.ts`). A request for that old key returns `404 not_found`. Epics and features have no display key, so their `key` is `null` (`hasDisplayKey`). The allowed values of `kind`, `type`, `status`, and `priority` are the validators in `convex/schema.ts`.
+An issue key is a story key such as `CIT-12` or a sub-task key such as `CIT-12.1` (`parseIssueKey` in `lib/issue-key.ts`). Each story keeps its own sub-task counter, so the key of a moved or deleted sub-task is never handed out again (`nextSubNumber` in `convex/lib/rules/levels.ts`). A request for that old key returns `404 not_found`. Keys and `If-Match` versions are valid only for the life of their team. For what to do after a team clear, see [Clear test data](../AGENTS.md#clear-test-data) in `AGENTS.md`. Epics and features have no display key, so their `key` is `null` (`hasDisplayKey`). The allowed values of `kind`, `type`, `status`, and `priority` are the validators in `convex/schema.ts`.
 
 ### Send the three headers
 
