@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import type { CitadelApi } from "../lib/citadel-api";
-import { formatIssueKey, parseIssueKey, type ParsedIssueKey } from "../lib/issue-key";
+import { formatParsedKey, parseIssueKey } from "../lib/issue-key";
 import { connect, type Env, errorLine, EXIT_CODES, type Io, UsageError } from "./commands";
 import { GitRepo, isZeroSha } from "./git";
 
@@ -24,20 +24,13 @@ const TSX_PATH = path.resolve(__dirname, "..", "node_modules", ".bin", "tsx");
 type PushedRef = { localSha: string; remoteRef: string; remoteSha: string };
 type CommitComment = { key: string; sha: string; body: string };
 
-function canonicalKey({ teamKey, number, subNumber }: ParsedIssueKey): string | null {
-  if (subNumber === undefined) {
-    return formatIssueKey(teamKey, { kind: "story", number });
-  }
-  return formatIssueKey(teamKey, { kind: "subtask", subNumber }, number);
-}
-
 function asStoryKey(word: string): string | null {
   const token = word.replace(TRAILING_DOTS, "");
   const parsed = parseIssueKey(token);
   if (parsed === null) {
     return null;
   }
-  return canonicalKey(parsed) === token ? token : null;
+  return formatParsedKey(parsed) === token ? token : null;
 }
 
 /** Story and subtask keys a commit message names, written as the tracker shows them, each once. */

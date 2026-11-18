@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   formatIssueKey,
+  formatParsedKey,
   hasDisplayKey,
   isValidTeamKey,
   parentChoices,
@@ -107,6 +108,16 @@ describe("parseIssueKey", () => {
     expect(parseIssueKey("HX-1")).toEqual({ teamKey: "HX", number: 1 });
     expect(parseIssueKey("HX-1.2")).toEqual({ teamKey: "HX", number: 1, subNumber: 2 });
     expect(parseIssueKey("A1-3")).toEqual({ teamKey: "A1", number: 3 });
+  });
+});
+
+describe("formatParsedKey", () => {
+  test.each([
+    ["story", { teamKey: "CIT", number: 12 }, { kind: "story", number: 12 }, undefined, "CIT-12"],
+    ["subtask", { teamKey: "CIT", number: 12, subNumber: 3 }, { kind: "subtask", subNumber: 3 }, 12, "CIT-12.3"],
+  ] as const)("a parsed %s key is the key formatIssueKey gives the same issue", (_kind, parsed, issue, parentNumber, expected) => {
+    expect(formatParsedKey(parsed)).toBe(expected);
+    expect(formatParsedKey(parsed)).toBe(formatIssueKey(parsed.teamKey, issue, parentNumber));
   });
 });
 

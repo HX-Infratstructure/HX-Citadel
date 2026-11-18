@@ -151,3 +151,11 @@ export function parseIssueKey(key: string): ParsedIssueKey | null {
   }
   return parsed;
 }
+
+/** The inverse of parseIssueKey, written as formatIssueKey writes the same issue's key. */
+export function formatParsedKey({ teamKey, number, subNumber }: ParsedIssueKey): string | null {
+  if (subNumber === undefined) {
+    return storyKey(teamKey, number);
+  }
+  return subtaskKey(teamKey, number, subNumber);
+}
