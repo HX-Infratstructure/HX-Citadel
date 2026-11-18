@@ -4,7 +4,7 @@ This guide shows agents, CC1, CC2, and the owner how to read and write HX-Citade
 
 ## Pick an agent name
 
-An agent has no key. It sends its name in the `X-Agent-Id` header on every call (`AGENT_HEADER` and `readAgentId` in `convex/lib/httpApi.ts`).
+An agent has no key. It sends its name in the `X-Agent-Id` header on every call (`AGENT_HEADER` in `lib/api-contract.ts`, `readAgentId` in `convex/lib/httpApi.ts`).
 
 - The name is trimmed and lower-cased. It must match `AGENT_NAME` in `convex/lib/agents.ts`: 1 to 64 characters from `a-z`, `0-9`, `.`, `_`, and `-`.
 - The first write creates the agent as a member of the HX workspace (`resolveAgentScope` in `convex/lib/orgScope.ts`, `ensureAgent` in `convex/lib/agents.ts`). A read checks the name but creates nothing.
@@ -29,11 +29,17 @@ The routes are in `convex/http.ts`, under `ISSUES_PATH` (`/api/v1/issues`). The 
 | --- | --- | --- |
 | `GET /api/v1/issues?team=KEY` | Optional `status`. Optional `assignee`, an agent name or `me`. Optional `cursor`, the `nextCursor` of the previous page. | `200 {issues, nextCursor}` |
 | `GET /api/v1/issues/{key}` | none | `200 {issue, subtasks}` |
-| `POST /api/v1/issues` | `teamKey`, `title`, and optional `description`, `kind`, `type`, `status`, `priority`, `parentKey`, `assignee` | `201 {issue}` |
+| `POST /api/v1/issues` | `title`, and `teamKey`, `parentKey`, or both. Optional `description`, `kind`, `type`, `status`, `priority`, `assignee` | `201 {issue}` |
 | `PATCH /api/v1/issues/{key}` | Any of `status`, `assignee` (a name or `null`), `priority`, `title`, `description` | `200 {issue}` |
 | `POST /api/v1/issues/{key}/subtasks` | `title`, optional `status` | `201 {issue}` |
 | `POST /api/v1/issues/{key}/comments` | `body` | `201 {comment}` |
 | `POST /api/v1/issues/{key}/proof` | `proofUrl` | `200 {issue}` |
+| `POST /api/v1/issues/{key}/decisions` | `question`, optional `choices` and `recommended` | `201 {decision}` |
+| `GET /api/v1/issues/{key}/decisions` | none | `200 {decisions}` |
+
+A create with `parentKey` and no `teamKey` takes the parent's team ([Levels](#follow-the-rules-agents-meet)). A create with neither fails with `400 validation` (`createIssue` in `convex/agentApi.ts`).
+
+A decision asks the owner a question about a story. The limits on the question and the choices are in `convex/lib/decisions.ts`. No route answers a decision, so an agent can't answer its own.
 
 The list returns one page, newest first. A page holds up to 500 issues (`LIST_LIMIT` in `convex/issues.ts`). To get the next page:
 
@@ -43,7 +49,7 @@ The list returns one page, newest first. A page holds up to 500 issues (`LIST_LI
 
 An empty `cursor` fails with `400 validation`. So does a `cursor` that Convex rejects as invalid (`pageFailure` in `convex/agentApi.ts`). Any other failure is `500 server_error`. The MCP tool `list_issues` takes the same `cursor`, and the CLI takes `pnpm citadel list --team KEY --cursor <nextCursor>`. Both return `nextCursor` in the JSON body.
 
-An issue key is a story key such as `HX-12` or a sub-task key such as `HX-12.1` (`parseIssueKey` in `lib/issue-key.ts`). Each story keeps its own sub-task counter, so the key of a moved or deleted sub-task is never handed out again (`nextSubNumber` in `convex/lib/rules/levels.ts`). A request for that old key returns `404 not_found`. Epics and features have no display key, so their `key` is `null` (`hasDisplayKey`). The allowed values of `kind`, `type`, `status`, and `priority` are the validators in `convex/schema.ts`.
+An issue key is a story key such as `CIT-12` or a sub-task key such as `CIT-12.1` (`parseIssueKey` in `lib/issue-key.ts`). Each story keeps its own sub-task counter, so the key of a moved or deleted sub-task is never handed out again (`nextSubNumber` in `convex/lib/rules/levels.ts`). A request for that old key returns `404 not_found`. Epics and features have no display key, so their `key` is `null` (`hasDisplayKey`). The allowed values of `kind`, `type`, `status`, and `priority` are the validators in `convex/schema.ts`.
 
 ### Send the three headers
 
@@ -60,12 +66,12 @@ Every response that returns one issue carries its version as the `ETag` header, 
 
 ### Read an error
 
-Every error is JSON: `{code, message}` (`toHttpError` in `convex/lib/httpApi.ts`). The status is set in that file, in this order:
+Every error is JSON: `{code, message}` (`toHttpError` in `convex/lib/httpApi.ts`). Every code and its HTTP status are in `ERROR_STATUS` in `lib/api-contract.ts`. `toHttpError` finds the code like this:
 
-- The routes throw `HttpError` for `actor_required`, `idempotency_key_required`, and `validation` (400), and for `not_found` (404) on an unknown route.
-- `TYPED_ERRORS` maps typed errors by their code: `validation` to 400, `not_found` to 404, `stale` to 412, `idempotency_key_reused` to 409, and `rule_refused` to 409. `convex/lib/refusals.ts` throws three of them: `invalid` for `validation`, `notFound` for `not_found`, and `refuse` for `rule_refused`. The `message` is the server's own words. A rule refusal says which rule refused the write and why.
-- `ERROR_MAP` maps two errors that have no code by their words. A Convex argument validation error (`ArgumentValidationError` or `Validator error`) is `400 validation`. A missing or unmatched `HX_WORKSPACE_ORG_ID` setting is `500 server_error`.
-- Anything else is a bug, not a rule: `500 server_error` with the message `Internal error`. An error is in this group even when its message says "not found" or "invalid". The server logs the real error.
+- The routes throw `HttpError` with a code before any Convex function runs, such as `actor_required` for a missing `X-Agent-Id`, `idempotency_key_required` for a write without `Idempotency-Key`, and `not_found` for an unknown route.
+- A Convex function refuses with a typed error that carries its code (`refusal` in `convex/lib/refusals.ts`). In that file, `invalid` throws `validation`, `notFound` throws `not_found`, and `refuse` throws `rule_refused`. The `message` is the server's own words. A rule refusal says which rule refused the write and why. A missing or unmatched `HX_WORKSPACE_ORG_ID` setting is a typed `500 server_error` that names the setting (`resolveWorkspace` in `convex/lib/orgScope.ts`).
+- Convex's argument validator throws an error with no code. `toHttpError` recognizes only this error by its words (`VALIDATOR_LINE`): `ArgumentValidationError` or `Validator error` is `400 validation`.
+- Any other error is a bug, not a rule: `500 server_error` with the message `Internal error`. An error is in this group even when its message says "not found" or "invalid". The server logs the real error.
 
 ## Connect through MCP
 
@@ -119,6 +125,7 @@ pnpm citadel hook install --repo /path/to/repo
 - The hook goes to `<repo>/.git/hooks/pre-push`, which every worktree of that repository shares (`hookPath` in `cli/git.ts`). If a hook is already there, the command refuses. Pass `--force` to replace it.
 - The hook runs the CLI from this checkout. It reads `HX_CITADEL_API` and `HX_CITADEL_AGENT` from the environment of the `git push`.
 - For each new commit, the hook finds the keys in the message as the tracker shows them (`storyKeys`). It posts `commit <short sha> <subject> <commit URL>` (`commentText`, `commitUrl`). `commitUrl` builds it from the URL Git is pushing to, or from `origin` when Git passes none.
+- The hook does not check what a key means. It posts to each key it finds. If that team and that issue exist, the comment lands on the issue. Otherwise the hook prints a warning. HX host names, such as `HX-18`, have the shape of a key. So never give a team the key `HX`: a commit that names the host `HX-18` would comment on the story `HX-18`.
 - The hook posts when the push starts, before the remote accepts it. If the remote then rejects the push, the comments stay.
 - The idempotency key is `commit-<sha>-<key>` (`commitIdempotencyKey`), so a second push of the same commit inside the [idempotency window](#send-the-three-headers) adds no second comment.
 - The hook never blocks a push. It waits at most 5 seconds in total for the tracker (`HOOK_DEADLINE_MS`). It prints a warning for each comment it could not post and for any other failure. The push continues.
@@ -135,7 +142,7 @@ The server enforces these rules for people and agents alike. A broken rule retur
 A refusal looks like this:
 
 ```json
-{ "code": "rule_refused", "message": "Can't move HX-12 …" }
+{ "code": "rule_refused", "message": "Can't move CIT-12 …" }
 ```
 
 ## Run the live checker
@@ -155,4 +162,4 @@ pnpm live-check -- --team LCK
 
 ## Revert an agent's change (owner)
 
-A workspace admin can undo one change from a story's activity log. The revert control is in `components/issue-detail/revert-change.tsx`. It calls `revertChange` in `convex/issues.ts`, which only admins can run (`orgAdminMutation`). A revert writes the old value back through `updateIssue` and logs one `reverted` row. A revert can undo a change to `title`, `status`, `priority`, or `assignee` (`REVERT_ARGS`). It undoes only the latest change to a field. If the field changed after the change you pick, `revertChange` refuses with `<key> <field> has changed since; revert the latest change instead`.
+A workspace admin can undo one change from a story's activity log. The revert control is in `components/issue-detail/revert-change.tsx`. It calls `revertChange` in `convex/issues.ts`, which only admins can run (`orgAdminMutation`). A revert writes the old value back through `updateIssue` and logs one `reverted` row. A revert can undo a change to `title`, `status`, `priority`, or `assignee` (`REVERT_ARGS`). It undoes only the latest change to a field. If the field changed after the change you pick, `revertChange` refuses with `<key> <field> has changed since; revert the latest change instead`. A `reverted` row can't itself be reverted (`revertRefusal`). To redo a change, make it again. A revert to an assignee who is no longer a workspace member is refused, and the assignee stays as it is (`assertAssignee`).

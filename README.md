@@ -56,6 +56,7 @@ The code reads these variables:
 | Variable | Read by |
 | --- | --- |
 | `NEXT_PUBLIC_CONVEX_URL` | `components/providers.tsx` |
+| `NEXT_PUBLIC_CONVEX_SITE_URL` | `lib/citadel-api.ts` and `cli/commands.ts`. It is the Convex HTTP actions URL. `/mcp` reads it on each call as the REST base URL, so the running app needs it. If it is missing, every MCP tool call fails with an error that names it. For the CLI, see [Use the CLI](docs/AGENT-API.md#use-the-cli). |
 | `NEXT_PUBLIC_HX_WORKSPACE_ORG_ID` | `lib/workspace.ts`. It pins the one workspace. If it is missing, the app fails with an error that names it. |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | `@clerk/nextjs` |
 | `CLERK_SECRET_KEY` | `@clerk/nextjs` and `convex/mirror.ts` |
