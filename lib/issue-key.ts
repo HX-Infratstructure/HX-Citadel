@@ -92,3 +92,20 @@ export function formatIssueKey(
       return null;
   }
 }
+
+export type ParsedIssueKey = { teamKey: string; number: number; subNumber?: number };
+
+const ISSUE_KEY = /^([A-Za-z0-9]+)-(\d+)(?:\.(\d+))?$/;
+
+/** The inverse of formatIssueKey: KEY-12 or KEY-12.3, else null. */
+export function parseIssueKey(key: string): ParsedIssueKey | null {
+  const match = ISSUE_KEY.exec(key.trim());
+  if (match === null) {
+    return null;
+  }
+  const parsed: ParsedIssueKey = { teamKey: match[1].toUpperCase(), number: Number(match[2]) };
+  if (match[3] !== undefined) {
+    parsed.subNumber = Number(match[3]);
+  }
+  return parsed;
+}

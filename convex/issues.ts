@@ -1,10 +1,11 @@
-import { v } from "convex/values";
+import { ObjectType, v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
 import { formatIssueKey } from "../lib/issue-key";
 import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { deleteIssueOwnedRows } from "./lib/issueCleanup";
+import { OrgScope } from "./lib/orgScope";
 import {
   assertDoneGate,
   assertDoneGateAfterUpdate,
@@ -166,89 +167,95 @@ async function claimNumbering(
   return {};
 }
 
+const createArgs = {
+  teamId: v.id("teams"),
+  kind: v.optional(issueKindValidator),
+  type: v.optional(issueTypeValidator),
+  title: v.string(),
+  description: v.optional(v.string()),
+  status: v.optional(issueStatusValidator),
+  priority: v.optional(issuePriorityValidator),
+  assigneeId: v.optional(v.id("users")),
+  projectId: v.optional(v.id("projects")),
+  cycleId: v.optional(v.id("cycles")),
+  parentIssueId: v.optional(v.id("issues")),
+  estimate: v.optional(v.number()),
+  dueDate: v.optional(v.number()),
+};
+
+export type CreateIssueArgs = ObjectType<typeof createArgs>;
+
+/** Every create rule in one place; the Clerk session and agent calls both come through here. */
+export async function createIssue(
+  ctx: MutationCtx,
+  scope: OrgScope,
+  args: CreateIssueArgs
+): Promise<Id<"issues">> {
+  const { org, actorId } = scope;
+  const team = await ctx.db.get(args.teamId);
+  if (!team || team.orgId !== org._id) {
+    throw new Error("Team not found");
+  }
+
+  const kind = args.kind ?? "story";
+  const parent = args.parentIssueId ? await getOrgIssue(ctx, org._id, args.parentIssueId) : null;
+  const placement = await assertValidParent(ctx, kind, {
+    teamId: args.teamId,
+    parentIssueId: args.parentIssueId,
+    projectId: args.projectId,
+  });
+  if (parent !== null) {
+    await assertParentOpen(ctx, parent, kind);
+  }
+  const status = args.status ?? "todo";
+  await assertWipFree(ctx, { orgId: org._id, assigneeId: args.assigneeId, kind, status });
+  const numbering = await claimNumbering(ctx, team, kind, args.parentIssueId);
+
+  // New issues sort to the top of their column.
+  const newest = await ctx.db
+    .query("issues")
+    .withIndex("by_team", (q) => q.eq("teamId", args.teamId))
+    .order("desc")
+    .first();
+  const sortOrder = (newest?.sortOrder ?? 0) + 1000;
+
+  const issueId = await ctx.db.insert("issues", {
+    orgId: org._id,
+    teamId: placement.teamId,
+    kind,
+    type: storyType(kind, args.type),
+    ...numbering,
+    title: args.title.trim(),
+    description: args.description,
+    status,
+    priority: args.priority ?? "none",
+    assigneeId: args.assigneeId,
+    creatorId: actorId,
+    projectId: placement.projectId,
+    cycleId: args.cycleId,
+    parentIssueId: args.parentIssueId,
+    estimate: args.estimate,
+    dueDate: args.dueDate,
+    sortOrder,
+  });
+  const created = await ctx.db.get(issueId);
+  if (created?.kind === "story") {
+    await createTestingSubtask(ctx, created);
+  }
+  if (created !== null) {
+    await assertDoneGate(ctx, created, status);
+  }
+
+  await logActivity(ctx, { orgId: org._id, issueId, actorId, type: "created" });
+
+  return issueId;
+}
+
 export const create = orgMutation({
-  args: {
-    teamId: v.id("teams"),
-    kind: v.optional(issueKindValidator),
-    type: v.optional(issueTypeValidator),
-    title: v.string(),
-    description: v.optional(v.string()),
-    status: v.optional(issueStatusValidator),
-    priority: v.optional(issuePriorityValidator),
-    assigneeId: v.optional(v.id("users")),
-    projectId: v.optional(v.id("projects")),
-    cycleId: v.optional(v.id("cycles")),
-    parentIssueId: v.optional(v.id("issues")),
-    estimate: v.optional(v.number()),
-    dueDate: v.optional(v.number()),
-  },
+  args: createArgs,
   returns: v.id("issues"),
-  handler: async (ctx, args) => {
-    const team = await ctx.db.get(args.teamId);
-    if (!team || team.orgId !== ctx.org._id) {
-      throw new Error("Team not found");
-    }
-
-    const kind = args.kind ?? "story";
-    const parent = args.parentIssueId
-      ? await getOrgIssue(ctx, ctx.org._id, args.parentIssueId)
-      : null;
-    const placement = await assertValidParent(ctx, kind, {
-      teamId: args.teamId,
-      parentIssueId: args.parentIssueId,
-      projectId: args.projectId,
-    });
-    if (parent !== null) {
-      await assertParentOpen(ctx, parent, kind);
-    }
-    const status = args.status ?? "todo";
-    await assertWipFree(ctx, { orgId: ctx.org._id, assigneeId: args.assigneeId, kind, status });
-    const numbering = await claimNumbering(ctx, team, kind, args.parentIssueId);
-
-    // New issues sort to the top of their column.
-    const newest = await ctx.db
-      .query("issues")
-      .withIndex("by_team", (q) => q.eq("teamId", args.teamId))
-      .order("desc")
-      .first();
-    const sortOrder = (newest?.sortOrder ?? 0) + 1000;
-
-    const issueId = await ctx.db.insert("issues", {
-      orgId: ctx.org._id,
-      teamId: placement.teamId,
-      kind,
-      type: storyType(kind, args.type),
-      ...numbering,
-      title: args.title.trim(),
-      description: args.description,
-      status,
-      priority: args.priority ?? "none",
-      assigneeId: args.assigneeId,
-      creatorId: ctx.user._id,
-      projectId: placement.projectId,
-      cycleId: args.cycleId,
-      parentIssueId: args.parentIssueId,
-      estimate: args.estimate,
-      dueDate: args.dueDate,
-      sortOrder,
-    });
-    const created = await ctx.db.get(issueId);
-    if (created?.kind === "story") {
-      await createTestingSubtask(ctx, created);
-    }
-    if (created !== null) {
-      await assertDoneGate(ctx, created, status);
-    }
-
-    await logActivity(ctx, {
-      orgId: ctx.org._id,
-      issueId,
-      actorId: ctx.user._id,
-      type: "created",
-    });
-
-    return issueId;
-  },
+  handler: async (ctx, args) =>
+    await createIssue(ctx, { org: ctx.org, actorId: ctx.user._id }, args),
 });
 
 export const update = orgMutation({

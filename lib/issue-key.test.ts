@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { formatIssueKey, hasDisplayKey, parentChoices } from "./issue-key";
+import { formatIssueKey, hasDisplayKey, parentChoices, parseIssueKey } from "./issue-key";
 
 describe("formatIssueKey", () => {
   test("a story is KEY-number", () => {
@@ -63,5 +63,21 @@ describe("parentChoices", () => {
 
   test("an epic has no parent to choose", () => {
     expect(parentChoices([...issues], "epic")).toBeNull();
+  });
+});
+
+describe("parseIssueKey", () => {
+  test("a story key gives the team key and number", () => {
+    expect(parseIssueKey("HXT-12")).toEqual({ teamKey: "HXT", number: 12 });
+  });
+
+  test("a subtask key adds the sub-number", () => {
+    expect(parseIssueKey("HXT-12.3")).toEqual({ teamKey: "HXT", number: 12, subNumber: 3 });
+  });
+
+  test("anything else is null", () => {
+    expect(parseIssueKey("HXT")).toBeNull();
+    expect(parseIssueKey("HXT-x")).toBeNull();
+    expect(parseIssueKey("HXT-1.2.3")).toBeNull();
   });
 });

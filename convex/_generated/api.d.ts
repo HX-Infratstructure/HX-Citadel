@@ -10,6 +10,7 @@
 
 import type * as activity from "../activity.js";
 import type * as admin from "../admin.js";
+import type * as agentApi from "../agentApi.js";
 import type * as attachments from "../attachments.js";
 import type * as comments from "../comments.js";
 import type * as crons from "../crons.js";
@@ -22,8 +23,10 @@ import type * as lib_activity from "../lib/activity.js";
 import type * as lib_agents from "../lib/agents.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_customFunctions from "../lib/customFunctions.js";
+import type * as lib_httpApi from "../lib/httpApi.js";
 import type * as lib_issueCleanup from "../lib/issueCleanup.js";
 import type * as lib_mirror from "../lib/mirror.js";
+import type * as lib_orgScope from "../lib/orgScope.js";
 import type * as lib_rules_doneGate from "../lib/rules/doneGate.js";
 import type * as lib_rules_levels from "../lib/rules/levels.js";
 import type * as lib_rules_testing from "../lib/rules/testing.js";
@@ -48,6 +51,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   activity: typeof activity;
   admin: typeof admin;
+  agentApi: typeof agentApi;
   attachments: typeof attachments;
   comments: typeof comments;
   crons: typeof crons;
@@ -60,8 +64,10 @@ declare const fullApi: ApiFromModules<{
   "lib/agents": typeof lib_agents;
   "lib/auth": typeof lib_auth;
   "lib/customFunctions": typeof lib_customFunctions;
+  "lib/httpApi": typeof lib_httpApi;
   "lib/issueCleanup": typeof lib_issueCleanup;
   "lib/mirror": typeof lib_mirror;
+  "lib/orgScope": typeof lib_orgScope;
   "lib/rules/doneGate": typeof lib_rules_doneGate;
   "lib/rules/levels": typeof lib_rules_levels;
   "lib/rules/testing": typeof lib_rules_testing;

@@ -1,7 +1,8 @@
-import { httpRouter } from "convex/server";
+import { FunctionArgs, httpRouter } from "convex/server";
 import { Webhook } from "svix";
 import { internal } from "./_generated/api";
-import { httpAction } from "./_generated/server";
+import { ActionCtx, httpAction } from "./_generated/server";
+import { agentRoute, json, readJsonObject } from "./lib/httpApi";
 
 const http = httpRouter();
 
@@ -50,5 +51,23 @@ http.route({
     return new Response(null, { status: 200 });
   }),
 });
+
+const ISSUES_PATH = "/api/v1/issues";
+
+/** POST /api/v1/issues: the internal mutation's validators parse the body. */
+async function createIssueRoute(ctx: ActionCtx, request: Request, agentName: string): Promise<Response> {
+  const body = await readJsonObject(request);
+  const args = { ...body, agentName } as FunctionArgs<typeof internal.agentApi.createIssue>;
+  return json(201, await ctx.runMutation(internal.agentApi.createIssue, args));
+}
+
+/** GET /api/v1/issues/{key}: a story or sub-task by its display key. */
+async function getIssueRoute(ctx: ActionCtx, request: Request, agentName: string): Promise<Response> {
+  const key = decodeURIComponent(new URL(request.url).pathname.slice(ISSUES_PATH.length + 1));
+  return json(200, await ctx.runQuery(internal.agentApi.getIssue, { agentName, key }));
+}
+
+http.route({ path: ISSUES_PATH, method: "POST", handler: agentRoute(createIssueRoute) });
+http.route({ pathPrefix: `${ISSUES_PATH}/`, method: "GET", handler: agentRoute(getIssueRoute) });
 
 export default http;
