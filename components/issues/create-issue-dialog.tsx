@@ -69,7 +69,10 @@ export function CreateIssueDialog({
   const [submitting, setSubmitting] = useState(false);
   const inFlight = useRef(false);
   const session = useRef(0);
+  // Fall back to the default/first team without needing an effect.
+  const teamId = selectedTeamId ?? defaultTeamId ?? teams?.[0]?._id;
   const draft: IssueDraft = {
+    teamId,
     title,
     description,
     status,
@@ -90,8 +93,6 @@ export function CreateIssueDialog({
     currentDraft.current = draft;
   });
 
-  // Fall back to the default/first team without needing an effect.
-  const teamId = selectedTeamId ?? defaultTeamId ?? teams?.[0]?._id;
   const offeredStatuses = statusesFor(STATUSES, level.kind);
   const canSubmit =
     Boolean(teamId) && title.trim() !== "" && missingPlacement(level) === null;
@@ -104,16 +105,16 @@ export function CreateIssueDialog({
   };
 
   const handleSubmit = async () => {
-    if (!teamId || !canSubmit || inFlight.current) {
+    const { teamId: submittedTeamId, level: submittedLevel, ...fields } = draft;
+    if (!submittedTeamId || !canSubmit || inFlight.current) {
       return;
     }
     inFlight.current = true;
     setSubmitting(true);
     const submittedIn = session.current;
-    const { level: submittedLevel, ...fields } = draft;
     try {
       const issueId = await createIssue({
-        teamId,
+        teamId: submittedTeamId,
         ...fields,
         description: fields.description.trim() || undefined,
         ...submittedLevel,

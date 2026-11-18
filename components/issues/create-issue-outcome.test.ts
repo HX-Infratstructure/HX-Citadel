@@ -3,6 +3,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { createIssueOutcome, IssueDraft } from "./create-issue-outcome";
 
 const submitted: IssueDraft = {
+  teamId: "team1" as Id<"teams">,
   title: "Fix login",
   description: "",
   status: "todo",
@@ -27,6 +28,23 @@ describe("createIssueOutcome", () => {
     expect(createIssueOutcome(false, submitted, { ...submitted, title: "Another issue" })).toBe(
       "keep"
     );
+  });
+
+  test("a stale success keeps a new team", () => {
+    expect(
+      createIssueOutcome(false, submitted, { ...submitted, teamId: "team2" as Id<"teams"> })
+    ).toBe("keep");
+  });
+
+  test("a stale success keeps a field the submitted draft did not carry", () => {
+    const noPlacement = { kind: "story", type: "story" } as IssueDraft["level"];
+    expect(
+      createIssueOutcome(
+        false,
+        { ...submitted, level: noPlacement },
+        { ...submitted, level: { ...noPlacement, parentIssueId: "issue1" as Id<"issues"> } }
+      )
+    ).toBe("keep");
   });
 
   test.each([

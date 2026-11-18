@@ -1,10 +1,12 @@
 import type { IssuePriority, IssueStatus } from "@/components/shared/issue-meta";
+import type { Id } from "@/convex/_generated/dataModel";
 import type { levelFields } from "./create-issue-level";
 
 type LevelFields = ReturnType<typeof levelFields>;
 
-/** The fields a create sends, apart from the team; `level` is `levelFields()` of the choice. */
+/** The fields a create sends; `level` is `levelFields()` of the choice. */
 export type IssueDraft = {
+  teamId: Id<"teams"> | undefined;
   title: string;
   description: string;
   status: IssueStatus;
@@ -33,5 +35,6 @@ function sameDraft(a: IssueDraft, b: IssueDraft) {
 }
 
 function sameFields<T extends object>(a: T, b: T) {
-  return (Object.keys(a) as (keyof T)[]).every((key) => a[key] === b[key]);
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)] as (keyof T)[]);
+  return [...keys].every((key) => a[key] === b[key]);
 }
