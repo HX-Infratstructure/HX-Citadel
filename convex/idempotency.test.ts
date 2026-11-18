@@ -53,7 +53,7 @@ describe("Idempotency-Key", () => {
     expect(replay.status).toBe(first.status);
     expect(replay.headers.get("ETag")).toBe('"2"');
     expect(await replay.json()).toEqual(await first.json());
-    const current = await (await t.fetch("/api/v1/issues/ENG-1", { headers: { "X-Agent-Id": "cc1" } })).json();
+    const current = await (await t.fetch("/api/v1/issues/ENG-1", { headers: AGENT })).json();
     expect([current.issue.version, current.issue.status]).toEqual([3, "todo"]);
     expect(await t.run(async (ctx) => (await ctx.db.query("activity").collect()).length)).toBe(activityBefore);
   });
@@ -87,7 +87,7 @@ describe("Idempotency-Key", () => {
       status: 409,
       code: "idempotency_key_reused",
     });
-    const second = await (await t.fetch("/api/v1/issues/ENG-2", { headers: { "X-Agent-Id": "cc1" } })).json();
+    const second = await (await t.fetch("/api/v1/issues/ENG-2", { headers: AGENT })).json();
     expect([second.issue.title, second.issue.version]).toEqual(["Second", 1]);
   });
 
@@ -98,7 +98,7 @@ describe("Idempotency-Key", () => {
     const retry = await write(t, "PATCH", "/ENG-1", { title: "Renamed" }, keyed("rename", { "If-Match": "2" }));
     expect(retry.status).toBe(first.status);
     expect(await retry.json()).toEqual(await first.json());
-    const current = await (await t.fetch("/api/v1/issues/ENG-1", { headers: { "X-Agent-Id": "cc1" } })).json();
+    const current = await (await t.fetch("/api/v1/issues/ENG-1", { headers: AGENT })).json();
     expect(current.issue.version).toBe(2);
   });
 
@@ -122,7 +122,7 @@ describe("Idempotency-Key", () => {
     });
     expect(await failure(await write(t, "POST", "/ENG-1/comments", { body: "hi" }, {}))).toEqual({ status: 400, code: "idempotency_key_required" });
     expect(await failure(await write(t, "POST", "/ENG-1/subtasks", { title: "x" }, {}))).toEqual({ status: 400, code: "idempotency_key_required" });
-    const get = await t.fetch("/api/v1/issues/ENG-1", { headers: { "X-Agent-Id": "cc1" } });
+    const get = await t.fetch("/api/v1/issues/ENG-1", { headers: AGENT });
     expect(get.status).toBe(200);
     expect(await storyCount(t)).toBe(1);
   });
