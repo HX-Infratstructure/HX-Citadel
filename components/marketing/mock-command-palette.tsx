@@ -1,6 +1,5 @@
 import {
   ArrowRight,
-  Bot,
   LayoutGrid,
   Plus,
   RefreshCcw,
@@ -59,11 +58,6 @@ export function MockCommandPalette({ className }: { className?: string }) {
           icon={<LayoutGrid className="size-4" />}
           label="Open board"
           kbd="B"
-        />
-        <PaletteRow
-          icon={<Bot className="size-4" />}
-          label="Ask the agent…"
-          kbd="⌘J"
         />
       </div>
       <div className="flex h-9 items-center gap-2 border-t bg-muted/30 px-3.5 text-[11px] text-muted-foreground">

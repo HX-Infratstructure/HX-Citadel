@@ -19,7 +19,7 @@ const TESTIMONIALS: {
   },
   {
     quote:
-      "The cycle reports the agent writes are better than the ones I used to write. I checked. Twice.",
+      "Our cycle reviews take ten minutes now. Everyone sees what slipped and why. Nobody argues about it.",
     name: "Theo Park",
     role: "Engineering Lead",
     company: "Aperture",

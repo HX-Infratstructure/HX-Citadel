@@ -9,7 +9,6 @@ const COLUMNS: {
     links: [
       { label: "Issues", href: "/#issues" },
       { label: "Board & Cycles", href: "/#cycles" },
-      { label: "AI Agent", href: "/#ai" },
       { label: "Keyboard-first", href: "/#keyboard" },
       { label: "Pricing", href: "/pricing" },
     ],
@@ -38,8 +37,7 @@ export function Footer() {
             </Link>
             <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
               The issue tracker built for speed. Plan, track, and ship with
-              your whole team — and an AI agent — in one keyboard-first
-              workspace.
+              your whole team in one keyboard-first workspace.
             </p>
           </div>
           <div className="grid grid-cols-2 gap-10 sm:gap-16">

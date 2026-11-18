@@ -6,7 +6,7 @@ import type {
 /**
  * Static sample data for the marketing product mocks. Kept in one place so
  * the mocks stay consistent (same people, labels, and issue identifiers
- * across the hero, board, cycle, and AI sections).
+ * across the hero, board, and cycle sections).
  */
 
 export type MockLabel = { name: string; color: string };
@@ -67,7 +67,7 @@ export const HERO_ISSUE_GROUPS: {
       },
       {
         id: "ENG-135",
-        title: "Stream agent tool calls into the activity feed",
+        title: "Show cycle progress in the sidebar",
         status: "in_progress",
         priority: "medium",
         assignee: MOCK_PEOPLE.ivy,

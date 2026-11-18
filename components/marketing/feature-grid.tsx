@@ -52,7 +52,7 @@ export function FeatureGrid() {
   return (
     <Section>
       <SectionHeading
-        eyebrow="05 · Everything else"
+        eyebrow="04 · Everything else"
         title="All the table stakes, none of the bloat"
         lede="The features you expect from a serious tracker — built in, fast, and out of your way."
         align="center"

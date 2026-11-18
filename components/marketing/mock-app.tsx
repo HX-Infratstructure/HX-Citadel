@@ -1,5 +1,4 @@
 import {
-  Bot,
   Box,
   ChevronDown,
   Inbox,
@@ -91,7 +90,6 @@ function MockSidebar() {
         </p>
         <SidebarItem icon={<Target className="size-3.5" />} label="Projects" />
         <SidebarItem icon={<RefreshCcw className="size-3.5" />} label="Cycles" />
-        <SidebarItem icon={<Bot className="size-3.5" />} label="AI Agent" badge="Pro" />
         <p className="mt-3 mb-1 px-2 text-[10px] font-medium tracking-wider uppercase">
           Teams
         </p>

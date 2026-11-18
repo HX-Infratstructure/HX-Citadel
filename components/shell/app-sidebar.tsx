@@ -3,7 +3,6 @@
 import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
 import { useQuery } from "convex/react";
 import {
-  Bot,
   Box,
   ChevronDown,
   Plus,
@@ -110,7 +109,7 @@ export function AppSidebar() {
           <NavLink href={base} exact icon={<Box className="size-4" />}>
             Workspace
           </NavLink>
-          {/* Track B adds /projects + /cycles nav; Track D adds /ai nav */}
+          {/* Track B adds /projects + /cycles nav */}
           <NavLink href={`${base}/projects`} icon={<Box className="size-4" />}>
             Projects
           </NavLink>
@@ -119,9 +118,6 @@ export function AppSidebar() {
             icon={<RefreshCcw className="size-4" />}
           >
             Cycles
-          </NavLink>
-          <NavLink href={`${base}/ai`} icon={<Bot className="size-4" />}>
-            AI Agent
           </NavLink>
         </nav>
 

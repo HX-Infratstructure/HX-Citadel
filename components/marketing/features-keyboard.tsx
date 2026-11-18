@@ -8,7 +8,6 @@ const SHORTCUTS: { keys: string[]; label: string }[] = [
   { keys: ["A"], label: "Assign" },
   { keys: ["L"], label: "Add label" },
   { keys: ["B"], label: "Open board" },
-  { keys: ["⌘", "J"], label: "Ask the agent" },
 ];
 
 export function FeaturesKeyboard() {
@@ -17,7 +16,7 @@ export function FeaturesKeyboard() {
       <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-16">
         <div>
           <SectionHeading
-            eyebrow="04 · Keyboard-first"
+            eyebrow="03 · Keyboard-first"
             title="Your hands never leave the keyboard"
             lede="Everything in Vector is a command. One palette, single-key shortcuts, and zero context switches between thinking and doing."
           />

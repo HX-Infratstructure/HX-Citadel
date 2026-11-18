@@ -68,7 +68,3 @@ export async function assertUnderSeatLimit(
     );
   }
 }
-
-export function hasAiAccess(org: Doc<"organizations">): boolean {
-  return isPaidPlan(org);
-}
