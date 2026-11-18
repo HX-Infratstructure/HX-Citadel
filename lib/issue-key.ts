@@ -60,24 +60,6 @@ export type KeyedIssue = {
   subNumber?: number;
 };
 
-function storyKey(teamKey: string, number: number | undefined): string | null {
-  if (number === undefined) {
-    return null;
-  }
-  return `${teamKey}-${number}`;
-}
-
-function subtaskKey(
-  teamKey: string,
-  parentNumber: number | undefined,
-  subNumber: number | undefined
-): string | null {
-  if (parentNumber === undefined || subNumber === undefined) {
-    return null;
-  }
-  return `${teamKey}-${parentNumber}.${subNumber}`;
-}
-
 const HAS_DISPLAY_KEY: Record<IssueKind, boolean> = {
   epic: false,
   feature: false,
@@ -98,9 +80,11 @@ export function formatIssueKey(
 ): string | null {
   switch (issue.kind) {
     case "story":
-      return storyKey(teamKey, issue.number);
+      return issue.number === undefined ? null : formatParsedKey({ teamKey, number: issue.number });
     case "subtask":
-      return subtaskKey(teamKey, parentNumber, issue.subNumber);
+      return parentNumber === undefined || issue.subNumber === undefined
+        ? null
+        : formatParsedKey({ teamKey, number: parentNumber, subNumber: issue.subNumber });
     default:
       return null;
   }
@@ -139,7 +123,7 @@ export type ParsedIssueKey = { teamKey: string; number: number; subNumber?: numb
 
 const ISSUE_KEY = new RegExp(`^(${TEAM_KEY_PATTERN})-(\\d+)(?:\\.(\\d+))?$`, "i");
 
-/** The inverse of formatIssueKey: KEY-12 or KEY-12.3, else null. */
+/** Reads KEY-12 or KEY-12.3, in any case, with leading zeros, and with whitespace around it; else null. */
 export function parseIssueKey(key: string): ParsedIssueKey | null {
   const match = ISSUE_KEY.exec(key.trim());
   if (match === null) {
@@ -152,10 +136,7 @@ export function parseIssueKey(key: string): ParsedIssueKey | null {
   return parsed;
 }
 
-/** The inverse of parseIssueKey, written as formatIssueKey writes the same issue's key. */
-export function formatParsedKey({ teamKey, number, subNumber }: ParsedIssueKey): string | null {
-  if (subNumber === undefined) {
-    return storyKey(teamKey, number);
-  }
-  return subtaskKey(teamKey, number, subNumber);
+/** KEY-12, or KEY-12.3 with a sub-number: the one place an issue key is written. */
+export function formatParsedKey({ teamKey, number, subNumber }: ParsedIssueKey): string {
+  return subNumber === undefined ? `${teamKey}-${number}` : `${teamKey}-${number}.${subNumber}`;
 }
