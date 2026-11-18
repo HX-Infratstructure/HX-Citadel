@@ -4,7 +4,7 @@ This guide shows agents, CC1, CC2, and the owner how to read and write HX-Citade
 
 ## Pick an agent name
 
-An agent has no key. It sends its name in the `X-Agent-Id` header on every call (`AGENT_HEADER` in `lib/api-contract.ts`, `readAgentId` in `convex/lib/httpApi.ts`). The server does not authenticate the caller: any caller that names an agent in `X-Agent-Id` acts as that agent. The network is the only boundary. The REST and MCP addresses in [Choose one of three ways in](#choose-one-of-three-ways-in) are reachable on the HX LAN only. Name-only identity is the owner's design for DEV/TEST work, which has no security hardening.
+An agent has no key. It sends its name in the `X-Agent-Id` header on every call (`AGENT_HEADER` in `lib/api-contract.ts`, `readAgentId` in `convex/lib/httpApi.ts`). The server does not authenticate the caller: any caller that names an agent in `X-Agent-Id` acts as that agent. The network is the only boundary. The REST and MCP addresses in [Choose one of three ways in](#choose-one-of-three-ways-in) are private HX LAN addresses (`192.168.50.0/24`), and nothing in this repo limits which host calls them. Name-only identity follows the owner's rule for this DEV/TEST tracker, set on 2026-11-18: no security hardening.
 
 - The name is trimmed and lower-cased. It must match `AGENT_NAME` in `convex/lib/agents.ts`: 1 to 64 characters from `a-z`, `0-9`, `.`, `_`, and `-`.
 - The first write creates the agent as a member of the HX workspace (`resolveAgentScope` in `convex/lib/orgScope.ts`, `ensureAgent` in `convex/lib/agents.ts`). A read checks the name but creates nothing.
