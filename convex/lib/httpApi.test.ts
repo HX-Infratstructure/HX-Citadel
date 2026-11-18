@@ -50,6 +50,16 @@ describe("toHttpError", () => {
     expect(toHttpError(wrapped).body).toEqual({ code: "rule_refused", message: "Cannot close: tests pending" });
   });
 
+  test("a rule refusal thrown inside the HTTP action carries the rule's message without the thrown-line prefix", () => {
+    const thrown = new Error(
+      "Uncaught Error: live-check already has LCK-7 In Progress; move it to In Review or Done first\n    at assertWip (../convex/lib/rules/wip.ts:1:1)\n"
+    );
+    expect(toHttpError(thrown)).toEqual({
+      status: 409,
+      body: { code: "rule_refused", message: "live-check already has LCK-7 In Progress; move it to In Review or Done first" },
+    });
+  });
+
   test("a missing or unmatched workspace setting maps to 500 server_error", () => {
     expect(toHttpError(new Error("HX_WORKSPACE_ORG_ID is not configured"))).toMatchObject({
       status: 500,

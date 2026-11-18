@@ -31,6 +31,23 @@ describe("errorMessage", () => {
       convexServerError("[Request ID: 1a2b] Server Error"),
       "Failed to move issue",
     ],
+    [
+      "a thrown line raised inside an HTTP action, without its prefix and stack",
+      new Error(
+        "Uncaught Error: Can't move LCK-7 to Done: open — LCK-7.1 Complete testing (no proof link)\n    at assertDoneGate (../convex/lib/rules/doneGate.ts:70:10)\n"
+      ),
+      "Can't move LCK-7 to Done: open — LCK-7.1 Complete testing (no proof link)",
+    ],
+    [
+      "a bare thrown line raised inside an HTTP action, without its prefix",
+      new Error("Uncaught Error: live-check already has LCK-7 In Progress; move it to In Review or Done first"),
+      "live-check already has LCK-7 In Progress; move it to In Review or Done first",
+    ],
+    [
+      "a thrown line raised inside an HTTP action with an empty message, the fallback",
+      new Error("Uncaught Error: \n    at handler (../convex/issues.ts:1:1)\n"),
+      "Failed to move issue",
+    ],
     ["a plain error, as is", new Error("Team not found"), "Team not found"],
     [
       "a plain error that quotes a thrown line, as is",
