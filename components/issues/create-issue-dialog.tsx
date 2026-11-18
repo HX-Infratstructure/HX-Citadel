@@ -5,7 +5,7 @@ import { statusesFor } from "@/lib/issue-status";
 import { missingPlacement } from "@/lib/level-placement";
 import { useMutation, useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
@@ -39,6 +39,11 @@ import {
   LevelPickers,
   levelFields,
 } from "@/components/issues/create-issue-level";
+import {
+  createIssueOutcome,
+  fallbackTeamId,
+  IssueDraft,
+} from "@/components/issues/create-issue-outcome";
 
 export function CreateIssueDialog({
   open,
@@ -57,6 +62,9 @@ export function CreateIssueDialog({
   const [selectedTeamId, setSelectedTeamId] = useState<
     Id<"teams"> | undefined
   >(undefined);
+  const [rememberedFallback, setRememberedFallback] = useState<
+    Id<"teams"> | undefined
+  >(undefined);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<IssueStatus>("todo");
@@ -65,13 +73,35 @@ export function CreateIssueDialog({
   const [submitting, setSubmitting] = useState(false);
   const inFlight = useRef(false);
   const session = useRef(0);
+  // Closing skips the teams query; remembering the fallback keeps a pending
+  // create's committed draft on the team it was submitted with.
+  const fallback = fallbackTeamId(teams, rememberedFallback);
+  if (fallback !== rememberedFallback) {
+    setRememberedFallback(fallback);
+  }
+  const teamId = selectedTeamId ?? defaultTeamId ?? fallback;
+  const draft: IssueDraft = {
+    teamId,
+    title,
+    description,
+    status,
+    priority,
+    level: levelFields(level),
+  };
+  // handleSubmit closes over the draft it submitted; the resolved create compares
+  // it with this latest committed draft to tell whether the user changed the form.
+  const currentDraft = useRef(draft);
 
   useEffect(() => {
     session.current += 1;
   }, [open]);
 
-  // Fall back to the default/first team without needing an effect.
-  const teamId = selectedTeamId ?? defaultTeamId ?? teams?.[0]?._id;
+  // A layout effect runs during commit, so the ref never lags a rendered edit
+  // when the create resolves before passive effects flush.
+  useLayoutEffect(() => {
+    currentDraft.current = draft;
+  });
+
   const offeredStatuses = statusesFor(STATUSES, level.kind);
   const canSubmit =
     Boolean(teamId) && title.trim() !== "" && missingPlacement(level) === null;
@@ -84,7 +114,8 @@ export function CreateIssueDialog({
   };
 
   const handleSubmit = async () => {
-    if (!teamId || !canSubmit || inFlight.current) {
+    const { teamId: submittedTeamId, level: submittedLevel, ...fields } = draft;
+    if (!submittedTeamId || !canSubmit || inFlight.current) {
       return;
     }
     inFlight.current = true;
@@ -92,20 +123,26 @@ export function CreateIssueDialog({
     const submittedIn = session.current;
     try {
       const issueId = await createIssue({
-        teamId,
-        title,
-        description: description.trim() || undefined,
-        status,
-        priority,
-        ...levelFields(level),
+        teamId: submittedTeamId,
+        ...fields,
+        description: fields.description.trim() || undefined,
+        ...submittedLevel,
       });
       toast.success("Issue created");
+      const outcome = createIssueOutcome(
+        submittedIn === session.current,
+        draft,
+        currentDraft.current
+      );
+      if (outcome === "keep") {
+        return;
+      }
       setTitle("");
       setDescription("");
       setStatus("todo");
       setPriority("none");
       setLevel(DEFAULT_LEVEL);
-      if (submittedIn !== session.current) {
+      if (outcome === "clear") {
         return;
       }
       onOpenChange(false);

@@ -23,11 +23,14 @@ export function TestingProof({ issue }: { issue: Doc<"issues"> }) {
     if (draft === null) {
       return;
     }
-    const proofUrl = proofToSend(draft, savedUrl, inFlightUrl.current);
-    if (proofUrl === null) {
+    const blur = proofToSend(draft, savedUrl, inFlightUrl.current);
+    if (blur.kind === "saved") {
       setDraft(null);
+    }
+    if (blur.kind !== "send") {
       return;
     }
+    const { proofUrl } = blur;
     inFlightUrl.current = proofUrl;
     setProof({ issueId: issue._id, proofUrl })
       .then(() => setDraft((current) => (current === draft ? null : current)))
