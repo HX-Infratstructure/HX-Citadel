@@ -60,4 +60,11 @@ describe("CitadelApi", () => {
     expect(textOf(result).message).toMatch(/NEXT_PUBLIC_CONVEX_SITE_URL/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("uses a base URL given to the constructor instead of the environment", async () => {
+    const fetchMock = stubFetch(200, { issue: { key: "HX-1" } });
+    await new CitadelApi("cc1", "http://cli.test:3211").get(issuePath("HX-1"));
+
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe("http://cli.test:3211/api/v1/issues/HX-1");
+  });
 });

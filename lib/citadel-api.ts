@@ -3,7 +3,7 @@ import { AGENT_HEADER, type ErrorBody, ISSUES_PATH, type IssueAction } from "../
 import { IDEMPOTENCY_HEADER } from "../convex/lib/idempotency";
 import { errorMessage } from "./error-message";
 
-const SITE_URL_ENV = "NEXT_PUBLIC_CONVEX_SITE_URL";
+export const SITE_URL_ENV = "NEXT_PUBLIC_CONVEX_SITE_URL";
 
 /** A refusal with the REST API's `{code, message}`. */
 export class CitadelApiError extends Error {
@@ -24,9 +24,12 @@ export function issuePath(key?: string, action?: IssueAction): string {
   return segments.map((segment, index) => (index === 0 ? segment : encodeURIComponent(segment))).join("/");
 }
 
-/** The HX-Citadel REST API (`/api/v1`) as one agent, over HTTP. */
+/** The HX-Citadel REST API (`/api/v1`) as one agent, over HTTP; the base URL defaults to `NEXT_PUBLIC_CONVEX_SITE_URL`. */
 export class CitadelApi {
-  constructor(private readonly agentId: string) {}
+  constructor(
+    private readonly agentId: string,
+    private readonly baseUrl?: string
+  ) {}
 
   get(path: string, query: Query = {}): Promise<ApiBody> {
     return this.send("GET", path, query, {});
@@ -41,7 +44,7 @@ export class CitadelApi {
   }
 
   private async send(method: string, path: string, query: Query, headers: Record<string, string>, body?: string): Promise<ApiBody> {
-    const url = new URL(path, siteUrl());
+    const url = new URL(path, this.baseUrl ?? siteUrl());
     for (const [name, value] of Object.entries(query)) {
       if (value !== undefined) {
         url.searchParams.set(name, value);
