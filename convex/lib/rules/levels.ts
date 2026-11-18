@@ -1,6 +1,7 @@
 import { Doc, Id } from "../../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../../_generated/server";
 import { IssueKind, PARENT_KIND } from "../../../lib/issue-key";
+import { ActivityActor, changedFields, logFieldChanges } from "../activity";
 
 type Placement = {
   teamId: Id<"teams">;
@@ -149,11 +150,14 @@ async function descendants(
 export async function cascadeProject(
   ctx: { db: MutationCtx["db"] },
   rootId: Id<"issues">,
-  projectId: Id<"projects"> | undefined
+  projectId: Id<"projects"> | undefined,
+  actor: ActivityActor
 ): Promise<void> {
   for (const descendant of await descendants(ctx, rootId)) {
-    if (descendant.projectId !== projectId) {
+    const changes = changedFields(descendant, { projectId });
+    if (changes.length > 0) {
       await ctx.db.patch(descendant._id, { projectId });
+      await logFieldChanges(ctx, actor, descendant._id, changes);
     }
   }
 }

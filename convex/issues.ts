@@ -1,7 +1,8 @@
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
-import { logActivity } from "./lib/activity";
+import { formatIssueKey } from "../lib/issue-key";
+import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { assertDoneGate, assertDoneGateAfterUpdate } from "./lib/rules/doneGate";
 import {
@@ -234,36 +235,23 @@ export const update = orgMutation({
   handler: async (ctx, args) => {
     const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
 
+    const actor = { orgId: ctx.org._id, actorId: ctx.user._id };
     const updates: Partial<Doc<"issues">> = {};
-    const changes: { field: string; oldValue?: string; newValue?: string }[] =
-      [];
 
     if (args.title !== undefined && args.title !== issue.title) {
       updates.title = args.title.trim();
-      changes.push({ field: "title", oldValue: issue.title, newValue: args.title });
     }
     if (args.description !== undefined) {
       updates.description = args.description;
     }
     if (args.status !== undefined && args.status !== issue.status) {
       updates.status = args.status;
-      changes.push({ field: "status", oldValue: issue.status, newValue: args.status });
     }
     if (args.priority !== undefined && args.priority !== issue.priority) {
       updates.priority = args.priority;
-      changes.push({
-        field: "priority",
-        oldValue: issue.priority,
-        newValue: args.priority,
-      });
     }
     if (args.assigneeId !== undefined) {
       updates.assigneeId = args.assigneeId ?? undefined;
-      changes.push({
-        field: "assignee",
-        oldValue: issue.assigneeId,
-        newValue: args.assigneeId ?? undefined,
-      });
     }
     if (args.projectId !== undefined) {
       const placement = await assertValidParent(ctx, issue.kind, {
@@ -272,7 +260,7 @@ export const update = orgMutation({
         projectId: args.projectId ?? undefined,
       });
       updates.projectId = placement.projectId;
-      await cascadeProject(ctx, issue._id, placement.projectId);
+      await cascadeProject(ctx, issue._id, placement.projectId, actor);
     }
     if (args.cycleId !== undefined) {
       updates.cycleId = args.cycleId ?? undefined;
@@ -290,18 +278,7 @@ export const update = orgMutation({
     await assertWipFreeAfterUpdate(ctx, issue, updates);
     await assertDoneGateAfterUpdate(ctx, issue, updates);
     await ctx.db.patch(issue._id, updates);
-
-    for (const change of changes) {
-      await logActivity(ctx, {
-        orgId: ctx.org._id,
-        issueId: issue._id,
-        actorId: ctx.user._id,
-        type: `${change.field}_changed`,
-        field: change.field,
-        oldValue: change.oldValue,
-        newValue: change.newValue,
-      });
-    }
+    await logFieldChanges(ctx, actor, issue._id, changedFields(issue, updates));
     return null;
   },
 });
@@ -332,6 +309,33 @@ async function deleteStorySubtasks(ctx: MutationCtx, story: Doc<"issues">): Prom
   }
 }
 
+/** "KEY-12.2 Write API" for keyed levels, the title alone for epics and features. */
+async function keyedTitle(ctx: MutationCtx, issue: Doc<"issues">): Promise<string> {
+  const team = await ctx.db.get(issue.teamId);
+  const parent = issue.parentIssueId ? await ctx.db.get(issue.parentIssueId) : null;
+  const key = team ? formatIssueKey(team.key, issue, parent?.number) : null;
+  return key ? `${key} ${issue.title}` : issue.title;
+}
+
+/** A deleted issue's rows go with it, so the deletion is logged on the surviving parent. */
+async function logChildDeleted(
+  ctx: MutationCtx,
+  child: Doc<"issues">,
+  actorId: Id<"users">
+): Promise<void> {
+  if (!child.parentIssueId) {
+    return;
+  }
+  await logActivity(ctx, {
+    orgId: child.orgId,
+    issueId: child.parentIssueId,
+    actorId,
+    type: "child_deleted",
+    field: "child",
+    oldValue: await keyedTitle(ctx, child),
+  });
+}
+
 export const remove = orgMutation({
   args: { issueId: v.id("issues") },
   returns: v.null(),
@@ -340,9 +344,30 @@ export const remove = orgMutation({
     assertNotTestingSubtask(issue, "deleted");
     await deleteStorySubtasks(ctx, issue);
     await deleteIssueRow(ctx, issue._id);
+    await logChildDeleted(ctx, issue, ctx.user._id);
     return null;
   },
 });
+
+async function logProofChange(
+  ctx: MutationCtx,
+  issue: Doc<"issues">,
+  proofUrl: string,
+  actorId: Id<"users">
+): Promise<void> {
+  if (proofUrl === (issue.proofUrl ?? "")) {
+    return;
+  }
+  await logActivity(ctx, {
+    orgId: issue.orgId,
+    issueId: issue._id,
+    actorId,
+    type: proofUrl === "" ? "proof_cleared" : "proof_set",
+    field: "proof",
+    oldValue: issue.proofUrl,
+    newValue: proofUrl || undefined,
+  });
+}
 
 /** Sets or clears (empty string) the proof URL on a Complete testing sub-task. */
 export const setProof = orgMutation({
@@ -356,6 +381,7 @@ export const setProof = orgMutation({
       assertProofUrl(proofUrl);
     }
     await ctx.db.patch(issue._id, { proofUrl: proofUrl || undefined });
+    await logProofChange(ctx, issue, proofUrl, ctx.user._id);
     return null;
   },
 });

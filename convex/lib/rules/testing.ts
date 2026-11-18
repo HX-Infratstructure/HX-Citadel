@@ -1,5 +1,6 @@
 import { Doc, Id } from "../../_generated/dataModel";
 import { MutationCtx } from "../../_generated/server";
+import { logActivity } from "../activity";
 import { nextSubNumber } from "./levels";
 
 export const TESTING_SUBTASK_TITLE = "Complete testing";
@@ -8,12 +9,12 @@ type GuardedAction = "deleted" | "moved";
 
 const PROOF_PROTOCOLS = new Set(["http:", "https:"]);
 
-/** Every new story starts with its Complete testing sub-task, KEY-n.1. */
+/** Every new story starts with its Complete testing sub-task, KEY-n.1, logged as created by the story's creator. */
 export async function createTestingSubtask(
   ctx: MutationCtx,
   story: Doc<"issues">
 ): Promise<Id<"issues">> {
-  return await ctx.db.insert("issues", {
+  const subtaskId = await ctx.db.insert("issues", {
     orgId: story.orgId,
     teamId: story.teamId,
     kind: "subtask",
@@ -28,6 +29,13 @@ export async function createTestingSubtask(
     parentIssueId: story._id,
     sortOrder: story.sortOrder,
   });
+  await logActivity(ctx, {
+    orgId: story.orgId,
+    issueId: subtaskId,
+    actorId: story.creatorId,
+    type: "created",
+  });
+  return subtaskId;
 }
 
 export function assertNotTestingSubtask(issue: Doc<"issues">, action: GuardedAction): void {

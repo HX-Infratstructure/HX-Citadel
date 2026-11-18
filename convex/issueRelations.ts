@@ -3,7 +3,7 @@ import { formatIssueKey } from "../lib/issue-key";
 import { Doc, Id } from "./_generated/dataModel";
 import { QueryCtx } from "./_generated/server";
 import { getOrgIssue } from "./issues";
-import { logActivity } from "./lib/activity";
+import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import {
   assertValidParent,
@@ -375,12 +375,15 @@ export const setParent = orgMutation({
       }
     }
 
-    await ctx.db.patch(issue._id, {
+    const moved = {
       parentIssueId: args.parentIssueId ?? undefined,
       projectId: placement.projectId,
       ...(await renumberedSubtask(ctx, issue.kind, args.parentIssueId)),
-    });
-    await cascadeProject(ctx, issue._id, placement.projectId);
+    };
+    const actor = { orgId: ctx.org._id, actorId: ctx.user._id };
+    await ctx.db.patch(issue._id, moved);
+    await logFieldChanges(ctx, actor, issue._id, changedFields(issue, moved));
+    await cascadeProject(ctx, issue._id, placement.projectId, actor);
 
     await logActivity(ctx, {
       orgId: ctx.org._id,

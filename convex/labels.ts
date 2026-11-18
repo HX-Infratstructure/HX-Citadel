@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { getOrgIssue } from "./issues";
+import { logActivity } from "./lib/activity";
 
 const labelShape = {
   _id: v.id("labels"),
@@ -69,14 +70,22 @@ export const toggleOnIssue = orgMutation({
       .collect();
     const existing = links.find((l) => l.labelId === args.labelId);
 
+    const entry = {
+      orgId: ctx.org._id,
+      issueId: args.issueId,
+      actorId: ctx.user._id,
+      field: "label",
+    };
     if (existing) {
       await ctx.db.delete(existing._id);
+      await logActivity(ctx, { ...entry, type: "label_removed", oldValue: label.name });
       return false;
     }
     await ctx.db.insert("issueLabels", {
       issueId: args.issueId,
       labelId: args.labelId,
     });
+    await logActivity(ctx, { ...entry, type: "label_added", newValue: label.name });
     return true;
   },
 });
