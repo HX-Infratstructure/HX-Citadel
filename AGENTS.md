@@ -52,6 +52,12 @@ The owner set these rules on 2026-11-17.
 - pnpm is pinned by `packageManager` in `package.json`. Add no pnpm release-age exclusions.
 - Demo data is dev-only. Seed an empty development workspace with `pnpm seed:demo '{"clerkOrgId":"…","clerkUserId":"…"}'` (`convex/seed.ts`). Never seed from the UI or from a build or deploy.
 
+### Clear test data
+
+- After a live gate, clear test data one team at a time with `admin:clearTeamContent` (`convex/admin.ts`), with `convex-admin.env` loaded: `npx convex run admin:clearTeamContent '{"clerkOrgId":"…","teamKey":"…"}'`. It deletes the team's issues, their owned rows, its cycles, and the team itself.
+- Never run `admin:clearOrgContent` once real work exists. It deletes the content of the whole workspace.
+- Keep the `LCK` team. `pnpm live-check -- --team LCK` uses it (`docs/AGENT-API.md`). Clearing `LCK` deletes it, so create it again before the next check.
+
 ## Verifying your work
 
 ```bash

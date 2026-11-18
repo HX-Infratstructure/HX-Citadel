@@ -28,9 +28,10 @@ The workspace routes live under `app/(app)/[orgSlug]/`:
 
 ## Where it runs
 
-- Convex runs self-hosted as the `hx-convex` systemd service on HX-18. The API is on port 3210 and HTTP actions are on port 3211. The data is in PostgreSQL on HX-9.
-- The app runs on HX-15.
-- The production service `hx-citadel` on HX-15, behind HX-7 on port 8460, is planned for step P1.4. It is not live yet.
+- Convex runs self-hosted as the `hx-convex` systemd service on HX-18. The client API is on port 3210. The HTTP actions, including the REST API, are on port 3211. The data is in PostgreSQL on HX-9.
+- The `hx-citadel` systemd user service on HX-15 serves the app on `192.168.50.215:5460`.
+- HX-7 routes `http://192.168.50.207:8460` to the app.
+- Each release is checked live with a request to port 8460 and a request to port 3211.
 - Nothing runs in Docker.
 
 ## Settings
@@ -61,6 +62,9 @@ The code reads these variables:
 | `CLERK_WEBHOOK_SECRET` | `convex/http.ts` |
 | `CLERK_FRONTEND_API_URL` | `convex/auth.config.ts` |
 | `CONVEX_SELF_HOSTED_URL` and `CONVEX_SELF_HOSTED_ADMIN_KEY` | The Convex CLI |
+| `HX_WORKSPACE_ORG_ID` | `convex/lib/orgScope.ts`, on the Convex deployment. It pins the workspace for agent calls. |
+| `HX_CITADEL_API` and `HX_CITADEL_AGENT` | The CLI (`cli/commands.ts`): the REST base URL and the agent name |
+| `HX_CITADEL_APP` | The live checker (`scripts/live-check.ts`): the app URL |
 
 Convex functions read their variables from the deployment's environment. Set them with `npx convex env set`.
 
@@ -112,19 +116,29 @@ pnpm seed:demo '{"clerkOrgId":"…","clerkUserId":"…"}'
 
 Never seed from the UI, a build, or a deploy.
 
+### Agent CLI and live checker
+
+`pnpm citadel` runs the agent CLI in `cli/hx-citadel.ts`. `pnpm live-check -- --team LCK` runs the live checks in `scripts/live-check.ts`. `docs/AGENT-API.md` explains both.
+
 ## Key folders
 
 | Folder | Contents |
 | --- | --- |
 | `app/` | Routes. Workspace pages are under `app/(app)/[orgSlug]/`. Sign-in, sign-up, and onboarding are in `app/sign-in`, `app/sign-up`, and `app/onboarding`. |
 | `components/` | UI by feature. `components/ui/` holds the shadcn/ui components, `components/shared/` the shared primitives, and `components/shell/` the workspace shell. |
-| `convex/` | Schema, functions, tests, the cron, the HTTP routes, and the Clerk mirror. `convex/lib/` holds the auth wrappers and helpers. |
-| `lib/` | `workspace.ts` for the pinned workspace and `utils.ts`. |
+| `convex/` | Schema, functions, tests, the crons (an hourly Clerk mirror reconcile and an hourly idempotency-key expiry, in `convex/crons.ts`), the HTTP routes, and the Clerk mirror. `convex/lib/` holds the auth wrappers and helpers. |
+| `app/mcp/` | The MCP endpoint `/mcp` for agents. |
+| `cli/` | The agent CLI and the git pre-push hook. |
+| `scripts/` | The live checker. |
+| `lib/` | `workspace.ts` for the pinned workspace, `utils.ts`, and `citadel-api.ts`, the REST client the CLI and MCP share. |
+| `lib/mcp/` | The MCP tools. |
 | `docs/specs/` | The design doc. |
 
 ## For agents
 
 Read `AGENTS.md` before you change code. It holds the architecture rules, the code standards, and the HX operations notes.
+
+To read and write issues as an agent, through REST, MCP, or the CLI, read `docs/AGENT-API.md`.
 
 ## Credit and license
 
