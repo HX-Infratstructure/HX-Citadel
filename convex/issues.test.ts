@@ -128,7 +128,7 @@ describe("issues.create on a free organization", () => {
         .withIndex("by_team", (q) => q.eq("teamId", teamId))
         .collect()
     );
-    expect(issues).toHaveLength(101);
+    expect(issues.filter((issue) => issue.kind === "story")).toHaveLength(101);
     expect(issues.map((issue) => issue._id)).toContain(issueId);
   });
 });

@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { IssueProperties } from "@/components/issue-detail/issue-properties";
 import { IssueKey } from "@/components/issues/issue-key";
+import { TestingProof } from "@/components/issue-detail/testing-proof";
 import {
   issueDetailMainSlots,
   issueDetailSidebarSlots,
@@ -131,6 +132,7 @@ function IssueDetail({
               placeholder="Add description…"
               className="min-h-32 resize-none border-none px-0 text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
+            {issue.testing && <TestingProof issue={issue} />}
             {issueDetailMainSlots.map((Slot, index) => (
               <Slot key={index} issue={issue} team={team} />
             ))}

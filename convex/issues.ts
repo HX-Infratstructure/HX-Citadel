@@ -9,6 +9,12 @@ import {
   nextSubNumber,
 } from "./lib/rules/levels";
 import {
+  assertNotTestingSubtask,
+  assertProofUrl,
+  assertTestingSubtask,
+  createTestingSubtask,
+} from "./lib/rules/testing";
+import {
   issueKindValidator,
   issuePriorityValidator,
   issueStatusValidator,
@@ -36,6 +42,8 @@ export const issueShape = {
   estimate: v.optional(v.number()),
   dueDate: v.optional(v.number()),
   sortOrder: v.number(),
+  testing: v.optional(v.boolean()),
+  proofUrl: v.optional(v.string()),
 };
 
 /** Verify an issue belongs to the caller's org before any read/write. */
@@ -185,6 +193,10 @@ export const create = orgMutation({
       dueDate: args.dueDate,
       sortOrder,
     });
+    const created = await ctx.db.get(issueId);
+    if (created?.kind === "story") {
+      await createTestingSubtask(ctx, created);
+    }
 
     await logActivity(ctx, {
       orgId: ctx.org._id,
@@ -285,21 +297,56 @@ export const update = orgMutation({
   },
 });
 
+/** Deletes an issue and its label links. */
+async function deleteIssueRow(ctx: MutationCtx, issueId: Id<"issues">): Promise<void> {
+  const labelLinks = await ctx.db
+    .query("issueLabels")
+    .withIndex("by_issue", (q) => q.eq("issueId", issueId))
+    .collect();
+  for (const link of labelLinks) {
+    await ctx.db.delete(link._id);
+  }
+  await ctx.db.delete(issueId);
+}
+
+/** A story's subtasks go with it, the Complete testing one included. */
+async function deleteStorySubtasks(ctx: MutationCtx, story: Doc<"issues">): Promise<void> {
+  if (story.kind !== "story") {
+    return;
+  }
+  const subtasks = await ctx.db
+    .query("issues")
+    .withIndex("by_parent", (q) => q.eq("parentIssueId", story._id))
+    .collect();
+  for (const subtask of subtasks) {
+    await deleteIssueRow(ctx, subtask._id);
+  }
+}
+
 export const remove = orgMutation({
   args: { issueId: v.id("issues") },
   returns: v.null(),
   handler: async (ctx, args) => {
     const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
+    assertNotTestingSubtask(issue, "deleted");
+    await deleteStorySubtasks(ctx, issue);
+    await deleteIssueRow(ctx, issue._id);
+    return null;
+  },
+});
 
-    const labelLinks = await ctx.db
-      .query("issueLabels")
-      .withIndex("by_issue", (q) => q.eq("issueId", issue._id))
-      .collect();
-    for (const link of labelLinks) {
-      await ctx.db.delete(link._id);
+/** Sets or clears (empty string) the proof URL on a Complete testing sub-task. */
+export const setProof = orgMutation({
+  args: { issueId: v.id("issues"), proofUrl: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
+    assertTestingSubtask(issue);
+    const proofUrl = args.proofUrl.trim();
+    if (proofUrl !== "") {
+      assertProofUrl(proofUrl);
     }
-
-    await ctx.db.delete(issue._id);
+    await ctx.db.patch(issue._id, { proofUrl: proofUrl || undefined });
     return null;
   },
 });

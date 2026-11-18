@@ -79,15 +79,17 @@ export function SubIssuesPanel({ issue, team }: IssueDetailSlotProps) {
             <span className="font-mono">{hierarchy.parent.identifier}</span>
             <span className="truncate">{hierarchy.parent.title}</span>
           </Link>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={removeParent}
-            aria-label="Remove parent issue"
-            className="size-5 opacity-0 transition-opacity group-hover:opacity-100"
-          >
-            <X className="size-3" />
-          </Button>
+          {!issue.testing && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={removeParent}
+              aria-label="Remove parent issue"
+              className="size-5 opacity-0 transition-opacity group-hover:opacity-100"
+            >
+              <X className="size-3" />
+            </Button>
+          )}
         </div>
       )}
 

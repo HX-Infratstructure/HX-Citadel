@@ -10,6 +10,7 @@ import {
   cascadeProject,
   nextSubNumber,
 } from "./lib/rules/levels";
+import { assertNotTestingSubtask } from "./lib/rules/testing";
 import {
   issuePriorityValidator,
   issueRelationTypeValidator,
@@ -332,6 +333,7 @@ export const setParent = orgMutation({
     if ((issue.parentIssueId ?? null) === args.parentIssueId) {
       return null;
     }
+    assertNotTestingSubtask(issue, "moved");
     const teamCache: TeamCache = new Map();
 
     let newParentIdentifier: string | undefined;

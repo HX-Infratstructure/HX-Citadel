@@ -122,6 +122,10 @@ export default defineSchema({
     dueDate: v.optional(v.number()),
     /** Fractional ranking for board/list ordering */
     sortOrder: v.number(),
+    /** True only on a story's Complete testing sub-task */
+    testing: v.optional(v.boolean()),
+    /** Absolute http(s) proof link, Complete testing sub-task only */
+    proofUrl: v.optional(v.string()),
   })
     .index("by_org", ["orgId"])
     .index("by_team", ["teamId"])

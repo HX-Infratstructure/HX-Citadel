@@ -138,7 +138,7 @@ describe("issue levels", () => {
     await expect(create("epic")).rejects.toThrow("An epic needs a project");
   });
 
-  test("numbers a story and its subtasks, and the key helper shows KEY-n.1 and KEY-n.2", async () => {
+  test("numbers a story's subtasks after its testing subtask, and the key helper shows KEY-n.2 and KEY-n.3", async () => {
     const { asMember, create } = await setup();
     const storyId = await create("story");
     const firstId = await create("subtask", { parentIssueId: storyId });
@@ -149,10 +149,10 @@ describe("issue levels", () => {
     const second = await asMember.query(api.issues.get, { issueId: secondId });
 
     expect(story?.number).toBe(12);
-    expect([first?.subNumber, second?.subNumber]).toEqual([1, 2]);
+    expect([first?.subNumber, second?.subNumber]).toEqual([2, 3]);
     expect([first?.number, second?.number]).toEqual([undefined, undefined]);
-    expect(formatIssueKey(TEAM_KEY, first!, story!.number)).toBe("HXT-12.1");
-    expect(formatIssueKey(TEAM_KEY, second!, story!.number)).toBe("HXT-12.2");
+    expect(formatIssueKey(TEAM_KEY, first!, story!.number)).toBe("HXT-12.2");
+    expect(formatIssueKey(TEAM_KEY, second!, story!.number)).toBe("HXT-12.3");
   });
 
   test("does not spend a story number on epics, features or subtasks", async () => {
@@ -196,7 +196,7 @@ describe("issue levels", () => {
       parentIssueId: storyB,
     });
 
-    expect((await asMember.query(api.issues.get, { issueId: moving }))?.subNumber).toBe(2);
+    expect((await asMember.query(api.issues.get, { issueId: moving }))?.subNumber).toBe(3);
   });
 
   test.each([
