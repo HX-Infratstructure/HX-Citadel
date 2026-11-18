@@ -1,6 +1,6 @@
-# Vector agent guide
+# HX-Citadel agent guide
 
-Vector is the HX work tracker, a Linear-style multi-tenant app. It is built with Next.js 16 (App Router), Convex, Clerk, shadcn/ui, Tailwind 4 and pnpm.
+HX-Citadel is the HX team's work tracker for agentic and agile development, with one workspace for the HX team. It is built with Next.js 16 (App Router), Convex, Clerk, shadcn/ui, Tailwind 4 and pnpm.
 
 ## Architecture rules
 
@@ -45,7 +45,7 @@ The owner set these rules on 2026-11-17.
 
 - Convex is self-hosted on HX-18 as `hx-convex`. The API is `http://192.168.50.218:3210`, HTTP actions are on port `3211`, and the data is in HX-9 PostgreSQL.
 - Clerk is the development instance `intent-anemone-3074`, with the JWT template `convex`. The template adds the `org_id`, `org_slug` and `org_role` claims.
-- Keys live in `~/.config/hx-vector/*.env`. Never print them. Always source them with output suppressed.
+- Keys live in `~/.config/hx-citadel/*.env`. Never print them. Always source them with output suppressed.
 - Never start Next on the literal `127.0.0.1`. Use `localhost` or the LAN address.
 - pnpm is pinned by `packageManager` in `package.json`. Add no pnpm release-age exclusions.
 - Demo data is dev-only. Seed an empty development workspace with `pnpm seed:demo '{"clerkOrgId":"…","clerkUserId":"…"}'` (`convex/seed.ts`). Never seed from the UI or from a build or deploy.

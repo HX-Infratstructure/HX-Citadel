@@ -16,10 +16,10 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "HX Vector",
-    template: "%s · HX Vector",
+    default: "HX-Citadel",
+    template: "%s · HX-Citadel",
   },
-  description: "The HX team's work tracker.",
+  description: "Agentic / Agile Development",
 };
 
 export default function RootLayout({
