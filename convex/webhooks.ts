@@ -12,7 +12,7 @@ import { findOrgByClerkId, findUserByClerkId, getOrgByClerkIdOrThrow } from "./l
  * subscriptionItem.canceled) — never Stripe-style names.
  */
 
-type ClerkUserData = {
+export type ClerkUserData = {
   id: string;
   first_name?: string | null;
   last_name?: string | null;
@@ -21,14 +21,14 @@ type ClerkUserData = {
   email_addresses?: { id: string; email_address: string }[];
 };
 
-type ClerkOrgData = {
+export type ClerkOrgData = {
   id: string;
   name?: string;
   slug?: string | null;
   image_url?: string | null;
 };
 
-type ClerkMembershipData = {
+export type ClerkMembershipData = {
   id: string;
   role?: string;
   organization?: { id: string };
