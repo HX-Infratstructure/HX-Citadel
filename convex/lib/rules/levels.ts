@@ -153,6 +153,11 @@ async function legacySubNumber(ctx: { db: QueryCtx["db"] }, storyId: Id<"issues"
   return Math.max(0, ...subtasks.map((subtask) => subtask.subNumber ?? 0)) + 1;
 }
 
+/** The subtask number a story hands out next. */
+export async function subCounter(ctx: { db: QueryCtx["db"] }, story: Doc<"issues">): Promise<number> {
+  return story.nextSubNumber ?? (await legacySubNumber(ctx, story._id));
+}
+
 /**
  * Claim the next subtask number under a story. The story keeps a counter, so a key a moved or
  * deleted subtask held is never handed out again. The counter is a bookkeeping field, so claiming
@@ -166,9 +171,28 @@ export async function nextSubNumber(
   if (story === null) {
     throw new Error("Parent issue not found");
   }
-  const subNumber = story.nextSubNumber ?? (await legacySubNumber(ctx, storyId));
+  const subNumber = await subCounter(ctx, story);
   await patchIssue(ctx, story, { nextSubNumber: subNumber + 1 });
   return subNumber;
+}
+
+/**
+ * A subtask leaving its story, moved or deleted, retires its number there. A story written before
+ * its counter existed would otherwise resume after its highest remaining subtask and reuse the key.
+ */
+export async function retireSubNumber(
+  ctx: { db: MutationCtx["db"] },
+  leaving: Doc<"issues">
+): Promise<void> {
+  if (leaving.subNumber === undefined || leaving.parentIssueId === undefined) {
+    return;
+  }
+  const story = await ctx.db.get(leaving.parentIssueId);
+  if (story === null) {
+    return;
+  }
+  const next = Math.max(await subCounter(ctx, story), leaving.subNumber + 1);
+  await patchIssue(ctx, story, { nextSubNumber: next });
 }
 
 /** Every descendant of an issue, found by walking by_parent; leaf kinds are not queried. */

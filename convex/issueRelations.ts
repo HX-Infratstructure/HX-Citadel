@@ -12,6 +12,7 @@ import {
   assertValidParent,
   cascadeProject,
   nextSubNumber,
+  retireSubNumber,
 } from "./lib/rules/levels";
 import { assertNotTestingSubtask } from "./lib/rules/testing";
 import {
@@ -391,6 +392,7 @@ export const setParent = orgMutation({
       }
     }
 
+    await retireSubNumber(ctx, issue);
     const moved = {
       parentIssueId: args.parentIssueId ?? undefined,
       projectId: placement.projectId,

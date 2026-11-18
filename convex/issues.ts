@@ -22,6 +22,7 @@ import {
   assertValidParent,
   cascadeProject,
   nextSubNumber,
+  retireSubNumber,
 } from "./lib/rules/levels";
 import {
   assertNotTestingSubtask,
@@ -601,6 +602,7 @@ export const remove = orgMutation({
     assertNotTestingSubtask(issue, "deleted");
     await assertNoChildren(ctx, issue);
     await deleteStorySubtasks(ctx, issue);
+    await retireSubNumber(ctx, issue);
     await deleteIssueRow(ctx, issue._id);
     await logChildDeleted(ctx, issue, ctx.user._id);
     return null;

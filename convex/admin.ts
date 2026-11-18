@@ -2,7 +2,9 @@ import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, MutationCtx, QueryCtx } from "./_generated/server";
 import { deleteAttachmentFiles, deleteIssuesWithOwnedRows, deleteRows } from "./lib/issueCleanup";
+import { patchIssue } from "./lib/issueVersion";
 import { existedBeforeRead, getOrgByClerkIdOrThrow } from "./lib/mirror";
+import { subCounter } from "./lib/rules/levels";
 import { findTeamByKey } from "./lib/teams";
 
 /**
@@ -191,5 +193,22 @@ export const deleteOrgMirror = internalMutation({
     await deleteRows(ctx, members);
     await ctx.db.delete(org._id);
     return { organizations: 1, members: members.length };
+  },
+});
+
+/**
+ * One-time: give every story written before the subtask counter its counter, so a subtask that
+ * leaves it later cannot free its key for reuse. Returns how many stories it set; a rerun sets none.
+ */
+export const backfillSubCounters = internalMutation({
+  args: {},
+  returns: v.number(),
+  handler: async (ctx) => {
+    const issues = await ctx.db.query("issues").collect();
+    const stories = issues.filter((issue) => issue.kind === "story" && issue.nextSubNumber === undefined);
+    for (const story of stories) {
+      await patchIssue(ctx, story, { nextSubNumber: await subCounter(ctx, story) });
+    }
+    return stories.length;
   },
 });

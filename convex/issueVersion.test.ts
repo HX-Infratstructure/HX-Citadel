@@ -194,26 +194,57 @@ describe("If-Match", () => {
   });
 });
 
-describe("Clerk-session patch paths bump by one", () => {
-  async function asMemberSetup() {
-    const t = convexTest(schema, modules);
-    const ids = await t.run(async (ctx) => {
-      const userId = await ctx.db.insert("users", { clerkId: "user_member", name: "Member", email: "m@example.com" });
-      const orgId = await ctx.db.insert("organizations", { clerkOrgId: ORG, name: "HX", slug: "hx" });
-      await ctx.db.insert("members", { orgId, userId, role: "admin", clerkMembershipId: "mem_1" });
-      const teamId = await ctx.db.insert("teams", { orgId, name: "Engineering", key: "ENG", nextIssueNumber: 1 });
-      const projectId = await ctx.db.insert("projects", { orgId, name: "P", status: "planned" });
-      return { teamId, projectId };
+async function asMemberSetup() {
+  const t = convexTest(schema, modules);
+  const ids = await t.run(async (ctx) => {
+    const userId = await ctx.db.insert("users", { clerkId: "user_member", name: "Member", email: "m@example.com" });
+    const orgId = await ctx.db.insert("organizations", { clerkOrgId: ORG, name: "HX", slug: "hx" });
+    await ctx.db.insert("members", { orgId, userId, role: "admin", clerkMembershipId: "mem_1" });
+    const teamId = await ctx.db.insert("teams", { orgId, name: "Engineering", key: "ENG", nextIssueNumber: 1 });
+    const projectId = await ctx.db.insert("projects", { orgId, name: "P", status: "planned" });
+    return { teamId, projectId };
+  });
+  const asMember = t.withIdentity({ subject: "user_member", org_id: ORG });
+  const storyId = await asMember.mutation(api.issues.create, { teamId: ids.teamId, title: "Story", kind: "story" });
+  const version = (issueId: Id<"issues">) => t.run(async (ctx) => (await ctx.db.get(issueId))?.version);
+  const testingId = await t.run(
+    async (ctx) => (await ctx.db.query("issues").withIndex("by_parent", (q) => q.eq("parentIssueId", storyId)).unique())!._id
+  );
+  return { t, asMember, storyId, testingId, version, ...ids };
+}
+
+describe("a story written before its sub-task counter", () => {
+  async function legacyStory() {
+    const setup = await asMemberSetup();
+    const { t, asMember, storyId, teamId } = setup;
+    const leavingId = await asMember.mutation(api.issues.create, { teamId, title: "Leaving", kind: "subtask", parentIssueId: storyId });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(storyId, { nextSubNumber: undefined });
     });
-    const asMember = t.withIdentity({ subject: "user_member", org_id: ORG });
-    const storyId = await asMember.mutation(api.issues.create, { teamId: ids.teamId, title: "Story", kind: "story" });
-    const version = (issueId: Id<"issues">) => t.run(async (ctx) => (await ctx.db.get(issueId))?.version);
-    const testingId = await t.run(
-      async (ctx) => (await ctx.db.query("issues").withIndex("by_parent", (q) => q.eq("parentIssueId", storyId)).unique())!._id
-    );
-    return { t, asMember, storyId, testingId, version, ...ids };
+    const nextSubtask = async () => {
+      const id = await asMember.mutation(api.issues.create, { teamId, title: "Next", kind: "subtask", parentIssueId: storyId });
+      return await t.run(async (ctx) => (await ctx.db.get(id))?.subNumber);
+    };
+    return { ...setup, leavingId, nextSubtask };
   }
 
+  test("its highest sub-task moving to another story never hands that key out again", async () => {
+    const { asMember, teamId, storyId, leavingId, nextSubtask, version } = await legacyStory();
+    const otherId = await asMember.mutation(api.issues.create, { teamId, title: "Other story", kind: "story" });
+    await asMember.mutation(api.issueRelations.setParent, { issueId: leavingId, parentIssueId: otherId });
+    expect(await nextSubtask()).toBe(3);
+    expect(await version(storyId)).toBe(1);
+  });
+
+  test("its highest sub-task being deleted never hands that key out again", async () => {
+    const { asMember, storyId, leavingId, nextSubtask, version } = await legacyStory();
+    await asMember.mutation(api.issues.remove, { issueId: leavingId });
+    expect(await nextSubtask()).toBe(3);
+    expect(await version(storyId)).toBe(1);
+  });
+});
+
+describe("Clerk-session patch paths bump by one", () => {
   test("issues.update (sort order) bumps the story; its project cascade bumps the sub-task", async () => {
     const { asMember, storyId, testingId, version, projectId } = await asMemberSetup();
     await asMember.mutation(api.issues.update, { issueId: storyId, sortOrder: 5 });

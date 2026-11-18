@@ -1,12 +1,16 @@
-import { ConvexError, v } from "convex/values";
+import { ConvexError, getDocumentSize, v } from "convex/values";
 import { internal } from "../_generated/api";
+import { Id } from "../_generated/dataModel";
 import { MutationCtx } from "../_generated/server";
 import { OrgScope } from "./orgScope";
 
 export const IDEMPOTENCY_HEADER = "Idempotency-Key";
 export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
-/** Receipts hold whole write results, so one cleanup run reads a bounded batch, well under Convex's read limit. */
-export const EXPIRY_BATCH = 256;
+/**
+ * Receipts hold whole write results of any size, so one cleanup run stops after `rows` receipts or once the
+ * receipts it read pass `bytes`, which keeps the run well under Convex's 16 MiB read limit.
+ */
+export const EXPIRY_BATCH = { rows: 256, bytes: 4 * 1024 * 1024 } as const;
 const KEY_PATTERN = /^[\x21-\x7e]{1,200}$/;
 
 /** What a REST write passes to its internal mutation; MCP passes the same. */
@@ -84,15 +88,21 @@ export async function withIdempotency<T>(
   return body;
 }
 
-/** Deletes up to `EXPIRY_BATCH` of the oldest keys past the TTL and schedules the next batch while a full one went; returns how many went. */
+/** Deletes one `EXPIRY_BATCH` of the oldest keys past the TTL and schedules the next batch when it stopped early; returns how many went. */
 export async function expireKeys(ctx: MutationCtx, now: number): Promise<number> {
-  const expired = await ctx.db
+  const expired: Id<"idempotencyKeys">[] = [];
+  let bytes = 0;
+  const oldestFirst = ctx.db
     .query("idempotencyKeys")
-    .withIndex("by_created_at", (q) => q.lt("createdAt", now - IDEMPOTENCY_TTL_MS))
-    .take(EXPIRY_BATCH);
-  await Promise.all(expired.map((row) => ctx.db.delete(row._id)));
-  if (expired.length === EXPIRY_BATCH) {
-    await ctx.scheduler.runAfter(0, internal.agentApi.expireIdempotencyKeys, {});
+    .withIndex("by_created_at", (q) => q.lt("createdAt", now - IDEMPOTENCY_TTL_MS));
+  for await (const row of oldestFirst) {
+    expired.push(row._id);
+    bytes += getDocumentSize(row);
+    if (expired.length === EXPIRY_BATCH.rows || bytes >= EXPIRY_BATCH.bytes) {
+      await ctx.scheduler.runAfter(0, internal.agentApi.expireIdempotencyKeys, {});
+      break;
+    }
   }
+  await Promise.all(expired.map((id) => ctx.db.delete(id)));
   return expired.length;
 }

@@ -490,3 +490,34 @@ describe("admin.clearTeamContent", () => {
     ).rejects.toThrow("Organization org_missing not found");
   });
 });
+
+describe("admin.backfillSubCounters", () => {
+  test("gives each story without a counter its highest sub-task number + 1, and a rerun changes nothing", async () => {
+    const { t, cleared } = await setup();
+    const storyIds = await t.run(async (ctx) => {
+      const stories = await ctx.db.query("issues").collect();
+      const [withSubtask, withCounter] = stories.filter((story) => story.orgId === cleared.orgId);
+      await ctx.db.insert("issues", {
+        orgId: withSubtask.orgId,
+        teamId: withSubtask.teamId,
+        kind: "subtask",
+        parentIssueId: withSubtask._id,
+        subNumber: 4,
+        title: "Sub-task",
+        status: "todo",
+        priority: "none",
+        creatorId: withSubtask.creatorId,
+        sortOrder: 3,
+      });
+      await ctx.db.patch(withCounter._id, { nextSubNumber: 7 });
+      return stories.map((story) => story._id);
+    });
+    const counters = () =>
+      t.run(async (ctx) => Promise.all(storyIds.map(async (id) => (await ctx.db.get(id))?.nextSubNumber)));
+
+    expect(await t.mutation(internal.admin.backfillSubCounters, {})).toBe(3);
+    expect(await counters()).toEqual([5, 7, 1, 1]);
+    expect(await t.mutation(internal.admin.backfillSubCounters, {})).toBe(0);
+    expect(await counters()).toEqual([5, 7, 1, 1]);
+  });
+});

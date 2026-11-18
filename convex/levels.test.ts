@@ -309,12 +309,15 @@ describe("issue levels", () => {
     }
   });
 
-  test("moves an epic's project without querying subtasks for children", async () => {
-    // 209 reads, measured: 202 child queries plus 7 of the update's own. The cascade hands patchIssue the rows it
-    // loaded, so the 401 descendants add none. Querying subtasks for children would add 200 (409), re-reading each
-    // descendant 401 (610); 300 refuses both.
+  test("moves an epic's project across 402 descendants with 2 KB descriptions inside Convex's transaction limits", async () => {
+    // Every Convex default limit is enforced, and index ranges are capped at 300, so a cascade that queries subtasks
+    // for children or re-reads each descendant fails. Measured with ctx.meta.getTransactionMetrics() on this fixture
+    // (an epic and 402 descendants, 2 KB descriptions): 209 index ranges, 812 documents and 1,949,097 bytes read
+    // (convex-test counts each issue in its child query and again in its patch), 806 documents and 1,104,700 bytes
+    // written. Convex allows 4,096 index ranges, 32,000 documents and 16 MiB read, 16,000 documents and 16 MiB written.
     const { t, asMember, tree, insertOtherProject } = await setup({ databaseQueries: 300 });
     const { epic, feature, story } = await tree();
+    const description = "d".repeat(2048);
     await t.run(async (ctx) => {
       const shared = (await ctx.db.get(story))!;
       const fields = {
@@ -331,12 +334,19 @@ describe("issue levels", () => {
         const bulkStory = await ctx.db.insert("issues", { ...fields, kind: "story", parentIssueId: feature });
         await ctx.db.insert("issues", { ...fields, kind: "subtask", parentIssueId: bulkStory });
       }
+      for (const issue of await ctx.db.query("issues").collect()) {
+        await ctx.db.patch(issue._id, { description });
+      }
     });
     const newProject = await insertOtherProject();
 
-    await asMember.mutation(api.issues.update, { issueId: epic, projectId: newProject });
+    const metrics = await asMember.run(async (ctx) => {
+      await ctx.runMutation(api.issues.update, { issueId: epic, projectId: newProject });
+      return await ctx.meta.getTransactionMetrics();
+    });
 
     expect((await asMember.query(api.issues.get, { issueId: story }))!.projectId).toBe(newProject);
+    expect(metrics.bytesRead.used).toBeGreaterThan(402 * description.length);
   });
 
   test("refuses deleting a project that has an epic", async () => {

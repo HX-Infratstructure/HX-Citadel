@@ -18,8 +18,8 @@ afterEach(() => {
   delete process.env.HX_WORKSPACE_ORG_ID;
 });
 
-async function setup() {
-  const t = convexTest(schema, modules);
+async function setup(transactionLimits = false) {
+  const t = convexTest({ schema, modules, transactionLimits });
   await t.run(async (ctx) => {
     const orgId = await ctx.db.insert("organizations", { clerkOrgId: ORG, name: "HX", slug: "hx" });
     await ctx.db.insert("teams", { orgId, name: "Engineering", key: "ENG", nextIssueNumber: 1 });
@@ -188,15 +188,37 @@ describe("Idempotency-Key", () => {
     await t.run(async (ctx) => {
       const seed = (await ctx.db.query("idempotencyKeys").collect())[0];
       await ctx.db.patch(seed._id, { createdAt: 0 });
-      for (let index = 0; index < EXPIRY_BATCH; index++) {
+      for (let index = 0; index < EXPIRY_BATCH.rows; index++) {
         await ctx.db.insert("idempotencyKeys", { orgId: seed.orgId, agentId: seed.agentId, key: `old-${index}`, requestHash: "h", body: null, createdAt: 0 });
       }
     });
     const count = () => t.run(async (ctx) => (await ctx.db.query("idempotencyKeys").collect()).length);
-    expect(await t.mutation(internal.agentApi.expireIdempotencyKeys, {})).toBe(EXPIRY_BATCH);
+    expect(await t.mutation(internal.agentApi.expireIdempotencyKeys, {})).toBe(EXPIRY_BATCH.rows);
     expect(await count()).toBe(1);
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await count()).toBe(0);
+    vi.useRealTimers();
+  });
+
+  test("the cleanup clears large receipts over several runs, each within Convex's read limit", async () => {
+    vi.useFakeTimers();
+    const t = await setup(true);
+    await write(t, "POST", "", { teamKey: "ENG", title: "Seed" }, keyed("seed"));
+    const seed = await t.run(async (ctx) => (await ctx.db.query("idempotencyKeys").collect())[0]);
+    const body = { description: "x".repeat(100_000) };
+    for (let chunk = 0; chunk < 3; chunk++) {
+      await t.run(async (ctx) => {
+        for (let index = 0; index < 100; index++) {
+          await ctx.db.insert("idempotencyKeys", { orgId: seed.orgId, agentId: seed.agentId, key: `large-${chunk}-${index}`, requestHash: "h", body, createdAt: 0 });
+        }
+      });
+    }
+    const first = await t.mutation(internal.agentApi.expireIdempotencyKeys, {});
+    expect(first).toBeGreaterThan(0);
+    expect(first).toBeLessThan(EXPIRY_BATCH.rows);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = await t.run(async (ctx) => (await ctx.db.query("idempotencyKeys").collect()).map((row) => row.key));
+    expect(left).toEqual(["seed"]);
     vi.useRealTimers();
   });
 });

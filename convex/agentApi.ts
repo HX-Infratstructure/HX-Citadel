@@ -62,12 +62,12 @@ function withKey(issue: Doc<"issues">, teamKey: string, parentNumber?: number) {
   return { ...fields, key: formatIssueKey(teamKey, issue, parentNumber), version: issueVersion(issue) };
 }
 
-async function subtasksOf(ctx: Db, issueId: Id<"issues">): Promise<Doc<"issues">[]> {
+async function subtasksOf(ctx: Db, orgId: Id<"organizations">, issueId: Id<"issues">): Promise<Doc<"issues">[]> {
   const subtasks = await ctx.db
     .query("issues")
     .withIndex("by_parent", (q) => q.eq("parentIssueId", issueId))
     .collect();
-  return subtasks.sort((a, b) => (a.subNumber ?? 0) - (b.subNumber ?? 0));
+  return subtasks.filter((sub) => sub.orgId === orgId).sort((a, b) => (a.subNumber ?? 0) - (b.subNumber ?? 0));
 }
 
 type FoundIssue = { issue: Doc<"issues">; team: Doc<"teams">; parentNumber?: number };
@@ -89,7 +89,7 @@ async function findIssueByKey(ctx: Db, orgId: Id<"organizations">, key: string):
   if (parsed.subNumber === undefined) {
     return { issue: story, team };
   }
-  const subtask = (await subtasksOf(ctx, story._id)).find((sub) => sub.subNumber === parsed.subNumber);
+  const subtask = (await subtasksOf(ctx, orgId, story._id)).find((sub) => sub.subNumber === parsed.subNumber);
   if (subtask === undefined) {
     throw new Error(`Issue ${key} not found`);
   }
@@ -140,7 +140,7 @@ export const getIssue = internalQuery({
   handler: async (ctx, { agentName, key }) => {
     const org = await resolveAgentReadScope(ctx, agentName);
     const { issue, team, parentNumber } = await findIssueByKey(ctx, org._id, key);
-    const subtasks = await subtasksOf(ctx, issue._id);
+    const subtasks = await subtasksOf(ctx, org._id, issue._id);
     return {
       issue: withKey(issue, team.key, parentNumber),
       subtasks: subtasks.map((subtask) => withKey(subtask, team.key, issue.number)),
@@ -212,9 +212,13 @@ export const listIssues = internalQuery({
       )
       .take(LIST_LIMIT);
     const parents = new Map<Id<"issues">, Promise<Doc<"issues"> | null>>();
+    const orgParent = async (parentId: Id<"issues">) => {
+      const parent = await ctx.db.get(parentId);
+      return parent?.orgId === org._id ? parent : null;
+    };
     const parentOf = (parentId: Id<"issues">) => {
       if (!parents.has(parentId)) {
-        parents.set(parentId, ctx.db.get(parentId));
+        parents.set(parentId, orgParent(parentId));
       }
       return parents.get(parentId)!;
     };

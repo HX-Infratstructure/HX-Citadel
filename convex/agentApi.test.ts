@@ -116,6 +116,22 @@ describe("internal.agentApi.listIssues past the newest 500 issues", () => {
     const { issues } = await t.query(internal.agentApi.listIssues, { agentName: "cc1", teamKey: "ENG" });
     expect(issues).toContainEqual(expect.objectContaining({ key: "ENG-1.2", parentKey: "ENG-1" }));
   });
+
+  test("a sub-task whose parent is in another workspace lists with no parentKey and no parent number", async () => {
+    const t = await setup();
+    await t.mutation(internal.agentApi.createIssue, { agentName: "cc1", teamKey: "ENG", title: "Story" });
+    await t.run(async (ctx) => {
+      const { orgId, teamId, creatorId } = (await ctx.db.query("issues").first())!;
+      const otherOrgId = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
+      const otherTeamId = await ctx.db.insert("teams", { orgId: otherOrgId, name: "Other", key: "OTH", nextIssueNumber: 8 });
+      const foreign = { orgId: otherOrgId, teamId: otherTeamId, creatorId, kind: "story", number: 7, sortOrder: 0 } as const;
+      const parentIssueId = await ctx.db.insert("issues", { ...foreign, title: "Foreign", status: "todo", priority: "none" });
+      const crossOrg = { orgId, teamId, creatorId, kind: "subtask", subNumber: 1, sortOrder: 1, parentIssueId } as const;
+      await ctx.db.insert("issues", { ...crossOrg, title: "Cross-org sub-task", status: "todo", priority: "none" });
+    });
+    const { issues } = await t.query(internal.agentApi.listIssues, { agentName: "cc1", teamKey: "ENG" });
+    expect(issues).toContainEqual(expect.objectContaining({ title: "Cross-org sub-task", key: null, parentKey: null }));
+  });
 });
 
 describe("REST /api/v1/issues", () => {
@@ -177,6 +193,22 @@ describe("REST /api/v1/issues", () => {
     const subtask = await t.fetch("/api/v1/issues/ENG-1.1", { headers: { "X-Agent-Id": "cc1" } });
     expect(subtask.status).toBe(200);
     expect((await subtask.json()).issue).toMatchObject({ key: "ENG-1.1", kind: "subtask" });
+  });
+
+  test("GET leaves out a sub-task row from another workspace that points at the story", async () => {
+    const t = await setup();
+    await post(t, { teamKey: "ENG", title: "Story" }, "cc1");
+    await t.run(async (ctx) => {
+      const story = (await ctx.db.query("issues").first())!;
+      const otherOrgId = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
+      const otherTeamId = await ctx.db.insert("teams", { orgId: otherOrgId, name: "Other", key: "OTH", nextIssueNumber: 1 });
+      const foreign = { orgId: otherOrgId, teamId: otherTeamId, creatorId: story.creatorId, kind: "subtask", subNumber: 9 } as const;
+      await ctx.db.insert("issues", { ...foreign, parentIssueId: story._id, sortOrder: 9, title: "Foreign", status: "todo", priority: "none" });
+    });
+    const story = await t.fetch("/api/v1/issues/ENG-1", { headers: { "X-Agent-Id": "cc1" } });
+    expect((await story.json()).subtasks.map((subtask: { key: string }) => subtask.key)).toEqual(["ENG-1.1"]);
+    const foreign = await t.fetch("/api/v1/issues/ENG-1.9", { headers: { "X-Agent-Id": "cc1" } });
+    expect(foreign.status).toBe(404);
   });
 
   test("a story's JSON leaves out its sub-task counter", async () => {
