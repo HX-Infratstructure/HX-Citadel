@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth, useOrganizationList } from "@clerk/nextjs";
-import { useAction, useQuery } from "convex/react";
+import { useAction, useConvexAuth, useQuery } from "convex/react";
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ReactNode, useEffect, useState } from "react";
@@ -24,6 +24,8 @@ const SYNC_VISIBLE_TIMEOUT_MS = 5_000;
 const SYNC_FAILED_MESSAGE = "Couldn't sync your workspace from Clerk.";
 const SYNC_NOT_VISIBLE_MESSAGE =
   "Your workspace is still not visible after syncing from Clerk.";
+const SESSION_REJECTED_MESSAGE =
+  "You're signed in, but the workspace server didn't accept the session.";
 
 type SyncIssue = { key: string; message: string };
 
@@ -92,14 +94,18 @@ export function WorkspaceShell({
   const currentOrg = useQuery(api.organizations.current);
 
   const { orgId } = useAuth();
+  const { isLoading: isAuthLoading, isAuthenticated } = useConvexAuth();
   const syncCurrent = useAction(api.mirror.syncCurrent);
   const [syncAttempt, setSyncAttempt] = useState(0);
   const [syncIssue, setSyncIssue] = useState<SyncIssue | null>(null);
   const needsSync = currentUser === null || currentOrg === null;
-  const syncKey = `${orgId ?? ""}:${syncAttempt}`;
+  const syncKey = `${isAuthenticated}:${orgId ?? ""}:${syncAttempt}`;
+  const retrySync = () => setSyncAttempt((n) => n + 1);
+  // A rejected session needs a fresh Clerk token, which only a reload fetches.
+  const reloadPage = () => window.location.reload();
 
   useEffect(() => {
-    if (!needsSync) {
+    if (!isLoaded || !isAuthenticated || !needsSync) {
       return;
     }
     let cancelled = false;
@@ -120,19 +126,18 @@ export function WorkspaceShell({
       cancelled = true;
       clearTimeout(notVisibleTimer);
     };
-  }, [needsSync, syncKey, syncCurrent]);
+  }, [isLoaded, isAuthenticated, needsSync, syncKey, syncCurrent]);
 
-  if (!isLoaded || (needsSwitch && currentOrg === undefined)) {
+  if (!isLoaded || isAuthLoading || (needsSwitch && currentOrg === undefined)) {
     return <FullScreenLoader label="Loading workspace…" />;
   }
 
+  if (needsSync && !isAuthLoading && !isAuthenticated) {
+    return <SyncFailed message={SESSION_REJECTED_MESSAGE} onRetry={reloadPage} />;
+  }
+
   if (needsSync && syncIssue?.key === syncKey) {
-    return (
-      <SyncFailed
-        message={syncIssue.message}
-        onRetry={() => setSyncAttempt((n) => n + 1)}
-      />
-    );
+    return <SyncFailed message={syncIssue.message} onRetry={retrySync} />;
   }
 
   // Clerk sync in flight. Convex queries are reactive, so this resolves by
