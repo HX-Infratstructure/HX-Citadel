@@ -65,6 +65,18 @@ function subtaskKey(
   return `${teamKey}-${parentNumber}.${subNumber}`;
 }
 
+const HAS_DISPLAY_KEY: Record<IssueKind, boolean> = {
+  epic: false,
+  feature: false,
+  story: true,
+  subtask: true,
+};
+
+/** Stories and subtasks have a display key; epics and features show their kind badge alone. */
+export function hasDisplayKey(kind: IssueKind): boolean {
+  return HAS_DISPLAY_KEY[kind];
+}
+
 /** Display key: KEY-12 for a story, KEY-12.3 for a subtask; null for epics, features or a missing number. */
 export function formatIssueKey(
   teamKey: string,

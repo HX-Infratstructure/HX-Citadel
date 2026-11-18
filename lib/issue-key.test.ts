@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { formatIssueKey, parentChoices } from "./issue-key";
+import { formatIssueKey, hasDisplayKey, parentChoices } from "./issue-key";
 
 describe("formatIssueKey", () => {
   test("a story is KEY-number", () => {
@@ -22,6 +22,17 @@ describe("formatIssueKey", () => {
 
   test.each(["epic", "feature"] as const)("a %s has no key", (kind) => {
     expect(formatIssueKey("HXT", { kind })).toBeNull();
+  });
+});
+
+describe("hasDisplayKey", () => {
+  test.each([
+    ["epic", false],
+    ["feature", false],
+    ["story", true],
+    ["subtask", true],
+  ] as const)("a %s has a display key: %s", (kind, expected) => {
+    expect(hasDisplayKey(kind)).toBe(expected);
   });
 });
 

@@ -17,12 +17,12 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@/components/ui/select";
-import { IssueKey } from "@/components/issues/issue-key";
+import { IssueKey, IssueKindBadge } from "@/components/issues/issue-key";
 import { IssueDetailSlotProps } from "@/components/issue-detail/slots";
 import { PriorityIcon } from "@/components/shared/priority-icon";
 import { StatusIcon } from "@/components/shared/status-icon";
 import { UserAvatar } from "@/components/shared/user-avatar";
-import { childKindOf, ParentChoices, parentChoices } from "@/lib/issue-key";
+import { childKindOf, hasDisplayKey, ParentChoices, parentChoices } from "@/lib/issue-key";
 
 const NO_PARENT = "none";
 
@@ -202,9 +202,12 @@ export function SubIssuesPanel({ issue, team }: IssueDetailSlotProps) {
                 className="-mx-2 flex h-9 items-center gap-2.5 rounded-md px-2 text-sm transition-colors hover:bg-accent/50"
               >
                 <StatusIcon status={sub.status} />
-                <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                  {sub.identifier}
-                </span>
+                {hasDisplayKey(sub.kind) && (
+                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                    {sub.identifier}
+                  </span>
+                )}
+                <IssueKindBadge issue={sub} />
                 <span className="min-w-0 flex-1 truncate">{sub.title}</span>
                 {sub.priority !== "none" && (
                   <PriorityIcon priority={sub.priority} />

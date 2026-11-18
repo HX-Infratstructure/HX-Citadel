@@ -13,9 +13,11 @@ import {
 } from "./lib/rules/levels";
 import { assertNotTestingSubtask } from "./lib/rules/testing";
 import {
+  issueKindValidator,
   issuePriorityValidator,
   issueRelationTypeValidator,
   issueStatusValidator,
+  issueTypeValidator,
 } from "./schema";
 
 /**
@@ -39,6 +41,8 @@ const issueSummaryValidator = v.object({
   _id: v.id("issues"),
   /** Display identifier, e.g. "ENG-42". */
   identifier: v.string(),
+  kind: issueKindValidator,
+  type: v.optional(issueTypeValidator),
   title: v.string(),
   status: issueStatusValidator,
   priority: issuePriorityValidator,
@@ -48,6 +52,8 @@ const issueSummaryValidator = v.object({
 type IssueSummary = {
   _id: Id<"issues">;
   identifier: string;
+  kind: Doc<"issues">["kind"];
+  type?: Doc<"issues">["type"];
   title: string;
   status: Doc<"issues">["status"];
   priority: Doc<"issues">["priority"];
@@ -89,6 +95,8 @@ async function summarizeIssue(
   return {
     _id: issue._id,
     identifier: key ?? issue.title,
+    kind: issue.kind,
+    type: issue.type,
     title: issue.title,
     status: issue.status,
     priority: issue.priority,
