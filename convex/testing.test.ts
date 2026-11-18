@@ -137,15 +137,25 @@ describe("Complete testing sub-task", () => {
     ).rejects.toThrow("The Complete testing sub-task can't be moved");
   });
 
-  test("setProof stores an https URL", async () => {
-    const { t, create, testingSubtaskOf, setProof } = await setup();
-    const testing = await testingSubtaskOf(await create("story"));
-    await setProof(testing._id, "https://example.com/run/42");
-    const saved = await t.run((ctx) => ctx.db.get(testing._id));
-    expect(saved?.proofUrl).toBe("https://example.com/run/42");
-  });
+  test.each(["https://example.com/x", "http://192.168.50.207:8460/"])(
+    "setProof stores %s",
+    async (proofUrl) => {
+      const { t, create, testingSubtaskOf, setProof } = await setup();
+      const testing = await testingSubtaskOf(await create("story"));
+      await setProof(testing._id, proofUrl);
+      const saved = await t.run((ctx) => ctx.db.get(testing._id));
+      expect(saved?.proofUrl).toBe(proofUrl);
+    }
+  );
 
-  test.each(["javascript:alert(1)", "ftp://example.com/file", "/runs/42", "https//missing-colon"])(
+  test.each([
+    "javascript:alert(1)",
+    "ftp://example.com/file",
+    "/runs/42",
+    "https//missing-colon",
+    "http:foo",
+    "https://",
+  ])(
     "setProof refuses %s",
     async (proofUrl) => {
       const { create, testingSubtaskOf, setProof } = await setup();

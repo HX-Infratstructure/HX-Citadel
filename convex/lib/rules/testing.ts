@@ -42,18 +42,26 @@ export function assertTestingSubtask(issue: Doc<"issues">): void {
   }
 }
 
-function parsedProtocol(url: string): string | null {
+function parsedUrl(url: string): URL | null {
   try {
-    return new URL(url).protocol;
+    return new URL(url);
   } catch {
     return null;
   }
 }
 
-/** A proof is an absolute http(s) URL; anything else is refused. */
+/** The parser reads `http:foo` as http://foo/, so the written `scheme://` is checked too. */
+function isAbsoluteHttpUrl(url: string): boolean {
+  const parsed = parsedUrl(url);
+  if (parsed === null || !PROOF_PROTOCOLS.has(parsed.protocol) || parsed.hostname === "") {
+    return false;
+  }
+  return url.toLowerCase().startsWith(`${parsed.protocol}//`);
+}
+
+/** A proof is an absolute http(s) URL with a host; anything else is refused. */
 export function assertProofUrl(url: string): void {
-  const protocol = parsedProtocol(url);
-  if (protocol === null || !PROOF_PROTOCOLS.has(protocol)) {
+  if (!isAbsoluteHttpUrl(url)) {
     throw new Error("The proof must be an absolute http:// or https:// URL");
   }
 }
