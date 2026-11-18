@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import { FunctionReturnType } from "convex/server";
 import { MoreHorizontal } from "lucide-react";
@@ -52,8 +53,37 @@ const RELATION_ADDED_PHRASES: Record<string, string> = {
   duplicated_by: "marked this as duplicated by",
 };
 
+/** Readable names for fields logged as `<field>_changed` without a case of their own. */
+const FIELD_LABELS: Record<string, string> = {
+  estimate: "estimate",
+  dueDate: "due date",
+  project: "project",
+  cycle: "cycle",
+  subNumber: "number",
+};
+
 function Emphasis({ children }: { children: ReactNode }) {
   return <span className="font-medium text-foreground">{children}</span>;
+}
+
+function fieldValueText(field: string, value: string): string {
+  if (field === "dueDate") {
+    return new Date(Number(value)).toLocaleDateString();
+  }
+  return value;
+}
+
+/** "changed project to X", or "cleared project" when the new value is empty. */
+function describeFieldChange(field: string, newValue: string | undefined): ReactNode {
+  const label = FIELD_LABELS[field] ?? field;
+  if (!newValue) {
+    return <>cleared the {label}</>;
+  }
+  return (
+    <>
+      changed {label} to <Emphasis>{fieldValueText(field, newValue)}</Emphasis>
+    </>
+  );
 }
 
 /** Sentence fragment describing an activity entry (actor name is prepended). */
@@ -136,19 +166,37 @@ function describeActivity(entry: ActivityEntry): ReactNode {
           removed attachment <Emphasis>{oldValue}</Emphasis>
         </>
       );
+    case "description_changed":
+      return <>updated the description</>;
+    case "proof_set":
+      return (
+        <>
+          set proof link <Emphasis>{newValue}</Emphasis>
+        </>
+      );
+    case "proof_cleared":
+      return <>cleared the proof link</>;
+    case "label_added":
+      return (
+        <>
+          added label <Emphasis>{newValue}</Emphasis>
+        </>
+      );
+    case "label_removed":
+      return (
+        <>
+          removed label <Emphasis>{oldValue}</Emphasis>
+        </>
+      );
+    case "child_deleted":
+      return (
+        <>
+          deleted sub-issue <Emphasis>{oldValue}</Emphasis>
+        </>
+      );
     default:
       if (field) {
-        return (
-          <>
-            updated {field}
-            {newValue ? (
-              <>
-                {" "}
-                to <Emphasis>{newValue}</Emphasis>
-              </>
-            ) : null}
-          </>
-        );
+        return describeFieldChange(field, newValue);
       }
       return <>updated the issue</>;
   }
@@ -303,7 +351,7 @@ function CommentItem({
       setEditing(false);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to update comment"
+        errorMessage(error, "Failed to update comment")
       );
     } finally {
       setSaving(false);
@@ -313,7 +361,7 @@ function CommentItem({
   const handleDelete = () => {
     removeComment({ commentId: comment._id }).catch((error: unknown) => {
       toast.error(
-        error instanceof Error ? error.message : "Failed to delete comment"
+        errorMessage(error, "Failed to delete comment")
       );
     });
   };

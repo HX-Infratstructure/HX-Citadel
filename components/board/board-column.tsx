@@ -11,6 +11,7 @@ import { Doc, Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { IssueStatus } from "@/components/shared/issue-meta";
 import { StatusIcon } from "@/components/shared/status-icon";
+import { isGatedStatus } from "@/lib/issue-status";
 import { cn } from "@/lib/utils";
 import { BoardCard, CardAssignee, CardLabel } from "./board-card";
 import { QuickCreateCard } from "./quick-create-card";
@@ -41,6 +42,7 @@ export function BoardColumn({
     data: { type: "column", status },
   });
   const [composerOpen, setComposerOpen] = useState(false);
+  const canQuickCreate = !isGatedStatus(status);
 
   return (
     <div className="flex max-h-full w-72 shrink-0 flex-col rounded-lg bg-muted/40">
@@ -48,15 +50,17 @@ export function BoardColumn({
         <StatusIcon status={status} />
         <span className="text-sm font-medium">{label}</span>
         <span className="text-xs text-muted-foreground">{issues.length}</span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="ml-auto size-6 text-muted-foreground"
-          onClick={() => setComposerOpen(true)}
-          aria-label={`New ${label} issue`}
-        >
-          <Plus className="size-3.5" />
-        </Button>
+        {canQuickCreate ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="ml-auto size-6 text-muted-foreground"
+            onClick={() => setComposerOpen(true)}
+            aria-label={`New ${label} issue`}
+          >
+            <Plus className="size-3.5" />
+          </Button>
+        ) : null}
       </div>
       <SortableContext
         items={issues.map((issue) => issue._id)}
@@ -90,13 +94,18 @@ export function BoardColumn({
               onOpen={() => onOpenIssue(issue._id)}
             />
           ))}
-          {issues.length === 0 && !composerOpen ? (
+          {canQuickCreate && issues.length === 0 && !composerOpen ? (
             <button
               onClick={() => setComposerOpen(true)}
               className="flex h-14 items-center justify-center rounded-md border border-dashed text-xs text-muted-foreground/70 transition-colors hover:border-muted-foreground/40 hover:text-muted-foreground"
             >
               Drop issues here or click to add
             </button>
+          ) : null}
+          {!canQuickCreate && issues.length === 0 ? (
+            <div className="flex h-14 items-center justify-center rounded-md border border-dashed text-xs text-muted-foreground/70">
+              Drop issues here
+            </div>
           ) : null}
         </div>
       </SortableContext>

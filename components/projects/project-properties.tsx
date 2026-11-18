@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import { Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
@@ -67,7 +68,7 @@ export function ProjectProperties({ project }: { project: Doc<"projects"> }) {
     updateProject({ projectId: project._id, ...patch }).catch(
       (error: unknown) => {
         toast.error(
-          error instanceof Error ? error.message : "Failed to update project"
+          errorMessage(error, "Failed to update project")
         );
       }
     );
@@ -80,7 +81,7 @@ export function ProjectProperties({ project }: { project: Doc<"projects"> }) {
       router.push(`/${params.orgSlug}/projects`);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to delete project"
+        errorMessage(error, "Failed to delete project")
       );
     }
   };

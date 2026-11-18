@@ -1,6 +1,7 @@
 import { v } from "convex/values";
-import { Doc, Id, TableNames } from "./_generated/dataModel";
+import { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, MutationCtx, QueryCtx } from "./_generated/server";
+import { deleteAttachmentFiles, deleteRows } from "./lib/issueCleanup";
 import { existedBeforeRead, getOrgByClerkIdOrThrow } from "./lib/mirror";
 
 /**
@@ -41,18 +42,6 @@ function getOrgByClerkId(ctx: QueryCtx | MutationCtx, clerkOrgId: string) {
 async function collectEach<P, T>(parents: P[], load: (parent: P) => Promise<T[]>) {
   const perParent = await Promise.all(parents.map(load));
   return perParent.flat();
-}
-
-async function deleteRows(ctx: MutationCtx, rows: { _id: Id<TableNames> }[]) {
-  for (const row of rows) {
-    await ctx.db.delete(row._id);
-  }
-}
-
-async function deleteAttachmentFiles(ctx: MutationCtx, attachments: Doc<"attachments">[]) {
-  for (const attachment of attachments) {
-    await ctx.storage.delete(attachment.storageId);
-  }
 }
 
 function countRows(content: OrgContent) {

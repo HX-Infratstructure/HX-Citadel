@@ -40,23 +40,38 @@ export const listByIssue = orgQuery({
       return userCache.get(userId) ?? null;
     };
 
+    const projectName = async (value: string): Promise<string | undefined> => {
+      const projectId = ctx.db.normalizeId("projects", value);
+      return projectId ? (await ctx.db.get(projectId))?.name : undefined;
+    };
+    const cycleName = async (value: string): Promise<string | undefined> => {
+      const cycleId = ctx.db.normalizeId("cycles", value);
+      const cycle = cycleId ? await ctx.db.get(cycleId) : null;
+      return cycle ? (cycle.name ?? `Cycle ${cycle.number}`) : undefined;
+    };
+    const userName = async (value: string): Promise<string | undefined> => {
+      const userId = ctx.db.normalizeId("users", value);
+      return userId ? (await getUser(userId))?.name : undefined;
+    };
+    const NAME_RESOLVERS: Record<string, (value: string) => Promise<string | undefined>> = {
+      assignee: userName,
+      project: projectName,
+      cycle: cycleName,
+    };
+
     /**
-     * Assignee changes store raw user ids — resolve them to display names so
-     * the client never sees opaque ids.
+     * Assignee, project and cycle changes store raw ids — resolve them to
+     * display names so the client never sees opaque ids.
      */
     const resolveValue = async (
       field: string | undefined,
       value: string | undefined
     ): Promise<string | undefined> => {
-      if (value === undefined || field !== "assignee") {
+      const resolve = field === undefined ? undefined : NAME_RESOLVERS[field];
+      if (value === undefined || resolve === undefined) {
         return value;
       }
-      const userId = ctx.db.normalizeId("users", value);
-      if (!userId) {
-        return value;
-      }
-      const user = await getUser(userId);
-      return user?.name ?? value;
+      return (await resolve(value)) ?? value;
     };
 
     const result = [];

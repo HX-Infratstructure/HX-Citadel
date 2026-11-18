@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import { Plus, X } from "lucide-react";
 import Link from "next/link";
@@ -28,8 +29,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { IssueKindBadge } from "@/components/issues/issue-key";
 import { IssueDetailSlotProps } from "@/components/issue-detail/slots";
 import { StatusIcon } from "@/components/shared/status-icon";
+import { hasDisplayKey } from "@/lib/issue-key";
 
 type StoredRelationType = Doc<"issueRelations">["type"];
 type DisplayRelationType = StoredRelationType | "duplicated_by";
@@ -73,7 +76,7 @@ export function RelationsPanel({ issue }: IssueDetailSlotProps) {
       await createRelation({ issueId: issue._id, relatedIssueId, type });
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to link issues"
+        errorMessage(error, "Failed to link issues")
       );
     }
   };
@@ -81,7 +84,7 @@ export function RelationsPanel({ issue }: IssueDetailSlotProps) {
   const unlink = (relationId: Doc<"issueRelations">["_id"]) => {
     removeRelation({ relationId }).catch((error: unknown) => {
       toast.error(
-        error instanceof Error ? error.message : "Failed to remove relation"
+        errorMessage(error, "Failed to remove relation")
       );
     });
   };
@@ -148,9 +151,12 @@ export function RelationsPanel({ issue }: IssueDetailSlotProps) {
                     onSelect={() => void linkIssue(candidate._id)}
                   >
                     <StatusIcon status={candidate.status} />
-                    <span className="font-mono text-xs text-muted-foreground">
-                      {candidate.identifier}
-                    </span>
+                    {hasDisplayKey(candidate.kind) && (
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {candidate.identifier}
+                      </span>
+                    )}
+                    <IssueKindBadge issue={candidate} />
                     <span className="truncate">{candidate.title}</span>
                   </CommandItem>
                 ))}
@@ -187,9 +193,12 @@ export function RelationsPanel({ issue }: IssueDetailSlotProps) {
                       href={`/${params.orgSlug}/issue/${relation.issue._id}`}
                       className="flex min-w-0 flex-1 items-center gap-1.5"
                     >
-                      <span className="shrink-0 font-mono text-muted-foreground">
-                        {relation.issue.identifier}
-                      </span>
+                      {hasDisplayKey(relation.issue.kind) && (
+                        <span className="shrink-0 font-mono text-muted-foreground">
+                          {relation.issue.identifier}
+                        </span>
+                      )}
+                      <IssueKindBadge issue={relation.issue} />
                       <span className="truncate">{relation.issue.title}</span>
                     </Link>
                     <Button

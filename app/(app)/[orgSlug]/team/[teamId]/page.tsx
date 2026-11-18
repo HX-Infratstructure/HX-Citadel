@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
+import { BacklogLink } from "@/components/backlog/backlog-link";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCommands } from "@/components/commands/command-provider";
@@ -75,6 +76,7 @@ export default function TeamIssuesPage() {
               </TabsTrigger>
             </TabsList>
           </Tabs>
+          <BacklogLink orgSlug={params.orgSlug} teamId={teamId} />
           <Button size="sm" variant="outline" onClick={openCreateIssue}>
             <Plus className="size-4" />
             New issue

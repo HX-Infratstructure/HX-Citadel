@@ -1,4 +1,4 @@
-import { DAY_MS } from "@/components/projects/dates";
+import { DAY_MS } from "@/lib/sprint";
 
 type CycleLike = {
   number: number;

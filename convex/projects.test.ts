@@ -53,3 +53,63 @@ describe("projects.create on a free organization", () => {
     ]);
   });
 });
+
+describe("projects.remove", () => {
+  test("deletes a project that another organization's epic points at", async () => {
+    const t = convexTest(schema, modules);
+    const projectId = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", {
+        clerkId: MEMBER_CLERK_ID,
+        name: "Member",
+        email: "member@example.com",
+      });
+      const orgId = await ctx.db.insert("organizations", {
+        clerkOrgId: ORG_CLAIM,
+        name: "Test Org",
+        slug: "test-org",
+      });
+      await ctx.db.insert("members", {
+        orgId,
+        userId,
+        role: "member",
+        clerkMembershipId: "mem_member",
+      });
+      const projectId = await ctx.db.insert("projects", {
+        orgId,
+        name: "Phase 2",
+        status: "planned",
+      });
+      const otherOrgId = await ctx.db.insert("organizations", {
+        clerkOrgId: "org_other",
+        name: "Other Org",
+        slug: "other-org",
+      });
+      const otherTeamId = await ctx.db.insert("teams", {
+        orgId: otherOrgId,
+        name: "Other",
+        key: "OTH",
+        nextIssueNumber: 1,
+      });
+      await ctx.db.insert("issues", {
+        orgId: otherOrgId,
+        teamId: otherTeamId,
+        kind: "epic",
+        title: "Foreign epic",
+        status: "todo",
+        priority: "none",
+        creatorId: userId,
+        projectId,
+        sortOrder: 0,
+      });
+      return projectId;
+    });
+    const asMember = t.withIdentity({
+      subject: MEMBER_CLERK_ID,
+      org_id: ORG_CLAIM,
+    });
+
+    await asMember.mutation(api.projects.remove, { projectId });
+
+    expect(await t.run((ctx) => ctx.db.get(projectId))).toBeNull();
+  });
+});

@@ -1,8 +1,11 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
+import { statusesFor } from "@/lib/issue-status";
+import { missingPlacement } from "@/lib/level-placement";
 import { useMutation, useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
@@ -30,6 +33,17 @@ import {
 } from "@/components/shared/issue-meta";
 import { PriorityIcon } from "@/components/shared/priority-icon";
 import { StatusIcon } from "@/components/shared/status-icon";
+import {
+  DEFAULT_LEVEL,
+  LevelChoice,
+  LevelPickers,
+  levelFields,
+} from "@/components/issues/create-issue-level";
+import {
+  createIssueOutcome,
+  fallbackTeamId,
+  IssueDraft,
+} from "@/components/issues/create-issue-outcome";
 
 export function CreateIssueDialog({
   open,
@@ -48,42 +62,99 @@ export function CreateIssueDialog({
   const [selectedTeamId, setSelectedTeamId] = useState<
     Id<"teams"> | undefined
   >(undefined);
+  const [rememberedFallback, setRememberedFallback] = useState<
+    Id<"teams"> | undefined
+  >(undefined);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<IssueStatus>("todo");
   const [priority, setPriority] = useState<IssuePriority>("none");
+  const [level, setLevel] = useState<LevelChoice>(DEFAULT_LEVEL);
   const [submitting, setSubmitting] = useState(false);
+  const inFlight = useRef(false);
+  const session = useRef(0);
+  // Closing skips the teams query; remembering the fallback keeps a pending
+  // create's committed draft on the team it was submitted with.
+  const fallback = fallbackTeamId(teams, rememberedFallback);
+  if (fallback !== rememberedFallback) {
+    setRememberedFallback(fallback);
+  }
+  const teamId = selectedTeamId ?? defaultTeamId ?? fallback;
+  const draft: IssueDraft = {
+    teamId,
+    title,
+    description,
+    status,
+    priority,
+    level: levelFields(level),
+  };
+  // handleSubmit closes over the draft it submitted; the resolved create compares
+  // it with this latest committed draft to tell whether the user changed the form.
+  const currentDraft = useRef(draft);
 
-  // Fall back to the default/first team without needing an effect.
-  const teamId = selectedTeamId ?? defaultTeamId ?? teams?.[0]?._id;
+  useEffect(() => {
+    session.current += 1;
+  }, [open]);
+
+  // A layout effect runs during commit, so the ref never lags a rendered edit
+  // when the create resolves before passive effects flush.
+  useLayoutEffect(() => {
+    currentDraft.current = draft;
+  });
+
+  const offeredStatuses = statusesFor(STATUSES, level.kind);
+  const canSubmit =
+    Boolean(teamId) && title.trim() !== "" && missingPlacement(level) === null;
+
+  const changeLevel = (next: LevelChoice) => {
+    setLevel(next);
+    if (!statusesFor(STATUSES, next.kind).some((s) => s.value === status)) {
+      setStatus("todo");
+    }
+  };
 
   const handleSubmit = async () => {
-    if (!teamId || !title.trim()) {
+    const { teamId: submittedTeamId, level: submittedLevel, ...fields } = draft;
+    if (!submittedTeamId || !canSubmit || inFlight.current) {
       return;
     }
+    inFlight.current = true;
     setSubmitting(true);
+    const submittedIn = session.current;
     try {
       const issueId = await createIssue({
-        teamId,
-        title,
-        description: description.trim() || undefined,
-        status,
-        priority,
+        teamId: submittedTeamId,
+        ...fields,
+        description: fields.description.trim() || undefined,
+        ...submittedLevel,
       });
       toast.success("Issue created");
-      onOpenChange(false);
+      const outcome = createIssueOutcome(
+        submittedIn === session.current,
+        draft,
+        currentDraft.current
+      );
+      if (outcome === "keep") {
+        return;
+      }
       setTitle("");
       setDescription("");
       setStatus("todo");
       setPriority("none");
+      setLevel(DEFAULT_LEVEL);
+      if (outcome === "clear") {
+        return;
+      }
+      onOpenChange(false);
       if (params.orgSlug) {
         router.push(`/${params.orgSlug}/issue/${issueId}`);
       }
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to create issue"
+        errorMessage(error, "Failed to create issue")
       );
     } finally {
+      inFlight.current = false;
       setSubmitting(false);
     }
   };
@@ -118,7 +189,10 @@ export function CreateIssueDialog({
           <div className="flex flex-wrap items-center gap-2">
             <Select
               value={teamId ?? ""}
-              onValueChange={(value) => setSelectedTeamId(value as Id<"teams">)}
+              onValueChange={(value) => {
+                setSelectedTeamId(value as Id<"teams">);
+                setLevel({ ...level, parentIssueId: undefined });
+              }}
             >
               <SelectTrigger size="sm" className="w-auto gap-1.5">
                 <SelectValue placeholder="Team" />
@@ -131,6 +205,7 @@ export function CreateIssueDialog({
                 ))}
               </SelectContent>
             </Select>
+            <LevelPickers teamId={teamId} value={level} onChange={changeLevel} />
             <Select
               value={status}
               onValueChange={(value) => setStatus(value as IssueStatus)}
@@ -140,7 +215,7 @@ export function CreateIssueDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {STATUSES.map((s) => (
+                {offeredStatuses.map((s) => (
                   <SelectItem key={s.value} value={s.value}>
                     {s.label}
                   </SelectItem>
@@ -171,10 +246,10 @@ export function CreateIssueDialog({
           </Button>
           <Button
             size="sm"
-            disabled={!title.trim() || !teamId || submitting}
+            disabled={!canSubmit || submitting}
             onClick={() => void handleSubmit()}
           >
-            Create issue
+            {submitting ? "Creating…" : "Create issue"}
           </Button>
         </div>
       </DialogContent>

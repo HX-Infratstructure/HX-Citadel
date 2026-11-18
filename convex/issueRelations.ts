@@ -1,13 +1,23 @@
 import { v } from "convex/values";
+import { formatIssueKey } from "../lib/issue-key";
 import { Doc, Id } from "./_generated/dataModel";
 import { QueryCtx } from "./_generated/server";
 import { getOrgIssue } from "./issues";
-import { logActivity } from "./lib/activity";
+import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import {
+  assertParentOpen,
+  assertValidParent,
+  cascadeProject,
+  nextSubNumber,
+} from "./lib/rules/levels";
+import { assertNotTestingSubtask } from "./lib/rules/testing";
+import {
+  issueKindValidator,
   issuePriorityValidator,
   issueRelationTypeValidator,
   issueStatusValidator,
+  issueTypeValidator,
 } from "./schema";
 
 /**
@@ -31,6 +41,8 @@ const issueSummaryValidator = v.object({
   _id: v.id("issues"),
   /** Display identifier, e.g. "ENG-42". */
   identifier: v.string(),
+  kind: issueKindValidator,
+  type: v.optional(issueTypeValidator),
   title: v.string(),
   status: issueStatusValidator,
   priority: issuePriorityValidator,
@@ -40,6 +52,8 @@ const issueSummaryValidator = v.object({
 type IssueSummary = {
   _id: Id<"issues">;
   identifier: string;
+  kind: Doc<"issues">["kind"];
+  type?: Doc<"issues">["type"];
   title: string;
   status: Doc<"issues">["status"];
   priority: Doc<"issues">["priority"];
@@ -47,6 +61,22 @@ type IssueSummary = {
 };
 
 type TeamCache = Map<Id<"teams">, Doc<"teams"> | null>;
+
+async function parentStoryNumber(
+  ctx: { db: QueryCtx["db"] },
+  issue: Doc<"issues">
+): Promise<number | undefined> {
+  if (issue.kind !== "subtask" || !issue.parentIssueId) {
+    return undefined;
+  }
+  const parent = await ctx.db.get(issue.parentIssueId);
+  return parent?.number;
+}
+
+/** Order siblings by their own sequence: story number or subtask number. */
+function siblingOrder(issue: Doc<"issues">): number {
+  return issue.number ?? issue.subNumber ?? 0;
+}
 
 async function summarizeIssue(
   ctx: { db: QueryCtx["db"] },
@@ -57,9 +87,16 @@ async function summarizeIssue(
     teamCache.set(issue.teamId, await ctx.db.get(issue.teamId));
   }
   const team = teamCache.get(issue.teamId) ?? null;
+  const key = formatIssueKey(
+    team?.key ?? "?",
+    issue,
+    await parentStoryNumber(ctx, issue)
+  );
   return {
     _id: issue._id,
-    identifier: `${team?.key ?? "?"}-${issue.number}`,
+    identifier: key ?? issue.title,
+    kind: issue.kind,
+    type: issue.type,
     title: issue.title,
     status: issue.status,
     priority: issue.priority,
@@ -269,7 +306,7 @@ export const hierarchy = orgQuery({
       .query("issues")
       .withIndex("by_parent", (q) => q.eq("parentIssueId", issue._id))
       .collect();
-    children.sort((a, b) => a.number - b.number);
+    children.sort((a, b) => siblingOrder(a) - siblingOrder(b));
 
     const subIssues = [];
     for (const child of children) {
@@ -282,6 +319,18 @@ export const hierarchy = orgQuery({
   },
 });
 
+/** A subtask moved to another story takes the next number there, so keys stay unique. */
+async function renumberedSubtask(
+  ctx: { db: QueryCtx["db"] },
+  kind: Doc<"issues">["kind"],
+  parentIssueId: Id<"issues"> | null
+): Promise<Pick<Doc<"issues">, "subNumber">> {
+  if (kind !== "subtask" || parentIssueId === null) {
+    return {};
+  }
+  return { subNumber: await nextSubNumber(ctx, parentIssueId) };
+}
+
 export const setParent = orgMutation({
   args: {
     issueId: v.id("issues"),
@@ -293,14 +342,18 @@ export const setParent = orgMutation({
     if ((issue.parentIssueId ?? null) === args.parentIssueId) {
       return null;
     }
+    assertNotTestingSubtask(issue, "moved");
     const teamCache: TeamCache = new Map();
 
+    let newParent: Doc<"issues"> | null = null;
     let newParentIdentifier: string | undefined;
+    let projectId = issue.projectId;
     if (args.parentIssueId !== null) {
       if (args.parentIssueId === issue._id) {
         throw new Error("An issue cannot be its own parent");
       }
       const parent = await getOrgIssue(ctx, ctx.org._id, args.parentIssueId);
+      newParent = parent;
 
       // Walk up from the new parent — hitting this issue means a cycle.
       let ancestorId: Id<"issues"> | undefined = parent.parentIssueId;
@@ -317,6 +370,15 @@ export const setParent = orgMutation({
             : undefined;
       }
       newParentIdentifier = await issueIdentifier(ctx, parent, teamCache);
+      projectId = parent.projectId;
+    }
+    const placement = await assertValidParent(ctx, issue.kind, {
+      teamId: issue.teamId,
+      parentIssueId: args.parentIssueId ?? undefined,
+      projectId,
+    });
+    if (newParent !== null) {
+      await assertParentOpen(ctx, newParent, issue.kind);
     }
 
     let oldParentIdentifier: string | undefined;
@@ -327,9 +389,15 @@ export const setParent = orgMutation({
       }
     }
 
-    await ctx.db.patch(issue._id, {
+    const moved = {
       parentIssueId: args.parentIssueId ?? undefined,
-    });
+      projectId: placement.projectId,
+      ...(await renumberedSubtask(ctx, issue.kind, args.parentIssueId)),
+    };
+    const actor = { orgId: ctx.org._id, actorId: ctx.user._id };
+    await ctx.db.patch(issue._id, moved);
+    await logFieldChanges(ctx, actor, issue._id, changedFields(issue, moved));
+    await cascadeProject(ctx, issue._id, placement.projectId, actor);
 
     await logActivity(ctx, {
       orgId: ctx.org._id,

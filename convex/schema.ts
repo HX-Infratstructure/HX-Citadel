@@ -14,6 +14,19 @@ export const issueStatusValidator = v.union(
   v.literal("canceled")
 );
 
+export const issueKindValidator = v.union(
+  v.literal("epic"),
+  v.literal("feature"),
+  v.literal("story"),
+  v.literal("subtask")
+);
+
+export const issueTypeValidator = v.union(
+  v.literal("story"),
+  v.literal("bug"),
+  v.literal("chore")
+);
+
 export const issuePriorityValidator = v.union(
   v.literal("none"),
   v.literal("urgent"),
@@ -89,8 +102,13 @@ export default defineSchema({
   issues: defineTable({
     orgId: v.id("organizations"),
     teamId: v.id("teams"),
-    /** Per-team sequence number, displayed as KEY-number */
-    number: v.number(),
+    kind: issueKindValidator,
+    /** Set only on stories */
+    type: v.optional(issueTypeValidator),
+    /** Per-team sequence number, stories only, displayed as KEY-number */
+    number: v.optional(v.number()),
+    /** Per-story sequence number, subtasks only, displayed as KEY-number.subNumber */
+    subNumber: v.optional(v.number()),
     title: v.string(),
     description: v.optional(v.string()),
     status: issueStatusValidator,
@@ -105,12 +123,18 @@ export default defineSchema({
     dueDate: v.optional(v.number()),
     /** Fractional ranking for board/list ordering */
     sortOrder: v.number(),
+    /** True only on a story's Complete testing sub-task */
+    testing: v.optional(v.boolean()),
+    /** Absolute http(s) proof link, Complete testing sub-task only */
+    proofUrl: v.optional(v.string()),
   })
     .index("by_org", ["orgId"])
     .index("by_team", ["teamId"])
     .index("by_team_and_number", ["teamId", "number"])
     .index("by_team_and_status", ["teamId", "status"])
-    .index("by_assignee", ["orgId", "assigneeId"])
+    .index("by_team_and_sort_order", ["teamId", "sortOrder"])
+    .index("by_team_kind_status", ["teamId", "kind", "status"])
+    .index("by_assignee_kind_status", ["orgId", "assigneeId", "kind", "status"])
     .index("by_project", ["projectId"])
     .index("by_cycle", ["cycleId"])
     .index("by_parent", ["parentIssueId"])
@@ -198,7 +222,9 @@ export default defineSchema({
     fileType: v.string(),
     fileSize: v.number(),
     uploadedBy: v.id("users"),
-  }).index("by_issue", ["issueId"]),
+  })
+    .index("by_issue", ["issueId"])
+    .index("by_storage", ["storageId"]),
 
   views: defineTable({
     orgId: v.id("organizations"),

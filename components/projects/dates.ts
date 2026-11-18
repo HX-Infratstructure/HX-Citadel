@@ -1,7 +1,5 @@
 /** Date helpers shared by the projects & cycles UI (Track B). */
 
-export const DAY_MS = 86_400_000;
-
 export function formatDay(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, {
     month: "short",

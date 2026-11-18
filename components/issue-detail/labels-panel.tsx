@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import { Check, Plus } from "lucide-react";
 import { useState } from "react";
@@ -52,7 +53,7 @@ export function LabelsPanel({ issue }: IssueDetailSlotProps) {
   const toggle = (labelId: Id<"labels">) => {
     toggleLabel({ issueId: issue._id, labelId }).catch((error: unknown) => {
       toast.error(
-        error instanceof Error ? error.message : "Failed to update labels"
+        errorMessage(error, "Failed to update labels")
       );
     });
   };
@@ -69,7 +70,7 @@ export function LabelsPanel({ issue }: IssueDetailSlotProps) {
       await toggleLabel({ issueId: issue._id, labelId });
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to create label"
+        errorMessage(error, "Failed to create label")
       );
     }
   };

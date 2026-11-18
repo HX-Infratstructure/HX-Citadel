@@ -1,24 +1,33 @@
 import { v } from "convex/values";
+import { formatIssueKey } from "../lib/issue-key";
+import { isGatedStatus } from "../lib/issue-status";
+import { DAY_MS, SPRINT_DAYS, sprintEnd } from "../lib/sprint";
 import { Doc, Id } from "./_generated/dataModel";
 import { logActivity } from "./lib/activity";
 import { internalMutation } from "./_generated/server";
+import { storyType } from "./issues";
 import { getMembershipOrThrow, getOrgByClerkIdOrThrow, getUserByClerkIdOrThrow } from "./lib/mirror";
+import { nextSubNumber } from "./lib/rules/levels";
+import { createTestingSubtask } from "./lib/rules/testing";
 
 /**
  * Dev-only demo workspace, run with `pnpm seed:demo` (never from the UI,
  * a build or a deploy). Populates teams, labels, projects, cycles and a few
- * dozen issues (with sub-issues, relations, comments and activity) so an
- * empty development org shows the app in full flight.
- *
- * Small by design: 2 projects and 43 issues.
+ * dozen issues (epics, features, stories and their sub-tasks, relations,
+ * comments and activity) so an empty development org shows the app in full
+ * flight. The rows follow the phase 2 rules the mutations enforce.
  */
-
-const DAY = 24 * 60 * 60 * 1000;
 
 type IssueStatus = Doc<"issues">["status"];
 type IssuePriority = Doc<"issues">["priority"];
 
+type SubtaskSpec = { title: string; status: IssueStatus };
+
 type IssueSpec = {
+  /** Omitted for a story. */
+  kind?: "epic" | "feature";
+  /** A story's type when it is not a plain story. */
+  type?: "bug" | "chore";
   title: string;
   description?: string;
   status: IssueStatus;
@@ -28,11 +37,14 @@ type IssueSpec = {
   dueInDays?: number;
   /** Assign to the seeding user. */
   assign?: boolean;
-  /** Index into PROJECTS. */
+  /** Index into PROJECTS; a child inherits its parent's. */
   project?: number;
   cycle?: "prev" | "current" | "next";
   labels?: string[];
-  children?: { title: string; status: IssueStatus; priority: IssuePriority }[];
+  /** Features under an epic, stories under a feature. */
+  children?: IssueSpec[];
+  /** A story's sub-tasks besides its Complete testing sub-task. */
+  subtasks?: SubtaskSpec[];
 };
 
 const LABELS: { name: string; color: string }[] = [
@@ -78,39 +90,80 @@ const TEAMS: { name: string; key: string; description: string; cycles: ("prev" |
     description: "Product engineering — app, API and infrastructure.",
     cycles: ["prev", "current", "next"],
     issues: [
-      { title: "Set up CI pipeline with preview deploys", status: "done", priority: "high", estimate: 3, assign: true, cycle: "prev", labels: ["Infra"] },
-      { title: "Fix N+1 queries on issue list", description: "The list view fires one query per row for labels. Batch them with a single indexed query.", status: "done", priority: "urgent", estimate: 2, assign: true, cycle: "prev", labels: ["Performance", "Bug"] },
-      { title: "Webhook retries drop events on 5xx", description: "Failed webhook deliveries were ACKed instead of retried, silently losing events. Make handlers fail loudly so the queue retries.", status: "done", priority: "urgent", estimate: 2, assign: true, cycle: "prev", labels: ["Bug"] },
-      { title: "Issue list virtualization", description: "Render only visible rows so 5k-issue workspaces stay at 60fps.", status: "in_review", priority: "high", estimate: 5, assign: true, cycle: "current", project: 0, labels: ["Performance"] },
-      { title: "Realtime presence indicators flicker on reconnect", status: "in_progress", priority: "medium", estimate: 2, assign: true, cycle: "current", labels: ["Bug"] },
-      { title: "Migrate auth tokens to httpOnly cookies", description: "Move session tokens out of localStorage ahead of the security review.", status: "in_progress", priority: "urgent", estimate: 3, assign: true, cycle: "current", project: 1, dueInDays: 5, labels: ["Security"] },
-      { title: "Dark mode flash on first paint", status: "in_review", priority: "medium", estimate: 1, cycle: "current", labels: ["Bug", "Polish"] },
-      { title: "Flaky e2e: drag-and-drop board test", status: "todo", priority: "medium", estimate: 1, assign: true, cycle: "current", labels: ["Bug", "Infra"] },
-      { title: "Add keyboard shortcut cheat sheet (?)", status: "todo", priority: "low", estimate: 1, cycle: "current", labels: ["Polish"] },
       {
-        title: "Mobile responsive board view",
-        description: "The board is unusable below 768px. Columns should scroll horizontally with snap points and support touch drag.",
+        kind: "epic",
+        title: "Board on every screen",
         status: "in_progress",
         priority: "high",
-        estimate: 8,
-        assign: true,
-        cycle: "current",
         project: 0,
-        labels: ["Feature"],
         children: [
-          { title: "Touch drag-and-drop support", status: "in_progress", priority: "high" },
-          { title: "Collapsible column headers on small screens", status: "todo", priority: "medium" },
-          { title: "Swipe between board columns", status: "backlog", priority: "low" },
+          {
+            kind: "feature",
+            title: "Touch-first board",
+            status: "in_progress",
+            priority: "high",
+            children: [
+              {
+                title: "Mobile responsive board view",
+                description: "The board is unusable below 768px. Columns should scroll horizontally with snap points and support touch drag.",
+                status: "in_progress",
+                priority: "high",
+                estimate: 8,
+                assign: true,
+                cycle: "current",
+                labels: ["Feature"],
+                subtasks: [
+                  { title: "Touch drag-and-drop support", status: "in_progress" },
+                  { title: "Collapsible column headers on small screens", status: "todo" },
+                  { title: "Swipe between board columns", status: "backlog" },
+                ],
+              },
+              { title: "Issue list virtualization", description: "Render only visible rows so 5k-issue workspaces stay at 60fps.", status: "in_review", priority: "high", estimate: 5, assign: true, cycle: "current", labels: ["Performance"], subtasks: [{ title: "Windowed row renderer", status: "done" }] },
+            ],
+          },
+          {
+            kind: "feature",
+            title: "Fast issue list",
+            status: "done",
+            priority: "urgent",
+            children: [
+              { title: "Fix N+1 queries on issue list", description: "The list view fires one query per row for labels. Batch them with a single indexed query.", status: "done", priority: "urgent", estimate: 2, assign: true, cycle: "prev", labels: ["Performance", "Bug"] },
+            ],
+          },
         ],
       },
-      { title: "Rate-limit public API endpoints", status: "todo", priority: "high", estimate: 2, cycle: "next", project: 1, labels: ["Security"] },
+      {
+        kind: "epic",
+        title: "Launch hardening",
+        status: "in_progress",
+        priority: "urgent",
+        project: 1,
+        children: [
+          {
+            kind: "feature",
+            title: "Session security",
+            status: "in_progress",
+            priority: "urgent",
+            children: [
+              { title: "Migrate auth tokens to httpOnly cookies", description: "Move session tokens out of localStorage ahead of the security review.", status: "in_progress", priority: "urgent", estimate: 3, cycle: "current", dueInDays: 5, labels: ["Security"] },
+              { title: "Rate-limit public API endpoints", status: "todo", priority: "high", estimate: 2, cycle: "next", labels: ["Security"] },
+            ],
+          },
+        ],
+      },
+      { title: "Set up CI pipeline with preview deploys", type: "chore", status: "done", priority: "high", estimate: 3, assign: true, cycle: "prev", labels: ["Infra"] },
+      { title: "Webhook retries drop events on 5xx", type: "bug", description: "Failed webhook deliveries were ACKed instead of retried, silently losing events. Make handlers fail loudly so the queue retries.", status: "done", priority: "urgent", estimate: 2, assign: true, cycle: "prev", labels: ["Bug"] },
+      { title: "Realtime presence indicators flicker on reconnect", status: "todo", priority: "medium", estimate: 2, assign: true, cycle: "current", labels: ["Bug"] },
+      { title: "Dark mode flash on first paint", type: "bug", status: "in_review", priority: "medium", estimate: 1, cycle: "current", labels: ["Bug", "Polish"] },
+      { title: "Flaky e2e: drag-and-drop board test", status: "todo", priority: "medium", estimate: 1, assign: true, cycle: "current", labels: ["Bug", "Infra"] },
+      { title: "Add keyboard shortcut cheat sheet (?)", status: "todo", priority: "low", estimate: 1, cycle: "current", labels: ["Polish"] },
       { title: "Reduce cold-start time of dashboard", status: "todo", priority: "high", estimate: 3, cycle: "next", dueInDays: 14, labels: ["Performance"] },
       { title: "Public launch checklist", description: "Track every launch-blocking item: status page, error budgets, on-call rotation, rollback plan.", status: "todo", priority: "urgent", estimate: 2, assign: true, project: 1, dueInDays: 10 },
       { title: "Audit log for admin actions", status: "backlog", priority: "medium", estimate: 3, project: 1, labels: ["Security", "Feature"] },
       { title: "Slack integration for issue notifications", status: "backlog", priority: "medium", estimate: 5, project: 0, labels: ["Feature"] },
       { title: "Bulk edit issues from list view", status: "backlog", priority: "medium", estimate: 3, labels: ["Feature"] },
       { title: "Export workspace data as CSV", status: "backlog", priority: "low", estimate: 2, labels: ["Feature"] },
-      { title: "Upgrade to React 19.3", status: "canceled", priority: "low", labels: ["Infra"] },
+      { title: "Upgrade to React 19.3", type: "chore", status: "canceled", priority: "low", labels: ["Infra"] },
     ],
   },
   {
@@ -122,7 +175,7 @@ const TEAMS: { name: string; key: string; description: string; cycles: ("prev" |
       { title: "Design system: dark mode color audit", status: "done", priority: "high", estimate: 3, assign: true, cycle: "current", labels: ["Design system"] },
       { title: "Issue detail spacing & typography pass", status: "done", priority: "medium", estimate: 1, assign: true, cycle: "current", labels: ["Polish"] },
       { title: "Mobile board interaction spec", status: "done", priority: "high", estimate: 2, assign: true, project: 0 },
-      { title: "Empty states for projects & cycles", status: "in_progress", priority: "medium", estimate: 2, assign: true, cycle: "current", labels: ["Polish"] },
+      { title: "Empty states for projects & cycles", status: "todo", priority: "medium", estimate: 2, assign: true, cycle: "current", labels: ["Polish"] },
       { title: "Onboarding flow redesign", description: "Collapse org + team creation into a single screen with sensible defaults.", status: "in_review", priority: "high", estimate: 5, assign: true, project: 0, labels: ["Feature"] },
       { title: "Marketing site hero illustration", status: "in_progress", priority: "medium", estimate: 3, project: 1 },
       { title: "Pricing page comparison table polish", status: "todo", priority: "medium", estimate: 2, cycle: "current", project: 1, dueInDays: -1, labels: ["Polish"] },
@@ -140,8 +193,8 @@ const TEAMS: { name: string; key: string; description: string; cycles: ("prev" |
     cycles: [],
     issues: [
       { title: "Newsletter #12: cycles deep dive", status: "done", priority: "medium", estimate: 1, assign: true },
-      { title: "Launch blog post draft", status: "in_progress", priority: "high", estimate: 2, assign: true, project: 1, dueInDays: 9 },
-      { title: "Founding-customer outreach list", status: "in_progress", priority: "medium", estimate: 2, assign: true },
+      { title: "Launch blog post draft", status: "todo", priority: "high", estimate: 2, assign: true, project: 1, dueInDays: 9 },
+      { title: "Founding-customer outreach list", status: "in_progress", priority: "medium", estimate: 2 },
       { title: "Pricing FAQ copy", status: "in_review", priority: "medium", estimate: 1, project: 1 },
       { title: "Product Hunt launch assets", status: "todo", priority: "urgent", estimate: 3, project: 1, dueInDays: 8 },
       { title: "Twitter/X launch thread", status: "todo", priority: "high", estimate: 1, project: 1, dueInDays: 10 },
@@ -220,17 +273,19 @@ export const demoData = internalMutation({
           description: project.description,
           status: project.status,
           leadId: userId,
-          targetDate: now + project.targetInDays * DAY,
+          targetDate: now + project.targetInDays * DAY_MS,
           color: project.color,
         })
       );
     }
 
-    // Cycle windows relative to today so "current" is always live.
+    // Sprints relative to today so "current" is always live.
+    const sprintFrom = (startDate: number) => ({ startDate, endDate: sprintEnd(startDate) });
+    const currentStart = now - Math.floor(SPRINT_DAYS / 2) * DAY_MS;
     const cycleWindows = {
-      prev: { startDate: now - 21 * DAY, endDate: now - 7 * DAY },
-      current: { startDate: now - 7 * DAY, endDate: now + 7 * DAY },
-      next: { startDate: now + 7 * DAY, endDate: now + 21 * DAY },
+      prev: sprintFrom(currentStart - SPRINT_DAYS * DAY_MS),
+      current: sprintFrom(currentStart),
+      next: sprintFrom(currentStart + SPRINT_DAYS * DAY_MS),
     } as const;
 
     let cycleCount = 0;
@@ -262,39 +317,11 @@ export const demoData = internalMutation({
       }
 
       let nextNumber = 1;
-      const insertIssue = async (
-        spec: Pick<IssueSpec, "title" | "description" | "status" | "priority" | "estimate" | "dueInDays" | "assign" | "project" | "cycle" | "labels">,
-        parentIssueId?: Id<"issues">
-      ) => {
-        const issueId = await ctx.db.insert("issues", {
-          orgId,
-          teamId,
-          number: nextNumber,
-          title: spec.title,
-          description: spec.description,
-          status: spec.status,
-          priority: spec.priority,
-          assigneeId: spec.assign ? userId : undefined,
-          creatorId: userId,
-          projectId: spec.project !== undefined ? projectIds[spec.project] : undefined,
-          cycleId: spec.cycle ? cycleIds.get(spec.cycle) : undefined,
-          parentIssueId,
-          estimate: spec.estimate,
-          dueDate: spec.dueInDays !== undefined ? now + spec.dueInDays * DAY : undefined,
-          sortOrder: nextNumber * 1024,
-        });
-        nextNumber++;
-        issueCount++;
+      let position = 0;
 
-        for (const labelName of spec.labels ?? []) {
-          const labelId = labelIds.get(labelName);
-          if (labelId) {
-            await ctx.db.insert("issueLabels", { issueId, labelId });
-          }
-        }
-
+      const logSeededState = async (issueId: Id<"issues">, status: IssueStatus, assign?: boolean) => {
         await logActivity(ctx, { orgId, issueId, actorId: userId, type: "created" });
-        if (spec.status !== "backlog" && spec.status !== "todo") {
+        if (status !== "backlog" && status !== "todo") {
           await logActivity(ctx, {
             orgId,
             issueId,
@@ -302,10 +329,10 @@ export const demoData = internalMutation({
             type: "status_changed",
             field: "status",
             oldValue: "todo",
-            newValue: spec.status,
+            newValue: status,
           });
         }
-        if (spec.assign) {
+        if (assign) {
           await logActivity(ctx, {
             orgId,
             issueId,
@@ -315,19 +342,82 @@ export const demoData = internalMutation({
             newValue: user.name,
           });
         }
+      };
 
-        const doc = await ctx.db.get(issueId);
-        if (doc) {
-          issuesByTitle.set(spec.title, doc);
+      /** A gated story's testing sub-task is done with a proof link, so the story passes the Done gate. */
+      const insertSubtasks = async (story: Doc<"issues">, subtasks: SubtaskSpec[]) => {
+        const testingId = await createTestingSubtask(ctx, story);
+        issueCount++;
+        if (isGatedStatus(story.status)) {
+          const proofUrl = `https://example.com/proof/${formatIssueKey(team.key, story)}`;
+          await ctx.db.patch(testingId, { status: "done", proofUrl });
         }
-        return issueId;
+        for (const subtask of subtasks) {
+          const subtaskId = await ctx.db.insert("issues", {
+            orgId,
+            teamId,
+            kind: "subtask",
+            subNumber: await nextSubNumber(ctx, story._id),
+            title: subtask.title,
+            status: subtask.status,
+            priority: "none",
+            assigneeId: story.assigneeId,
+            creatorId: userId,
+            projectId: story.projectId,
+            parentIssueId: story._id,
+            sortOrder: story.sortOrder,
+          });
+          issueCount++;
+          await logSeededState(subtaskId, subtask.status);
+        }
+      };
+
+      const insertIssue = async (spec: IssueSpec, parent?: Doc<"issues">): Promise<void> => {
+        const kind = spec.kind ?? "story";
+        const number = kind === "story" ? nextNumber++ : undefined;
+        const ownProject = spec.project === undefined ? undefined : projectIds[spec.project];
+        position++;
+        const issueId = await ctx.db.insert("issues", {
+          orgId,
+          teamId,
+          kind,
+          type: storyType(kind, spec.type),
+          number,
+          title: spec.title,
+          description: spec.description,
+          status: spec.status,
+          priority: spec.priority,
+          assigneeId: spec.assign ? userId : undefined,
+          creatorId: userId,
+          projectId: parent ? parent.projectId : ownProject,
+          cycleId: spec.cycle ? cycleIds.get(spec.cycle) : undefined,
+          parentIssueId: parent?._id,
+          estimate: spec.estimate,
+          dueDate: spec.dueInDays !== undefined ? now + spec.dueInDays * DAY_MS : undefined,
+          sortOrder: position * 1024,
+        });
+        issueCount++;
+
+        for (const labelName of spec.labels ?? []) {
+          const labelId = labelIds.get(labelName);
+          if (labelId) {
+            await ctx.db.insert("issueLabels", { issueId, labelId });
+          }
+        }
+        await logSeededState(issueId, spec.status, spec.assign);
+
+        const doc = (await ctx.db.get(issueId))!;
+        issuesByTitle.set(spec.title, doc);
+        for (const child of spec.children ?? []) {
+          await insertIssue(child, doc);
+        }
+        if (kind === "story") {
+          await insertSubtasks(doc, spec.subtasks ?? []);
+        }
       };
 
       for (const spec of team.issues) {
-        const parentId = await insertIssue(spec);
-        for (const child of spec.children ?? []) {
-          await insertIssue({ ...child, project: spec.project, cycle: spec.cycle }, parentId);
-        }
+        await insertIssue(spec);
       }
 
       await ctx.db.patch(teamId, { nextIssueNumber: nextNumber });

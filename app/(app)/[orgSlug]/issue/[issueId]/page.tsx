@@ -12,6 +12,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { IssueProperties } from "@/components/issue-detail/issue-properties";
+import { IssueKey } from "@/components/issues/issue-key";
+import { TestingProof } from "@/components/issue-detail/testing-proof";
 import {
   issueDetailMainSlots,
   issueDetailSidebarSlots,
@@ -71,8 +73,6 @@ function IssueDetail({
   const [title, setTitle] = useState(issue.title);
   const [description, setDescription] = useState(issue.description ?? "");
 
-  const identifier = `${team.key}-${issue.number}`;
-
   const saveTitle = () => {
     const trimmed = title.trim();
     if (!trimmed || trimmed === issue.title) {
@@ -103,9 +103,11 @@ function IssueDetail({
           {team.name}
         </Link>
         <ChevronRight className="size-3.5 text-muted-foreground" />
-        <span className="font-mono text-xs text-muted-foreground">
-          {identifier}
-        </span>
+        <IssueKey
+          teamKey={team.key}
+          issue={issue}
+          className="font-mono text-xs text-muted-foreground"
+        />
       </header>
       <div className="flex min-h-0 flex-1">
         <ScrollArea className="flex-1">
@@ -130,6 +132,7 @@ function IssueDetail({
               placeholder="Add description…"
               className="min-h-32 resize-none border-none px-0 text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
+            {issue.testing && <TestingProof issue={issue} />}
             {issueDetailMainSlots.map((Slot, index) => (
               <Slot key={index} issue={issue} team={team} />
             ))}

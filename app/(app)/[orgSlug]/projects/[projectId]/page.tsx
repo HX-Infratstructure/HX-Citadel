@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import { ChevronRight, Loader2 } from "lucide-react";
 import Link from "next/link";
@@ -101,7 +102,7 @@ function ProjectDetail({
     updateIssue({ issueId, projectId: project._id }).catch(
       (error: unknown) => {
         toast.error(
-          error instanceof Error ? error.message : "Failed to add issue"
+          errorMessage(error, "Failed to add issue")
         );
       }
     );

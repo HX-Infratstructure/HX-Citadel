@@ -1,5 +1,7 @@
 "use client";
 
+import { errorMessage } from "@/lib/error-message";
+import { sortOrderBetween } from "@/lib/sort-order";
 import {
   closestCorners,
   DndContext,
@@ -59,9 +61,6 @@ function findContainer(
   }
   return null;
 }
-
-/** Gap used when an issue is dropped at the top or bottom of a column. */
-const SORT_GAP = 1000;
 
 /**
  * Kanban board: one column per status, drag-and-drop via @dnd-kit. Drops
@@ -253,21 +252,11 @@ export function BoardView({
       return;
     }
 
-    // Fractional ordering between the new neighbors (columns sort
-    // descending: top of column = highest sortOrder).
     const above = index > 0 ? issueById.get(items[index - 1]) : undefined;
     const below =
       index < items.length - 1 ? issueById.get(items[index + 1]) : undefined;
-    let sortOrder: number;
-    if (above && below) {
-      sortOrder = (above.sortOrder + below.sortOrder) / 2;
-    } else if (above) {
-      sortOrder = above.sortOrder - SORT_GAP;
-    } else if (below) {
-      sortOrder = below.sortOrder + SORT_GAP;
-    } else {
-      sortOrder = issue.sortOrder;
-    }
+    const sortOrder =
+      sortOrderBetween(above?.sortOrder, below?.sortOrder) ?? issue.sortOrder;
 
     const statusChanged = activeContainer !== issue.status;
     const orderChanged = sortOrder !== issue.sortOrder;
@@ -281,7 +270,7 @@ export function BoardView({
       ...(orderChanged ? { sortOrder } : {}),
     }).catch((error: unknown) => {
       toast.error(
-        error instanceof Error ? error.message : "Failed to move issue"
+        errorMessage(error, "Failed to move issue")
       );
     });
   };

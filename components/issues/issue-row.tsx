@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api } from "@/convex/_generated/api";
 import { Doc } from "@/convex/_generated/dataModel";
+import { IssueKey } from "@/components/issues/issue-key";
 import { PriorityIcon } from "@/components/shared/priority-icon";
 import { StatusIcon } from "@/components/shared/status-icon";
 import { UserAvatar } from "@/components/shared/user-avatar";
@@ -26,9 +27,11 @@ export function IssueRow({
       className="group flex h-10 items-center gap-3 border-b px-4 text-sm transition-colors hover:bg-accent/50"
     >
       <PriorityIcon priority={issue.priority} />
-      <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">
-        {teamKey}-{issue.number}
-      </span>
+      <IssueKey
+        teamKey={teamKey}
+        issue={issue}
+        className="w-16 shrink-0 font-mono text-xs text-muted-foreground"
+      />
       <StatusIcon status={issue.status} />
       <span className="min-w-0 flex-1 truncate font-medium">{issue.title}</span>
       {issue.dueDate ? (
