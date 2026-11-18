@@ -169,7 +169,6 @@ export default defineSchema({
     .index("by_assignee_kind_status", ["orgId", "assigneeId", "kind", "status"])
     .index("by_project", ["projectId"])
     .index("by_cycle", ["cycleId"])
-    .index("by_parent", ["parentIssueId"])
     .index("by_org_and_parent", ["orgId", "parentIssueId"])
     .searchIndex("search_title", {
       searchField: "title",

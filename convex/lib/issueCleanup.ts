@@ -1,5 +1,6 @@
 import { Doc, Id, TableNames } from "../_generated/dataModel";
 import { MutationCtx } from "../_generated/server";
+import { relationsOf } from "./issueRelations";
 import { inOrg } from "./orgRows";
 
 export async function deleteRows(ctx: MutationCtx, rows: { _id: Id<TableNames> }[]) {
@@ -15,7 +16,8 @@ export function countTables<T extends string>(tables: readonly T[], count: (tabl
 
 /**
  * Rows written before `attachments.create` refused shared files can still share one,
- * so a file is deleted only with the last row that uses it.
+ * so a file is deleted only with the last row that uses it. Each file's read is bounded
+ * by design, like `ISSUE_OWNED_ROWS`: a file attached since then has one row.
  */
 export async function deleteAttachmentFiles(ctx: MutationCtx, attachments: Doc<"attachments">[]) {
   const leaving = new Set(attachments.map((attachment) => attachment._id));
@@ -31,23 +33,15 @@ export async function deleteAttachmentFiles(ctx: MutationCtx, attachments: Doc<"
   }
 }
 
-/** Relations name the issue on either end, so both indexes are read. */
-async function loadRelations(ctx: MutationCtx, issue: Doc<"issues">) {
-  const outgoing = await ctx.db
-    .query("issueRelations")
-    .withIndex("by_issue", (q) => q.eq("issueId", issue._id))
-    .collect();
-  const incoming = await ctx.db
-    .query("issueRelations")
-    .withIndex("by_related", (q) => q.eq("relatedIssueId", issue._id))
-    .collect();
-  return [...outgoing, ...incoming];
-}
-
 /**
  * Every table whose rows belong to one issue, and how to find them: the one list the
  * deletes, the counts and the admin validators derive from. Rows are read in the issue's
  * own workspace, so a row from another workspace that points at it is left alone.
+ *
+ * Bounded by design, so the reads are not paged: they hold one issue's own rows, one per
+ * comment, change, upload, label or decision, so a busy story holds hundreds. They are
+ * deleted in one atomic mutation, and Convex fails it whole, changing nothing, past
+ * 16,000 documents written or 32,000 read.
  */
 const ISSUE_OWNED_ROWS = {
   comments: (ctx: MutationCtx, issue: Doc<"issues">) =>
@@ -60,7 +54,7 @@ const ISSUE_OWNED_ROWS = {
     ctx.db.query("issueLabels").withIndex("by_issue", (q) => q.eq("issueId", issue._id)).collect(),
   decisions: (ctx: MutationCtx, issue: Doc<"issues">) =>
     inOrg(ctx.db.query("decisions").withIndex("by_issue", (q) => q.eq("issueId", issue._id)), issue.orgId).collect(),
-  issueRelations: loadRelations,
+  issueRelations: (ctx: MutationCtx, issue: Doc<"issues">) => relationsOf(ctx, issue._id),
 };
 
 type IssueOwnedTable = keyof typeof ISSUE_OWNED_ROWS;

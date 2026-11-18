@@ -95,9 +95,9 @@ describe("owner revert from the activity log", () => {
     await s.asMember.mutation(api.issues.update, { issueId: storyId, status: "in_progress" });
     const activityId = await s.lastChange(storyId, "status_changed");
 
-    await expect(s.asMember.mutation(api.issues.revertChange, { activityId })).rejects.toThrow(
-      /Admin access required/
-    );
+    await expect(s.asMember.mutation(api.issues.revertChange, { activityId })).rejects.toMatchObject({
+      data: { code: "rule_refused", message: "Admin access required" },
+    });
   });
 
   test("an unsupported field is refused", async () => {

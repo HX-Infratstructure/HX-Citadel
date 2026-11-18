@@ -1,5 +1,6 @@
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
+import { notFound } from "./refusals";
 
 type Ctx = QueryCtx | MutationCtx;
 
@@ -57,7 +58,7 @@ export async function getUserByClerkIdOrThrow(
 ): Promise<Doc<"users">> {
   const user = await findUserByClerkId(ctx, clerkUserId);
   if (!user) {
-    throw new Error(message);
+    notFound(message);
   }
   return user;
 }
@@ -69,7 +70,7 @@ export async function getOrgByClerkIdOrThrow(
 ): Promise<Doc<"organizations">> {
   const org = await findOrgByClerkId(ctx, clerkOrgId);
   if (!org) {
-    throw new Error(message);
+    notFound(message);
   }
   return org;
 }
@@ -82,7 +83,7 @@ export async function getMembershipOrThrow(
 ): Promise<Doc<"members">> {
   const membership = await findMembership(ctx, orgId, userId);
   if (!membership) {
-    throw new Error(message);
+    notFound(message);
   }
   return membership;
 }

@@ -49,6 +49,17 @@ describe("view input is a typed validation refusal", () => {
   });
 });
 
+describe("view update", () => {
+  // Catches: the creator's edit refused, or a field dropped or left untrimmed on the way to the patch.
+  // A cross-workspace or missing viewId is refused with not_found in orgRows.test.ts ("views.update (View)").
+  test("the creator's edit patches name, filters and shared", async () => {
+    const s = await setup();
+    await s.creator.mutation(api.views.update, { viewId: s.viewId, name: "  Renamed  ", filters: '{"status":"todo"}', shared: false });
+    const view = await s.t.run(async (ctx) => await ctx.db.get(s.viewId));
+    expect(view).toMatchObject({ name: "Renamed", filters: '{"status":"todo"}', shared: false });
+  });
+});
+
 describe("view permissions are typed rule refusals", () => {
   test("another member editing is refused", async () => {
     const s = await setup();

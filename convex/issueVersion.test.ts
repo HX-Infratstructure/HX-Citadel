@@ -2,7 +2,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { convexTest } from "convex-test";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { patchIssue } from "./lib/issueVersion";
@@ -242,26 +242,38 @@ describe("a story's sub-task counter", () => {
     expect(await version(storyId)).toBe(1);
   });
 
-  test("a story without its counter refuses a new sub-task as a 500 and writes no sub-task", async () => {
-    const t = await setup();
-    const storyId = await t.run(async (ctx) => {
-      const story = (await ctx.db.query("issues").collect()).find((issue) => issue.kind === "story")!;
-      await ctx.db.patch(story._id, { nextSubNumber: undefined });
-      return story._id;
-    });
-    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const response = await send(t, "POST", "/ENG-1/subtasks", { title: "Sub" });
-      expect(response.status).toBe(500);
-      expect(await response.json()).toEqual({ code: "server_error", message: "Internal error" });
-    } finally {
-      logged.mockRestore();
-    }
-    const children = await t.run(async (ctx) => {
+  /** The story as a restore, import or hand insert can leave it: no counter, and only the sub-tasks numbered in `kept`. */
+  async function storyWithoutCounter(kept: number[]) {
+    const setup = await storyWithLeaving();
+    const { t, storyId, nextSubtask } = setup;
+    expect(await nextSubtask()).toBe(3);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(storyId, { nextSubNumber: undefined });
       const { orgId } = (await ctx.db.get(storyId))!;
-      return await ctx.db.query("issues").withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", storyId)).collect();
+      const children = ctx.db.query("issues").withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", storyId));
+      for (const child of await children.collect()) {
+        if (!kept.includes(child.subNumber!)) {
+          await ctx.db.delete(child._id);
+        }
+      }
     });
-    expect(children.map((child) => child.title)).toEqual(["Complete testing"]);
+    return setup;
+  }
+
+  test("a story without its counter starts after its highest sub-task and keeps counting from there", async () => {
+    const { t, asMember, teamId, storyId, nextSubtask, version } = await storyWithoutCounter([1, 3]);
+    const fourthId = await asMember.mutation(api.issues.create, { teamId, title: "Fourth", kind: "subtask", parentIssueId: storyId });
+    expect(await t.run(async (ctx) => (await ctx.db.get(fourthId))?.subNumber)).toBe(4);
+    await asMember.mutation(api.issues.remove, { issueId: fourthId });
+    expect(await nextSubtask()).toBe(5);
+    expect(await version(storyId)).toBe(1);
+  });
+
+  test("a story without its counter or sub-tasks starts at .1", async () => {
+    const { storyId, nextSubtask, version } = await storyWithoutCounter([]);
+    expect(await nextSubtask()).toBe(1);
+    expect(await nextSubtask()).toBe(2);
+    expect(await version(storyId)).toBe(1);
   });
 });
 

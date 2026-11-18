@@ -101,7 +101,7 @@ describe("agentAdmin.removeAgent", () => {
       await ctx.db.patch(issue._id, { status: "canceled" });
       for (const subtask of await ctx.db
         .query("issues")
-        .withIndex("by_parent", (q) => q.eq("parentIssueId", issue._id))
+        .withIndex("by_org_and_parent", (q) => q.eq("orgId", issue.orgId).eq("parentIssueId", issue._id))
         .collect()) {
         await ctx.db.patch(subtask._id, { status: "done" });
       }

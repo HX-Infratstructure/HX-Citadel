@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { cycleName as formatCycleName } from "../lib/sprint";
 import { Doc, Id } from "./_generated/dataModel";
-import { activityNewestFirst, getOrgIssue, revertibleRows } from "./issues";
+import { activityNewestFirst, getOrgIssue, LIST_LIMIT, revertibleRows } from "./issues";
 import { orgQuery } from "./lib/customFunctions";
 import { orgRow } from "./lib/orgRows";
 
@@ -24,14 +24,14 @@ const activityEntryValidator = v.object({
   revertible: v.boolean(),
 });
 
-/** The issue's newest 500 activity rows, oldest first, each saying whether an owner can revert it. */
+/** The issue's newest `LIST_LIMIT` activity rows, oldest first, each saying whether an owner can revert it. */
 export const listByIssue = orgQuery({
   args: { issueId: v.id("issues") },
   returns: v.array(activityEntryValidator),
   handler: async (ctx, args) => {
     const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
 
-    const newestFirst = await activityNewestFirst(ctx, issue).take(500);
+    const newestFirst = await activityNewestFirst(ctx, issue).take(LIST_LIMIT);
     const revertible = revertibleRows(issue, newestFirst);
     const entries = [...newestFirst].reverse();
 

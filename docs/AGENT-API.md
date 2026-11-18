@@ -62,7 +62,7 @@ An issue key is a story key such as `CIT-12` or a sub-task key such as `CIT-12.1
 - `If-Match` is optional on writes (`readIfMatch`). Send the issue version you last read, as `"2"` or `2`. If the issue changed since then, the write fails with `412 stale` (`assertIfMatch` in `convex/lib/issueVersion.ts`). Without `If-Match`, the server does not check the version.
   - On a create (`POST /api/v1/issues`), `If-Match` is the version of the `parentKey` issue. A create with `If-Match` but no `parentKey` fails with `400 validation` (`createIssue` in `convex/agentApi.ts`).
 
-Every response that returns one issue carries its version as the `ETag` header, such as `"3"` (`issueJson`). The body also has `issue.version`. Every change to an issue adds 1 to the version, and a write that changes nothing keeps it (`patchIssue`).
+Every response that returns one issue carries its version as the `ETag` header, such as `"3"` (`issueJson`). The body also has `issue.version`. A change to an issue adds 1 to the version unless it changes only bookkeeping fields (`BOOKKEEPING_FIELDS` in `convex/lib/issueVersion.ts`), and a write that changes nothing keeps it (`patchIssue`).
 
 ### Read an error
 

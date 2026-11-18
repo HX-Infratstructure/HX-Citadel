@@ -6,6 +6,7 @@ import { internal } from "./_generated/api";
 import { PAGE_SIZE } from "./admin";
 import { Doc, Id, TableNames } from "./_generated/dataModel";
 import { MutationCtx } from "./_generated/server";
+import { createTestingSubtask } from "./lib/rules/testing";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -220,6 +221,34 @@ async function scheduledRunStates(t: TestConvex) {
   return new Set(jobs.map((job) => job.state.kind));
 }
 
+const SCALE_ORG = "org_scale";
+const SCALE_TEAMS = ["ENG", "OPS", "WEB", "QA"];
+const STORIES_PER_TEAM = 250;
+
+/** Adds a team with one cycle and `STORIES_PER_TEAM` stories, each with its Complete testing sub-task, as `issues.create` writes them. */
+async function addTeamOfStories(t: TestConvex, orgId: Id<"organizations">, creatorId: Id<"users">, key: string) {
+  await t.run(async (ctx) => {
+    const teamId = await ctx.db.insert("teams", { orgId, name: key, key, nextIssueNumber: STORIES_PER_TEAM + 1 });
+    await ctx.db.insert("cycles", { orgId, teamId, number: 1, startDate: 0, endDate: 1 });
+    for (let number = 1; number <= STORIES_PER_TEAM; number++) {
+      const storyId = await ctx.db.insert("issues", {
+        orgId,
+        teamId,
+        kind: "story",
+        number,
+        nextSubNumber: 1,
+        title: `${key}-${number}`,
+        status: "todo",
+        priority: "none",
+        creatorId,
+        sortOrder: number,
+      });
+      await ctx.db.insert("activity", { orgId, issueId: storyId, actorId: creatorId, type: "created" });
+      await createTestingSubtask(ctx, (await ctx.db.get(storyId))!);
+    }
+  });
+}
+
 describe("admin.clearOrgContent", () => {
   test("deletes one organization's content and keeps its mirror and the other organization", async () => {
     const { t, cleared } = await setup();
@@ -329,6 +358,31 @@ describe("admin.clearOrgContent", () => {
     expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
     vi.useRealTimers();
   });
+
+  /**
+   * DSH's scale case: 2,000 issue rows under Convex's per-transaction limits. Measured at 7f30129 on HX-15, 8 runs:
+   * 20 scheduled runs after the first (19 more pages of issues, then the teams and their cycles), 8.0 to 13.5 s a test.
+   * The time is convex-test's in-memory index scan, which reads every document per query; it is the same without limits.
+   */
+  test("clears 1,000 stories and their testing sub-tasks across four teams inside Convex's transaction limits", async () => {
+    vi.useFakeTimers();
+    const t = convexTest({ schema, modules, transactionLimits: true });
+    const { orgId, userId } = await t.run((ctx) => seedMirror(ctx, SCALE_ORG));
+    for (const key of SCALE_TEAMS) {
+      await addTeamOfStories(t, orgId, userId, key);
+    }
+    const mirrorBefore = await snapshot(t, MIRROR_TABLES);
+
+    const counts = await t.mutation(internal.admin.clearOrgContent, { clerkOrgId: SCALE_ORG });
+
+    expect(counts).toEqual({ ...ZERO_COUNTS, issues: PAGE_SIZE, activity: PAGE_SIZE });
+    expect(await scheduledRunStates(t)).toEqual(new Set(["pending"]));
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await snapshot(t, CONTENT_TABLES)).toEqual(Object.fromEntries(CONTENT_TABLES.map((table) => [table, []])));
+    expect(await snapshot(t, MIRROR_TABLES)).toEqual(mirrorBefore);
+    expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
+    vi.useRealTimers();
+  }, 60_000);
 });
 
 async function setupMirrorWith(

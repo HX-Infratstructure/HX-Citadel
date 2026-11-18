@@ -141,9 +141,9 @@ describe("answering a decision", () => {
   test("a non-admin member is refused", async () => {
     const { t } = await setup();
     const { decision } = await ask(t);
-    await expect(as(t, MEMBER).mutation(api.decisions.answer, { decisionId: decision._id, text: "Yes" })).rejects.toThrow(
-      "Admin access required"
-    );
+    await expect(
+      as(t, MEMBER).mutation(api.decisions.answer, { decisionId: decision._id, text: "Yes" })
+    ).rejects.toMatchObject({ data: { code: "rule_refused", message: "Admin access required" } });
   });
 
   test("a choice that is not among the choices is refused", async () => {

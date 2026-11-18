@@ -1,11 +1,12 @@
 import { v } from "convex/values";
 import { notFound, refuse } from "./lib/refusals";
 import { Doc, Id } from "./_generated/dataModel";
-import { MutationCtx, QueryCtx } from "./_generated/server";
+import { MutationCtx } from "./_generated/server";
 import { getOrgIssue } from "./issues";
 import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { IssueKeys } from "./lib/issueKeys";
+import { RELATION_LIMIT, relationsOf } from "./lib/issueRelations";
 import { patchIssue } from "./lib/issueVersion";
 import { orgChildren, orgRow } from "./lib/orgRows";
 import {
@@ -30,9 +31,6 @@ import {
  * inverse `blocks` row) and inverted at query time, so each side of a
  * relation sees the right direction.
  */
-
-/** Relations one issue can hold, so every read of them is one bounded read that sees them all. */
-export const RELATION_LIMIT = 100;
 
 /** Relation direction as seen from the queried issue (includes inverses). */
 const displayRelationTypeValidator = v.union(
@@ -94,19 +92,6 @@ const INVERSE: Record<StoredRelationType, DisplayRelationType> = {
   related: "related",
   duplicate_of: "duplicated_by",
 };
-
-/** An issue's relations: those stored on it, then those stored on the other end. */
-async function relationsOf(ctx: { db: QueryCtx["db"] }, issueId: Id<"issues">) {
-  const outgoing = await ctx.db
-    .query("issueRelations")
-    .withIndex("by_issue", (q) => q.eq("issueId", issueId))
-    .take(RELATION_LIMIT);
-  const incoming = await ctx.db
-    .query("issueRelations")
-    .withIndex("by_related", (q) => q.eq("relatedIssueId", issueId))
-    .take(RELATION_LIMIT);
-  return [...outgoing, ...incoming];
-}
 
 /** A relation as one of its ends sees it: the issue at the other end, and the direction. */
 function seenFrom(

@@ -207,8 +207,10 @@ export const orgHasContent = internalQuery({
 });
 
 /**
- * Each run deletes one page and schedules the next until nothing is left, so a workspace of
- * any size clears. Returns what this run deleted. A rerun starts from the rows that are left.
+ * Each run deletes one page and schedules the next until nothing is left. Returns what this run
+ * deleted. A rerun starts from the rows that are left. A page of `PAGE_SIZE` issues takes every row
+ * they own, read whole (`ISSUE_OWNED_ROWS`), so a page whose issues own more than one mutation can
+ * delete fails and changes nothing, and a rerun reads the same issues and fails again.
  */
 export const clearOrgContent = internalMutation({
   args: { clerkOrgId: v.string() },

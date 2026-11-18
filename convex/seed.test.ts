@@ -193,7 +193,9 @@ describe("seed.demoData", () => {
         clerkOrgId: "org_unknown",
         clerkUserId: ADMIN_CLERK_ID,
       })
-    ).rejects.toThrow(/organization/i);
+    ).rejects.toMatchObject({
+      data: { code: "not_found", message: "Organization org_unknown is not synced to Convex." },
+    });
 
     const teams = await t.run((ctx) => ctx.db.query("teams").collect());
     expect(teams).toHaveLength(0);
@@ -207,7 +209,9 @@ describe("seed.demoData", () => {
         clerkOrgId: SEEDED_ORG,
         clerkUserId: OUTSIDER_CLERK_ID,
       })
-    ).rejects.toThrow(/not a member/i);
+    ).rejects.toMatchObject({
+      data: { code: "not_found", message: `User ${OUTSIDER_CLERK_ID} is not a member of organization ${SEEDED_ORG}.` },
+    });
 
     const teams = await t.run((ctx) => ctx.db.query("teams").collect());
     expect(teams).toHaveLength(0);
