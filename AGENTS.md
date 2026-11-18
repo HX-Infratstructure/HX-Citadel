@@ -56,8 +56,8 @@ The owner set these rules on 2026-11-17.
 ```bash
 pnpm test               # Convex function tests (vitest + convex-test)
 pnpm lint
+pnpm build              # before tsc: tsc reads .next/types from the last build
 pnpm exec tsc --noEmit
-pnpm build
 ```
 
 Convex function tests live next to the function as `convex/<module>.test.ts`. `convex/issues.test.ts` shows the setup.
