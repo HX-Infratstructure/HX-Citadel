@@ -55,6 +55,7 @@ The owner set these rules on 2026-11-17.
 - Keys live in `~/.config/hx-vector/*.env`. Never print them. Always source them with output suppressed.
 - Never start Next on the literal `127.0.0.1`. Use `localhost` or the LAN address.
 - pnpm is pinned by `packageManager` in `package.json`. Add no pnpm release-age exclusions.
+- Demo data is dev-only. Seed an empty development workspace with `pnpm seed:demo '{"clerkOrgId":"…","clerkUserId":"…"}'` (`convex/seed.ts`). Never seed from the UI or from a build or deploy.
 
 ## Verifying your work
 
