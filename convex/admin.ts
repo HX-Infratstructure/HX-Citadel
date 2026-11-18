@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { Doc, Id, TableNames } from "./_generated/dataModel";
-import { internalMutation, MutationCtx } from "./_generated/server";
+import { internalMutation, internalQuery, MutationCtx, QueryCtx } from "./_generated/server";
 import { getOrgByClerkIdOrThrow } from "./lib/mirror";
 
 /**
@@ -34,7 +34,7 @@ const deletedMirrorValidator = v.object({
   members: v.number(),
 });
 
-function getOrgByClerkId(ctx: MutationCtx, clerkOrgId: string) {
+function getOrgByClerkId(ctx: QueryCtx | MutationCtx, clerkOrgId: string) {
   return getOrgByClerkIdOrThrow(ctx, clerkOrgId, `Organization ${clerkOrgId} not found`);
 }
 
@@ -64,7 +64,7 @@ function tablesWithRows(content: OrgContent) {
   return CONTENT_TABLES.filter((table) => content[table].length > 0);
 }
 
-async function loadOrgContent(ctx: MutationCtx, orgId: Id<"organizations">): Promise<OrgContent> {
+async function loadOrgContent(ctx: QueryCtx | MutationCtx, orgId: Id<"organizations">): Promise<OrgContent> {
   const issues = await ctx.db
     .query("issues")
     .withIndex("by_org", (q) => q.eq("orgId", orgId))
@@ -119,6 +119,15 @@ async function assertNoContent(ctx: MutationCtx, org: Doc<"organizations">) {
     );
   }
 }
+
+export const orgHasContent = internalQuery({
+  args: { clerkOrgId: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const org = await getOrgByClerkId(ctx, args.clerkOrgId);
+    return tablesWithRows(await loadOrgContent(ctx, org._id)).length > 0;
+  },
+});
 
 export const clearOrgContent = internalMutation({
   args: { clerkOrgId: v.string() },

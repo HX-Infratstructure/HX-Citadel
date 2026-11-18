@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -171,5 +171,229 @@ describe("mirror.syncCurrent", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     const rows = await mirrorRows(t);
     expect(rows).toEqual({ users: [], organizations: [], members: [] });
+  });
+});
+
+type ClerkState = {
+  users: { id: string; first_name: string }[];
+  orgs: { id: string; name: string }[];
+  memberships: Record<string, { id: string; role: string; user: string }[]>;
+};
+
+const zeroCounts = {
+  users: { added: 0, changed: 0, removed: 0 },
+  organizations: { added: 0, changed: 0, removed: 0, keptWithContent: 0 },
+  members: { added: 0, changed: 0, removed: 0 },
+};
+
+function baseState(): ClerkState {
+  return {
+    users: [
+      { id: "user_a", first_name: "Ada" },
+      { id: "user_b", first_name: "Bea" },
+    ],
+    orgs: [{ id: ORG_ID, name: "Hana-X" }],
+    memberships: {
+      [ORG_ID]: [
+        { id: "mem_a", role: "org:admin", user: "user_a" },
+        { id: "mem_b", role: "org:member", user: "user_b" },
+      ],
+    },
+  };
+}
+
+function page<T>(items: T[], url: URL) {
+  const offset = Number(url.searchParams.get("offset"));
+  const limit = Number(url.searchParams.get("limit"));
+  return items.slice(offset, offset + limit);
+}
+
+function clerkBody(state: ClerkState, url: URL) {
+  const path = url.pathname.replace("/v1", "");
+  if (path === "/users") {
+    return page(state.users, url);
+  }
+  if (path === "/organizations") {
+    return { data: page(state.orgs, url) };
+  }
+  const orgId = path.split("/")[2];
+  const memberships = (state.memberships[orgId] ?? []).map((m) => ({
+    id: m.id,
+    role: m.role,
+    organization: { id: orgId },
+    public_user_data: { user_id: m.user },
+  }));
+  return { data: page(memberships, url) };
+}
+
+function stubClerkState(state: ClerkState, failPath?: string) {
+  const fetchMock = vi.fn<typeof fetch>(async (input) => {
+    const url = new URL(String(input));
+    if (failPath && url.pathname.endsWith(failPath)) {
+      return jsonResponse({ errors: [] }, 500);
+    }
+    return jsonResponse(clerkBody(state, url));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+async function reconcile(t: ReturnType<typeof convexTest>, state: ClerkState) {
+  stubClerkState(state);
+  return await t.action(internal.mirror.reconcileAll, {});
+}
+
+describe("mirror.reconcileAll", () => {
+  test("mirrors Clerk and a second run reports zero changes", async () => {
+    const t = convexTest(schema, modules);
+
+    const first = await reconcile(t, baseState());
+    expect(first).toEqual({
+      users: { added: 2, changed: 0, removed: 0 },
+      organizations: { added: 1, changed: 0, removed: 0, keptWithContent: 0 },
+      members: { added: 2, changed: 0, removed: 0 },
+    });
+    const rows = await mirrorRows(t);
+    const second = await reconcile(t, baseState());
+
+    expect(second).toEqual(zeroCounts);
+    expect(await mirrorRows(t)).toEqual(rows);
+  });
+
+  test("removes a membership gone from Clerk", async () => {
+    const t = convexTest(schema, modules);
+    await reconcile(t, baseState());
+    const state = baseState();
+    state.users.push({ id: "user_c", first_name: "Cy" });
+    state.memberships[ORG_ID].push({ id: "mem_c", role: "org:member", user: "user_c" });
+    await reconcile(t, state);
+    state.memberships[ORG_ID].pop();
+
+    const counts = await reconcile(t, state);
+
+    expect(counts.members).toEqual({ added: 0, changed: 0, removed: 1 });
+    expect(counts.users).toEqual({ added: 0, changed: 0, removed: 0 });
+    const rows = await mirrorRows(t);
+    expect(rows.members.map((m) => m.clerkMembershipId).sort()).toEqual(["mem_a", "mem_b"]);
+    expect(rows.users).toHaveLength(3);
+  });
+
+  test("applies a role change", async () => {
+    const t = convexTest(schema, modules);
+    await reconcile(t, baseState());
+    const state = baseState();
+    state.memberships[ORG_ID][1].role = "org:admin";
+
+    const counts = await reconcile(t, state);
+
+    expect(counts.members).toEqual({ added: 0, changed: 1, removed: 0 });
+    const rows = await mirrorRows(t);
+    const bea = rows.members.find((m) => m.clerkMembershipId === "mem_b");
+    expect(bea?.role).toBe("admin");
+  });
+
+  test("keeps an organization gone from Clerk that still has a team", async () => {
+    const t = convexTest(schema, modules);
+    await reconcile(t, baseState());
+    await t.run(async (ctx) => {
+      const org = await ctx.db.query("organizations").first();
+      await ctx.db.insert("teams", {
+        orgId: org!._id,
+        name: "Engineering",
+        key: "ENG",
+        nextIssueNumber: 1,
+      });
+    });
+    const state = baseState();
+    state.orgs = [];
+    state.memberships = {};
+
+    const counts = await reconcile(t, state);
+
+    expect(counts.organizations).toEqual({
+      added: 0,
+      changed: 0,
+      removed: 0,
+      keptWithContent: 1,
+    });
+    expect(counts.members.removed).toBe(2);
+    const rows = await mirrorRows(t);
+    expect(rows.organizations).toHaveLength(1);
+    expect(rows.members).toHaveLength(0);
+  });
+
+  test("removes an organization gone from Clerk with no content", async () => {
+    const t = convexTest(schema, modules);
+    await reconcile(t, baseState());
+    const state = baseState();
+    state.orgs = [];
+    state.memberships = {};
+
+    const counts = await reconcile(t, state);
+
+    expect(counts.organizations).toEqual({
+      added: 0,
+      changed: 0,
+      removed: 1,
+      keptWithContent: 0,
+    });
+    const rows = await mirrorRows(t);
+    expect(rows.organizations).toHaveLength(0);
+    expect(rows.members).toHaveLength(0);
+  });
+
+  test("removes a user gone from Clerk with no membership left", async () => {
+    const t = convexTest(schema, modules);
+    await reconcile(t, baseState());
+    const state = baseState();
+    state.users = state.users.filter((u) => u.id !== "user_b");
+    state.memberships[ORG_ID] = state.memberships[ORG_ID].filter((m) => m.user !== "user_b");
+
+    const counts = await reconcile(t, state);
+
+    expect(counts.users).toEqual({ added: 0, changed: 0, removed: 1 });
+    expect(counts.members).toEqual({ added: 0, changed: 0, removed: 1 });
+    const rows = await mirrorRows(t);
+    expect(rows.users.map((u) => u.clerkId)).toEqual(["user_a"]);
+  });
+
+  test.each(["/users", "/organizations", `/organizations/${ORG_ID}/memberships`])(
+    "a 500 on %s throws and writes nothing",
+    async (failPath) => {
+      const t = convexTest(schema, modules);
+      stubClerkState(baseState(), failPath);
+
+      await expect(t.action(internal.mirror.reconcileAll, {})).rejects.toThrow(
+        "Clerk API 500"
+      );
+      expect(await mirrorRows(t)).toEqual({ users: [], organizations: [], members: [] });
+    }
+  );
+
+  test("follows paging past 100 users", async () => {
+    const t = convexTest(schema, modules);
+    const state = baseState();
+    for (let i = 0; i < 99; i++) {
+      state.users.push({ id: `user_extra_${i}`, first_name: `Extra ${i}` });
+    }
+
+    const counts = await reconcile(t, state);
+
+    expect(counts.users.added).toBe(101);
+    expect((await mirrorRows(t)).users).toHaveLength(101);
+  });
+
+  test("logs one line and never the secret", async () => {
+    const t = convexTest(schema, modules);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const counts = await reconcile(t, baseState());
+
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(
+      "mirror reconcile: users +2 ~0 -0, orgs +1 ~0 -0 (kept 0 with content), members +2 ~0 -0"
+    );
+    expect(JSON.stringify(counts)).not.toContain(TEST_KEY);
+    log.mockRestore();
   });
 });
