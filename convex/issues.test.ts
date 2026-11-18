@@ -102,6 +102,7 @@ describe("issues.create on a free organization", () => {
         await ctx.db.insert("issues", {
           orgId: team!.orgId,
           teamId,
+          kind: "story",
           number: i + 1,
           title: `Seeded ${i + 1}`,
           status: "todo",

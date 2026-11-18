@@ -14,6 +14,19 @@ export const issueStatusValidator = v.union(
   v.literal("canceled")
 );
 
+export const issueKindValidator = v.union(
+  v.literal("epic"),
+  v.literal("feature"),
+  v.literal("story"),
+  v.literal("subtask")
+);
+
+export const issueTypeValidator = v.union(
+  v.literal("story"),
+  v.literal("bug"),
+  v.literal("chore")
+);
+
 export const issuePriorityValidator = v.union(
   v.literal("none"),
   v.literal("urgent"),
@@ -88,8 +101,13 @@ export default defineSchema({
   issues: defineTable({
     orgId: v.id("organizations"),
     teamId: v.id("teams"),
-    /** Per-team sequence number, displayed as KEY-number */
-    number: v.number(),
+    kind: issueKindValidator,
+    /** Set only on stories */
+    type: v.optional(issueTypeValidator),
+    /** Per-team sequence number, stories only, displayed as KEY-number */
+    number: v.optional(v.number()),
+    /** Per-story sequence number, subtasks only, displayed as KEY-number.subNumber */
+    subNumber: v.optional(v.number()),
     title: v.string(),
     description: v.optional(v.string()),
     status: issueStatusValidator,

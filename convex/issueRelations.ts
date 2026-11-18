@@ -1,9 +1,11 @@
 import { v } from "convex/values";
+import { formatIssueKey } from "../lib/issue-key";
 import { Doc, Id } from "./_generated/dataModel";
 import { QueryCtx } from "./_generated/server";
 import { getOrgIssue } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { assertValidParent, nextSubNumber } from "./lib/rules/levels";
 import {
   issuePriorityValidator,
   issueRelationTypeValidator,
@@ -48,6 +50,22 @@ type IssueSummary = {
 
 type TeamCache = Map<Id<"teams">, Doc<"teams"> | null>;
 
+async function parentStoryNumber(
+  ctx: { db: QueryCtx["db"] },
+  issue: Doc<"issues">
+): Promise<number | undefined> {
+  if (issue.kind !== "subtask" || !issue.parentIssueId) {
+    return undefined;
+  }
+  const parent = await ctx.db.get(issue.parentIssueId);
+  return parent?.number;
+}
+
+/** Order siblings by their own sequence: story number or subtask number. */
+function siblingOrder(issue: Doc<"issues">): number {
+  return issue.number ?? issue.subNumber ?? 0;
+}
+
 async function summarizeIssue(
   ctx: { db: QueryCtx["db"] },
   issue: Doc<"issues">,
@@ -57,9 +75,14 @@ async function summarizeIssue(
     teamCache.set(issue.teamId, await ctx.db.get(issue.teamId));
   }
   const team = teamCache.get(issue.teamId) ?? null;
+  const key = formatIssueKey(
+    team?.key ?? "?",
+    issue,
+    await parentStoryNumber(ctx, issue)
+  );
   return {
     _id: issue._id,
-    identifier: `${team?.key ?? "?"}-${issue.number}`,
+    identifier: key ?? issue.title,
     title: issue.title,
     status: issue.status,
     priority: issue.priority,
@@ -269,7 +292,7 @@ export const hierarchy = orgQuery({
       .query("issues")
       .withIndex("by_parent", (q) => q.eq("parentIssueId", issue._id))
       .collect();
-    children.sort((a, b) => a.number - b.number);
+    children.sort((a, b) => siblingOrder(a) - siblingOrder(b));
 
     const subIssues = [];
     for (const child of children) {
@@ -281,6 +304,18 @@ export const hierarchy = orgQuery({
     return { parent, subIssues };
   },
 });
+
+/** A subtask moved to another story takes the next number there, so keys stay unique. */
+async function renumberedSubtask(
+  ctx: { db: QueryCtx["db"] },
+  kind: Doc<"issues">["kind"],
+  parentIssueId: Id<"issues"> | null
+): Promise<Pick<Doc<"issues">, "subNumber">> {
+  if (kind !== "subtask" || parentIssueId === null) {
+    return {};
+  }
+  return { subNumber: await nextSubNumber(ctx, parentIssueId) };
+}
 
 export const setParent = orgMutation({
   args: {
@@ -318,6 +353,10 @@ export const setParent = orgMutation({
       }
       newParentIdentifier = await issueIdentifier(ctx, parent, teamCache);
     }
+    const projectId = await assertValidParent(ctx, issue.kind, {
+      parentIssueId: args.parentIssueId ?? undefined,
+      projectId: issue.projectId,
+    });
 
     let oldParentIdentifier: string | undefined;
     if (issue.parentIssueId) {
@@ -329,6 +368,8 @@ export const setParent = orgMutation({
 
     await ctx.db.patch(issue._id, {
       parentIssueId: args.parentIssueId ?? undefined,
+      projectId,
+      ...(await renumberedSubtask(ctx, issue.kind, args.parentIssueId)),
     });
 
     await logActivity(ctx, {

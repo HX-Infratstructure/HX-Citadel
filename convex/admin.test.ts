@@ -90,6 +90,7 @@ async function seedOrg(ctx: MutationCtx & { storage: StorageActionWriter }, cler
     const issueId = await ctx.db.insert("issues", {
       orgId,
       teamId,
+      kind: "story",
       number,
       title: `Issue ${number}`,
       status: "todo",

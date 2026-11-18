@@ -269,6 +269,7 @@ export const demoData = internalMutation({
         const issueId = await ctx.db.insert("issues", {
           orgId,
           teamId,
+          kind: "story",
           number: nextNumber,
           title: spec.title,
           description: spec.description,

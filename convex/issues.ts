@@ -1,16 +1,25 @@
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
-import { QueryCtx } from "./_generated/server";
+import { MutationCtx, QueryCtx } from "./_generated/server";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
-import { issuePriorityValidator, issueStatusValidator } from "./schema";
+import { assertValidParent, nextSubNumber } from "./lib/rules/levels";
+import {
+  issueKindValidator,
+  issuePriorityValidator,
+  issueStatusValidator,
+  issueTypeValidator,
+} from "./schema";
 
 export const issueShape = {
   _id: v.id("issues"),
   _creationTime: v.number(),
   orgId: v.id("organizations"),
   teamId: v.id("teams"),
-  number: v.number(),
+  kind: issueKindValidator,
+  type: v.optional(issueTypeValidator),
+  number: v.optional(v.number()),
+  subNumber: v.optional(v.number()),
   title: v.string(),
   description: v.optional(v.string()),
   status: issueStatusValidator,
@@ -66,7 +75,7 @@ export const get = orgQuery({
   },
 });
 
-/** Look up an issue by its display identifier (team key + number, e.g. ENG-42). */
+/** Look up a story by its display identifier (team key + number, e.g. ENG-42). */
 export const getByNumber = orgQuery({
   args: { teamId: v.id("teams"), number: v.number() },
   returns: v.union(v.object(issueShape), v.null()),
@@ -75,18 +84,47 @@ export const getByNumber = orgQuery({
     if (!team || team.orgId !== ctx.org._id) {
       return null;
     }
-    return await ctx.db
+    const issue = await ctx.db
       .query("issues")
       .withIndex("by_team_and_number", (q) =>
         q.eq("teamId", args.teamId).eq("number", args.number)
       )
       .unique();
+    return issue?.kind === "story" ? issue : null;
   },
 });
+
+/** Stories carry a type (default story); other levels carry none. */
+function storyType(
+  kind: Doc<"issues">["kind"],
+  type: Doc<"issues">["type"]
+): Doc<"issues">["type"] {
+  return kind === "story" ? (type ?? "story") : undefined;
+}
+
+/** Stories take the next team number (ENG-1, ENG-2, ...); subtasks the next number under their story. */
+async function claimNumbering(
+  ctx: MutationCtx,
+  team: Doc<"teams">,
+  kind: Doc<"issues">["kind"],
+  parentIssueId: Id<"issues"> | undefined
+): Promise<Pick<Doc<"issues">, "number" | "subNumber">> {
+  if (kind === "story") {
+    const number = team.nextIssueNumber;
+    await ctx.db.patch(team._id, { nextIssueNumber: number + 1 });
+    return { number };
+  }
+  if (kind === "subtask" && parentIssueId) {
+    return { subNumber: await nextSubNumber(ctx, parentIssueId) };
+  }
+  return {};
+}
 
 export const create = orgMutation({
   args: {
     teamId: v.id("teams"),
+    kind: v.optional(issueKindValidator),
+    type: v.optional(issueTypeValidator),
     title: v.string(),
     description: v.optional(v.string()),
     status: v.optional(issueStatusValidator),
@@ -105,9 +143,15 @@ export const create = orgMutation({
       throw new Error("Team not found");
     }
 
-    // Claim the next per-team issue number (ENG-1, ENG-2, ...).
-    const number = team.nextIssueNumber;
-    await ctx.db.patch(team._id, { nextIssueNumber: number + 1 });
+    const kind = args.kind ?? "story";
+    if (args.parentIssueId) {
+      await getOrgIssue(ctx, ctx.org._id, args.parentIssueId);
+    }
+    const projectId = await assertValidParent(ctx, kind, {
+      parentIssueId: args.parentIssueId,
+      projectId: args.projectId,
+    });
+    const numbering = await claimNumbering(ctx, team, kind, args.parentIssueId);
 
     // New issues sort to the top of their column.
     const newest = await ctx.db
@@ -120,14 +164,16 @@ export const create = orgMutation({
     const issueId = await ctx.db.insert("issues", {
       orgId: ctx.org._id,
       teamId: args.teamId,
-      number,
+      kind,
+      type: storyType(kind, args.type),
+      ...numbering,
       title: args.title.trim(),
       description: args.description,
       status: args.status ?? "todo",
       priority: args.priority ?? "none",
       assigneeId: args.assigneeId,
       creatorId: ctx.user._id,
-      projectId: args.projectId,
+      projectId,
       cycleId: args.cycleId,
       parentIssueId: args.parentIssueId,
       estimate: args.estimate,
@@ -196,7 +242,10 @@ export const update = orgMutation({
       });
     }
     if (args.projectId !== undefined) {
-      updates.projectId = args.projectId ?? undefined;
+      updates.projectId = await assertValidParent(ctx, issue.kind, {
+        parentIssueId: issue.parentIssueId,
+        projectId: args.projectId ?? undefined,
+      });
     }
     if (args.cycleId !== undefined) {
       updates.cycleId = args.cycleId ?? undefined;
