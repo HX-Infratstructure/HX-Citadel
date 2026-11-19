@@ -16,7 +16,7 @@ type Opts = { numItems: number; cursor: string | null; endCursor?: string | null
 type Setup = Awaited<ReturnType<typeof setup>>;
 
 /** Our workspace with one team and one member, and another workspace. */
-async function setup(transactionLimits?: boolean) {
+async function setup(transactionLimits: { databaseQueries?: number } | boolean = false) {
   const t = convexTest({ schema, modules, transactionLimits });
   const ids = await t.run(async (ctx) => {
     const memberId = await ctx.db.insert("users", { clerkId: "user_member", name: "Member", email: "m@example.com" });
@@ -256,4 +256,34 @@ describe("issues.listByTeam pages", () => {
     expect(loaded.map((row) => row._id)).toEqual(allByRank.map((row) => row._id));
     expect(splitRequiredPages).toBeGreaterThan(0);
   }, 300_000);
+});
+
+describe("issues.listByTeam label reads", () => {
+  test("a page reads one index range per row, however many labels its rows carry, and returns each row's linked label ids in link order", async () => {
+    const ROWS = 10;
+    const USER_WORKSPACE_MEMBERSHIP_LOOKUPS = 3;
+    const TEAM_GET = 1;
+    const PAGE_QUERY = 1;
+    const s = await setup({ databaseQueries: USER_WORKSPACE_MEMBERSHIP_LOOKUPS + TEAM_GET + PAGE_QUERY + ROWS });
+    const linked = await s.t.run(async (ctx) => {
+      const labelIds = [];
+      for (let i = 0; i < 3 * ROWS; i++) {
+        labelIds.push(await ctx.db.insert("labels", { orgId: s.orgId, name: `Label ${i}`, color: "#5e6ad2" }));
+      }
+      const labelsOf: Record<Id<"issues">, Id<"labels">[]> = {};
+      for (let i = 0; i < ROWS; i++) {
+        const issueId = await ctx.db.insert("issues", { ...s.story, orgId: s.orgId, title: `Issue ${i}`, sortOrder: i });
+        // Linked against creation order, so only link order matches.
+        labelsOf[issueId] = labelIds.slice(3 * i, 3 * i + 3).reverse();
+        for (const labelId of labelsOf[issueId]) {
+          await ctx.db.insert("issueLabels", { issueId, labelId });
+        }
+      }
+      return labelsOf;
+    });
+
+    const { page } = await s.asMember.query(api.issues.listByTeam, { teamId: s.teamId, paginationOpts: { numItems: ROWS, cursor: null } });
+
+    expect(Object.fromEntries(page.map((issue) => [issue._id, issue.labelIds]))).toEqual(linked);
+  });
 });

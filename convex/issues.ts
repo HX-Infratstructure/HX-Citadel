@@ -119,24 +119,13 @@ async function teamIssuesByRank(ctx: { db: QueryCtx["db"] }, orgId: Id<"organiza
 }
 
 /**
- * Reads issues' labels inside the workspace, in link order. A link to a label that is missing or in another
- * workspace is skipped. Each distinct label is read once per reader, so one reader serves a whole page.
+ * An issue's label ids as stored, in link order. Only `labels.toggleOnIssue` and the dev seed (`seed.demoData`) write
+ * links, and both link only a label of the issue's workspace. By owner decision q-f874e530, the workspace is checked
+ * when a link is written, not here, so no label is read. A label delete must delete its links first (`by_label`).
  */
-function orgIssueLabels(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">) {
-  const labels = new Map<Id<"labels">, Promise<Doc<"labels"> | null>>();
-  function label(labelId: Id<"labels">) {
-    let row = labels.get(labelId);
-    if (row === undefined) {
-      row = orgRow(ctx, orgId, labelId);
-      labels.set(labelId, row);
-    }
-    return row;
-  }
-  return async (issueId: Id<"issues">): Promise<Doc<"labels">[]> => {
-    const links = await ctx.db.query("issueLabels").withIndex("by_issue", (q) => q.eq("issueId", issueId)).collect();
-    const rows = await Promise.all(links.map((link) => label(link.labelId)));
-    return rows.filter((row) => row !== null);
-  };
+async function issueLabelIds(ctx: { db: QueryCtx["db"] }, issueId: Id<"issues">): Promise<Id<"labels">[]> {
+  const links = await ctx.db.query("issueLabels").withIndex("by_issue", (q) => q.eq("issueId", issueId)).collect();
+  return links.map((link) => link.labelId);
 }
 
 /**
@@ -169,22 +158,19 @@ const PAGE_FIXED_READS = 8;
  * Such a page reads its whole interval, ignoring `numItems` and `maximumRowsRead` (convex-backend
  * `crates/database/src/query/index_range.rs:168-170`), and `usePaginatedQuery` splits it only above 2 ×
  * `initialNumItems` rows, after a read that returned them, so it grows past 2 × LIST_LIMIT rows before a split; a test
- * in `issues.test.ts` holds this bound at 2 × LIST_LIMIT or more. It reads
- * PAGE_FIXED_READS, at most PAGE_READ_ROWS rows its filter drops, for each row the row itself and its label links (at
- * most `MAX_LABELS_PER_ISSUE`, enforced when a label is added), and each distinct label once (`orgIssueLabels`).
- * The bound assumes a page's distinct labels are no more than its rows (a workspace has a few dozen labels; nothing
- * caps them). A page of 2 × LIST_LIMIT rows then has `PINNED_PAGE_MAX_ROWS - 2 * LIST_LIMIT` rows of headroom, and
- * room for `CONVEX_DOCUMENT_READS - PAGE_FIXED_READS - PAGE_READ_ROWS - 2 * LIST_LIMIT * (MAX_LABELS_PER_ISSUE + 1)`
- * distinct labels.
- * Index ranges, 1 + rows + distinct labels, stay inside Convex's 4,096 while a workspace has a few dozen labels.
+ * in `issues.test.ts` holds this bound at 2 × LIST_LIMIT or more. It reads PAGE_FIXED_READS, at most
+ * PAGE_READ_ROWS rows its filter drops, and for each row the row itself and its label links (at most
+ * `MAX_LABELS_PER_ISSUE`, enforced when a label is added). A page of 2 × LIST_LIMIT rows then has
+ * `PINNED_PAGE_MAX_ROWS - 2 * LIST_LIMIT` rows of headroom. Its index ranges, 1 + rows besides the fixed reads, stay
+ * inside Convex's 4,096.
  */
 export const PINNED_PAGE_MAX_ROWS = Math.floor(
-  (CONVEX_DOCUMENT_READS - PAGE_FIXED_READS - PAGE_READ_ROWS) / (MAX_LABELS_PER_ISSUE + 2)
+  (CONVEX_DOCUMENT_READS - PAGE_FIXED_READS - PAGE_READ_ROWS) / (MAX_LABELS_PER_ISSUE + 1)
 );
 
 /**
- * A team's issues, one page at a time, highest `sortOrder` first, each with the ids of its labels inside the
- * workspace. The loaded pages always hold the team's top-ranked issues, so a browser filter over them sees each
+ * A team's issues, one page at a time, highest `sortOrder` first, each with the ids of the labels linked to it, in
+ * link order. The loaded pages always hold the team's top-ranked issues, so a browser filter over them sees each
  * status's top-ranked issues.
  */
 export const listByTeam = orgQuery({
@@ -192,9 +178,8 @@ export const listByTeam = orgQuery({
   returns: paginationResultValidator(v.object({ ...issueShape, labelIds: v.array(v.id("labels")) })),
   handler: async (ctx, args) => {
     const result = await (await teamIssuesByRank(ctx, ctx.org._id, args.teamId)).paginate(capPage(args.paginationOpts));
-    const labelsOf = orgIssueLabels(ctx, ctx.org._id);
     const page = await Promise.all(
-      result.page.map(async (issue) => ({ ...issue, labelIds: (await labelsOf(issue._id)).map((label) => label._id) }))
+      result.page.map(async (issue) => ({ ...issue, labelIds: await issueLabelIds(ctx, issue._id) }))
     );
     return { ...result, page };
   },
