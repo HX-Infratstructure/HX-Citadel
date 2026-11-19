@@ -54,41 +54,56 @@ describe("respaceTie", () => {
   });
 });
 
+const X = 1000.0000000000001;
+const B = 1000;
+const D = 999.9999999999999;
+
 describe("rankInLoaded", () => {
+  test("refuses a drop whose midpoint ties a loaded row that is not a neighbour while more is to load (CodeRabbit 4623501051)", () => {
+    expect((X + D) / 2).toBe(B);
+    expect(rankInLoaded({ above: X, floor: D, taken: new Set([X, B, D]), moreToLoad: true })).toEqual({ refused: true });
+    expect(rankInLoaded({ above: X, floor: D, taken: new Set([X, B, D]), moreToLoad: false })).toEqual({ sortOrder: X - SORT_GAP });
+  });
+
+  test("refuses a rank any loaded row holds, not only a neighbour, while more is to load", () => {
+    expect(rankInLoaded({ above: 3000, below: 1000, floor: 0, taken: new Set([3000, 2000, 1000, 0]), moreToLoad: true })).toEqual({ refused: true });
+    expect(rankInLoaded({ above: 3000, below: 1000, floor: 0, taken: new Set([3000, 1000, 0]), moreToLoad: true })).toEqual({ sortOrder: 2000 });
+  });
+
   test("refuses a drop between neighbours too close for a distinct midpoint while more is to load (CodeRabbit 4623425278)", () => {
-    expect(rankInLoaded({ above: 1000, below: 999.9999999999999, floor: 999.9999999999999, moreToLoad: true })).toEqual({ refused: true });
-    expect(rankInLoaded({ above: 1000, below: 999.9999999999999, floor: 0, moreToLoad: true })).toEqual({ refused: true });
+    expect(rankInLoaded({ above: 1000, below: D, floor: D, taken: new Set([1000, D]), moreToLoad: true })).toEqual({ refused: true });
+    expect(rankInLoaded({ above: 1000, below: D, floor: 0, taken: new Set([1000, D, 0]), moreToLoad: true })).toEqual({ refused: true });
   });
 
   test("refuses a drop between two cards tied above the floor while more is to load, and places it once everything is loaded", () => {
-    expect(rankInLoaded({ above: 30, below: 30, floor: 10, moreToLoad: true })).toEqual({ refused: true });
-    expect(rankInLoaded({ above: 30, below: 30, floor: 10, moreToLoad: false })).toEqual({ sortOrder: 30 });
+    expect(rankInLoaded({ above: 30, below: 30, floor: 10, taken: new Set([30, 10]), moreToLoad: true })).toEqual({ refused: true });
+    expect(rankInLoaded({ above: 30, below: 30, floor: 10, taken: new Set([30, 10]), moreToLoad: false })).toEqual({ sortOrder: 30 });
   });
 
   test("refuses a drop between two rows tied at the floor while more is to load", () => {
-    expect(rankInLoaded({ above: 1000, below: 1000, floor: 1000, moreToLoad: true })).toEqual({ refused: true });
+    expect(rankInLoaded({ above: 1000, below: 1000, floor: 1000, taken: new Set([1000]), moreToLoad: true })).toEqual({ refused: true });
   });
 
   test("lands a bottom drop between its upper neighbour and the floor while more is to load", () => {
-    expect(rankInLoaded({ above: 3000, floor: 1000, moreToLoad: true })).toEqual({ sortOrder: 2000 });
+    expect(rankInLoaded({ above: 3000, floor: 1000, taken: new Set([3000, 1000]), moreToLoad: true })).toEqual({ sortOrder: 2000 });
   });
 
   test("refuses a bottom drop when the row above it is the floor", () => {
-    expect(rankInLoaded({ above: 1000, floor: 1000, moreToLoad: true })).toEqual({ refused: true });
+    expect(rankInLoaded({ above: 1000, floor: 1000, taken: new Set([1000]), moreToLoad: true })).toEqual({ refused: true });
   });
 
   test("ranks below the bottom row once everything is loaded", () => {
-    expect(rankInLoaded({ above: 1000, floor: 1000, moreToLoad: false })).toEqual({ sortOrder: 1000 - SORT_GAP });
-    expect(rankInLoaded({ above: 1000, below: 1000, floor: 1000, moreToLoad: false })).toEqual({ sortOrder: 1000 });
+    expect(rankInLoaded({ above: 1000, floor: 1000, taken: new Set([1000]), moreToLoad: false })).toEqual({ sortOrder: 1000 - SORT_GAP });
+    expect(rankInLoaded({ above: 1000, below: 1000, floor: 1000, taken: new Set([1000]), moreToLoad: false })).toEqual({ sortOrder: 1000 });
   });
 
   test("ranks top and middle drops against their loaded neighbours", () => {
-    expect(rankInLoaded({ below: 3000, floor: 1000, moreToLoad: true })).toEqual({ sortOrder: 3000 + SORT_GAP });
-    expect(rankInLoaded({ above: 5000, below: 3000, floor: 1000, moreToLoad: true })).toEqual({ sortOrder: 4000 });
+    expect(rankInLoaded({ below: 3000, floor: 1000, taken: new Set([3000, 1000]), moreToLoad: true })).toEqual({ sortOrder: 3000 + SORT_GAP });
+    expect(rankInLoaded({ above: 5000, below: 3000, floor: 1000, taken: new Set([5000, 3000, 1000]), moreToLoad: true })).toEqual({ sortOrder: 4000 });
   });
 
   test("refuses when there is nothing to rank against", () => {
-    expect(rankInLoaded({ floor: 1000, moreToLoad: false })).toEqual({ refused: true });
-    expect(rankInLoaded({ above: 3000, moreToLoad: true })).toEqual({ refused: true });
+    expect(rankInLoaded({ floor: 1000, taken: new Set([1000]), moreToLoad: false })).toEqual({ refused: true });
+    expect(rankInLoaded({ above: 3000, taken: new Set([3000]), moreToLoad: true })).toEqual({ refused: true });
   });
 });

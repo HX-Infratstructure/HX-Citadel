@@ -55,12 +55,14 @@ function findContainer(
  * persist through `issues.update` with a fractional sortOrder between the
  * new neighbors, applied optimistically so the realtime query never
  * flickers. `issues` are the filtered loaded pages of the team's list, and
- * `floorRank` is the lowest rank of every loaded issue, unfiltered.
+ * `floorRank` is the lowest rank of every loaded issue, unfiltered, and
+ * `loadedRanks` holds each one's rank by id.
  */
 export function BoardView({
   issues,
   moreToLoad,
   floorRank,
+  loadedRanks,
   teamId,
   teamKey,
   orgSlug,
@@ -70,6 +72,7 @@ export function BoardView({
   issues: TeamIssue[];
   moreToLoad: boolean;
   floorRank: number | undefined;
+  loadedRanks: ReadonlyMap<Id<"issues">, number>;
   teamId: Id<"teams">;
   teamKey: string;
   orgSlug: string;
@@ -222,7 +225,7 @@ export function BoardView({
     if (!statusChanged && serverColumns[activeContainer][index] === activeId) {
       return;
     }
-    const drop = dropRank(column, index, moreToLoad, floorRank, statusChanged);
+    const drop = dropRank(column, index, moreToLoad, floorRank, loadedRanks, statusChanged);
     if ("refused" in drop) {
       toast(LOAD_MORE_TO_PLACE);
       return;

@@ -11,13 +11,17 @@ type BacklogUpdate = { issueId: Id<"issues">; sortOrder?: number; cycleId?: Id<"
 type Dragged = { active: { id: UniqueIdentifier } };
 type DraggedOver = Dragged & { over: { id: UniqueIdentifier } | null };
 
-/** The rank for the story moved from index `from` to `to` of the loaded backlog, in rank order; its last story is the floor. */
+/**
+ * The rank for the story moved from index `from` to `to` of the loaded backlog, in rank order; its last story is the floor.
+ * The team's issues outside the backlog share its rank order unseen: a tie with one re-spaces only within the gap above the next lower rank, unless that gap has run out of distinct numbers.
+ */
 export function moveRank(stories: RankedIssue[], from: number, to: number, moreToLoad: boolean) {
   const moved = arrayMove(stories, from, to);
   return rankInLoaded({
     above: moved[to - 1]?.sortOrder,
     below: moved[to + 1]?.sortOrder,
     floor: stories.at(-1)?.sortOrder,
+    taken: new Set(stories.filter((_, index) => index !== from).map((story) => story.sortOrder)),
     moreToLoad,
   });
 }

@@ -157,16 +157,23 @@ export const listBacklog = orgQuery({
   },
 });
 
+/** The documents every `listByTeam` call reads before its page: the caller's user, workspace and membership, and the team (4), rounded up. */
+const PAGE_FIXED_READS = 8;
+
 /**
  * The average labels per issue a `listByTeam` page is sized for; nothing caps labels at write time. A page pinned by
  * an end cursor reads its whole interval, ignoring `numItems` and `maximumRowsRead` (convex-backend
  * `crates/database/src/query/index_range.rs:168-170`), and `usePaginatedQuery` splits it only above 2 ×
- * `initialNumItems` rows. While the browser's page size is at most LIST_LIMIT, a page holds R ≤ 2 × LIST_LIMIT rows
- * over at most PAGE_READ_ROWS + R rows read. `orgIssueLabels` reads one link range per row and each of the page's D
- * distinct labels once. Index ranges: 1 + R + D ≤ 4,096 holds for up to 3,000 distinct labels; a workspace has a few
- * dozen. Documents: PAGE_READ_ROWS + R + R × L + D ≤ 32,000 with D ≤ R gives L = (32,000 − 8,000 − 2,000) / 1,000.
+ * `initialNumItems` rows, after a read that returned them. While the browser's page size is at most LIST_LIMIT, a page
+ * holds R ≈ 2 × LIST_LIMIT rows over at most PAGE_READ_ROWS + R rows read. `orgIssueLabels` reads one link range per
+ * row and each of the page's D distinct labels once. Index ranges: 1 + R + D ≤ 4,096 holds for up to 3,000 distinct
+ * labels; a workspace has a few dozen. Documents: PAGE_FIXED_READS + PAGE_READ_ROWS + R + R × L + D ≤ 32,000, with
+ * D ≤ R = 2 × LIST_LIMIT, gives L = 21; at L = 21 a page still reads in limits up to R = 1,043, so up to 43 issues can
+ * land in a pinned page's range at once before the hook splits it.
  */
-export const MAX_AVERAGE_LABELS_PER_ISSUE = Math.floor((32_000 - PAGE_READ_ROWS - 4 * LIST_LIMIT) / (2 * LIST_LIMIT));
+export const MAX_AVERAGE_LABELS_PER_ISSUE = Math.floor(
+  (32_000 - PAGE_FIXED_READS - PAGE_READ_ROWS - 4 * LIST_LIMIT) / (2 * LIST_LIMIT)
+);
 
 /**
  * A team's issues, one page at a time, highest `sortOrder` first, each with the ids of its labels inside the

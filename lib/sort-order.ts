@@ -30,26 +30,25 @@ export const LOAD_MORE_TO_PLACE = "Load more to place it here.";
 
 /**
  * The rank for a row dropped between its loaded neighbours in a list that shows part of one rank order. `floor` is
- * the lowest loaded rank of that order, and every row not loaded yet ranks at or below it. While more is to load, the
- * floor stands in for a missing lower neighbour, and a rank at or below it is refused: the server re-spaces a tie
- * downward, below the loaded pages. A rank equal to a neighbour's is refused as well, whether the two neighbours tie or
- * sit too close for a distinct midpoint: `placeRank` would re-space that tie, and widen past the floor when it has no
- * room. Refused too when there is nothing to rank against.
+ * the lowest loaded rank of that order, every row not loaded yet ranks at or below it, and `taken` holds the rank of
+ * every loaded row of that order except the moved one. While more is to load, the floor stands in for a missing lower
+ * neighbour, and a rank is accepted only above the floor and outside `taken`: it then ties no row of the order, so
+ * `placeRank` re-spaces nothing. Refused too when there is nothing to rank against.
  */
-export function rankInLoaded({ above, below, floor, moreToLoad }: {
+export function rankInLoaded({ above, below, floor, taken, moreToLoad }: {
   above?: number;
   below?: number;
   floor?: number;
+  taken: ReadonlySet<number>;
   moreToLoad: boolean;
 }): { sortOrder: number } | { refused: true } {
   if (!moreToLoad) {
     const sortOrder = sortOrderBetween(above, below);
     return sortOrder === undefined ? { refused: true } : { sortOrder };
   }
-  const lower = below ?? floor;
-  const sortOrder = sortOrderBetween(above, lower);
-  const placeable = sortOrder !== undefined && floor !== undefined && sortOrder > floor;
-  return placeable && sortOrder !== above && sortOrder !== lower ? { sortOrder } : { refused: true };
+  const sortOrder = sortOrderBetween(above, below ?? floor);
+  const placeable = sortOrder !== undefined && floor !== undefined && sortOrder > floor && !taken.has(sortOrder);
+  return placeable ? { sortOrder } : { refused: true };
 }
 
 /**
