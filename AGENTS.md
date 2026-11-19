@@ -49,7 +49,12 @@ The owner set rules 1 to 7 on 2026-11-17.
    - **Encapsulated state.** Keep instance fields private or protected. Change an object's state only through its own methods, never from outside it.
    - **Plan before coding.** Before you add or change a class, list its responsibilities and interfaces, or draw a short class diagram. Get the owner's approval before you write the code.
 
-   `pnpm lint` checks the limits. `eslint-suppressions.json` lists the violations the code already had when the limits were added. Never add to it. Don't run ESLint with `--suppress-all` or `--suppress-rule` to make a change pass. Fix the code instead. When a change fixes a listed violation, prune `eslint-suppressions.json` in the same change. The README's [Commands](README.md#commands) section gives the prune command.
+   The limits work like this:
+
+   - `eslint-suppressions.json` holds, for each file and limit rule, the count of violations the code had when the limits were added. `pnpm lint` fails when a file's count for a rule goes above its listed count.
+   - Never add to `eslint-suppressions.json`. Don't use `--suppress-all` or `--suppress-rule`, or an inline `eslint-disable` comment, for the limit rules in `eslint.config.mjs`. Fix the code instead.
+   - **Known gap:** a listed file or function can grow, or a listed violation can be swapped for another of the same rule in the same file, without failing `pnpm lint`. The planned refactor PRs remove the listed violations.
+   - The README's [Commands](README.md#commands) section says when and how to prune `eslint-suppressions.json`.
 
 ## HX operations
 
