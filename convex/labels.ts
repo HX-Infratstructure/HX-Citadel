@@ -84,6 +84,8 @@ export const toggleOnIssue = orgMutation({
     if (links.length >= MAX_LABELS_PER_ISSUE) {
       refuse(TOO_MANY_LABELS);
     }
+    // `issues.listByTeam` returns these label ids as stored, so for `listByTeam` this workspace check
+    // (`getOrgIssue` and `requireOrgRow`, above) is the only one.
     await ctx.db.insert("issueLabels", {
       issueId: args.issueId,
       labelId: args.labelId,

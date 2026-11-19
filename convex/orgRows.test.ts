@@ -265,15 +265,16 @@ describe("a row loaded by id", () => {
     expect(await refusals(await setup())).toEqual([notFound, notFound]);
   });
 
-  test("a label from another workspace, or a deleted one, linked to our story is listed by neither listForIssue nor listByTeam", async () => {
+  test("a raw-written link to a label from another workspace, or a deleted one, is returned as stored by listByTeam, because the label is checked when a link is written, and dropped by listForIssue", async () => {
     const { t, admin, teamId, orgId, storyId, foreignIssueId } = await setup();
-    await t.run(async (ctx) => {
+    const { foreignLabel, deletedLabel } = await t.run(async (ctx) => {
       const otherOrgId = (await ctx.db.get(foreignIssueId))!.orgId;
       const foreignLabel = await ctx.db.insert("labels", { orgId: otherOrgId, name: "Foreign", color: "#000000" });
       const deletedLabel = await ctx.db.insert("labels", { orgId, name: "Deleted", color: "#000000" });
       await ctx.db.insert("issueLabels", { issueId: storyId, labelId: foreignLabel });
       await ctx.db.insert("issueLabels", { issueId: storyId, labelId: deletedLabel });
       await ctx.db.delete(deletedLabel);
+      return { foreignLabel, deletedLabel };
     });
     const ourLabel = await admin.mutation(api.labels.create, { name: "Ours", color: "#ffffff" });
     await admin.mutation(api.labels.toggleOnIssue, { issueId: storyId, labelId: ourLabel });
@@ -281,7 +282,7 @@ describe("a row loaded by id", () => {
     const labels = await admin.query(api.labels.listForIssue, { issueId: storyId });
     const { page } = await admin.query(api.issues.listByTeam, { teamId, paginationOpts: { numItems: 10, cursor: null } });
     expect(labels.map((label) => label.name)).toEqual(["Ours"]);
-    expect(page.map((issue) => issue.labelIds)).toEqual([[ourLabel]]);
+    expect(page.map((issue) => issue.labelIds)).toEqual([[foreignLabel, deletedLabel, ourLabel]]);
   });
 });
 
