@@ -93,3 +93,32 @@ describe("a board drop against the server's re-ranking", () => {
     expect(accepted).toBe(3);
   });
 });
+
+describe("a drop between neighbours too close for a distinct midpoint (CodeRabbit 4623425278)", () => {
+  test("the server's widened tie repair drops loaded rows below the floor, so rankInLoaded refuses that drop", async () => {
+    const t = convexTest({ schema, modules });
+    const ids = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", { clerkId: "user_m", name: "M", email: "m@example.com" });
+      const orgId = await ctx.db.insert("organizations", { clerkOrgId: "org_t", name: "T", slug: "t" });
+      await ctx.db.insert("members", { orgId, userId, role: "member", clerkMembershipId: "mem" });
+      const teamId = await ctx.db.insert("teams", { orgId, name: "E", key: "ENG", nextIssueNumber: 1 });
+      const story = { orgId, teamId, kind: "story", status: "todo", priority: "none", creatorId: userId } as const;
+      const row = (title: string, sortOrder: number) => ctx.db.insert("issues", { ...story, title, sortOrder });
+      return { teamId, a: await row("A", 2000), b: await row("B", 1000), d: await row("D", 999.9999999999999), e: await row("E", 0) };
+    });
+    const asMember = t.withIdentity({ subject: "user_m", org_id: "org_t" });
+    const first = await asMember.query(api.issues.listByTeam, { teamId: ids.teamId, paginationOpts: { numItems: 3, cursor: null } });
+    expect(first.page.map((issue) => issue._id)).toEqual([ids.a, ids.b, ids.d]);
+    const floor = 999.9999999999999;
+    const proposed = (1000 + floor) / 2;
+    expect(proposed).toBe(1000);
+    expect(rankInLoaded({ above: 1000, below: floor, floor, moreToLoad: true })).toEqual({ refused: true });
+
+    await asMember.mutation(api.issues.update, { issueId: ids.a, sortOrder: proposed });
+    const pageOne = await asMember.query(api.issues.listByTeam, {
+      teamId: ids.teamId,
+      paginationOpts: { numItems: 3, cursor: null, endCursor: first.continueCursor },
+    });
+    expect([ids.a, ids.b, ids.d].some((id) => !pageOne.page.some((issue) => issue._id === id))).toBe(true);
+  });
+});

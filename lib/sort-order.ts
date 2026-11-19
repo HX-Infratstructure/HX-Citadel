@@ -32,7 +32,9 @@ export const LOAD_MORE_TO_PLACE = "Load more to place it here.";
  * The rank for a row dropped between its loaded neighbours in a list that shows part of one rank order. `floor` is
  * the lowest loaded rank of that order, and every row not loaded yet ranks at or below it. While more is to load, the
  * floor stands in for a missing lower neighbour, and a rank at or below it is refused: the server re-spaces a tie
- * downward, below the loaded pages. Refused too when there is nothing to rank against.
+ * downward, below the loaded pages. A rank equal to a neighbour's is refused as well, whether the two neighbours tie or
+ * sit too close for a distinct midpoint: `placeRank` would re-space that tie, and widen past the floor when it has no
+ * room. Refused too when there is nothing to rank against.
  */
 export function rankInLoaded({ above, below, floor, moreToLoad }: {
   above?: number;
@@ -44,8 +46,10 @@ export function rankInLoaded({ above, below, floor, moreToLoad }: {
     const sortOrder = sortOrderBetween(above, below);
     return sortOrder === undefined ? { refused: true } : { sortOrder };
   }
-  const sortOrder = sortOrderBetween(above, below ?? floor);
-  return sortOrder !== undefined && floor !== undefined && sortOrder > floor ? { sortOrder } : { refused: true };
+  const lower = below ?? floor;
+  const sortOrder = sortOrderBetween(above, lower);
+  const placeable = sortOrder !== undefined && floor !== undefined && sortOrder > floor;
+  return placeable && sortOrder !== above && sortOrder !== lower ? { sortOrder } : { refused: true };
 }
 
 /**

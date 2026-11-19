@@ -55,6 +55,16 @@ describe("respaceTie", () => {
 });
 
 describe("rankInLoaded", () => {
+  test("refuses a drop between neighbours too close for a distinct midpoint while more is to load (CodeRabbit 4623425278)", () => {
+    expect(rankInLoaded({ above: 1000, below: 999.9999999999999, floor: 999.9999999999999, moreToLoad: true })).toEqual({ refused: true });
+    expect(rankInLoaded({ above: 1000, below: 999.9999999999999, floor: 0, moreToLoad: true })).toEqual({ refused: true });
+  });
+
+  test("refuses a drop between two cards tied above the floor while more is to load, and places it once everything is loaded", () => {
+    expect(rankInLoaded({ above: 30, below: 30, floor: 10, moreToLoad: true })).toEqual({ refused: true });
+    expect(rankInLoaded({ above: 30, below: 30, floor: 10, moreToLoad: false })).toEqual({ sortOrder: 30 });
+  });
+
   test("refuses a drop between two rows tied at the floor while more is to load", () => {
     expect(rankInLoaded({ above: 1000, below: 1000, floor: 1000, moreToLoad: true })).toEqual({ refused: true });
   });
