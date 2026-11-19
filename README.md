@@ -80,7 +80,7 @@ Clerk can't reach the LAN, so its webhooks don't arrive. The route `/clerk-webho
 
 ## Commands
 
-Install and check the code in this order. Run the build before `tsc`.
+Install and check the code in this order. Run the build before `tsc`, because `pnpm exec tsc --noEmit` reads `.next/types` from the last build.
 
 ```bash
 pnpm install --frozen-lockfile
@@ -88,9 +88,14 @@ pnpm test
 pnpm lint
 pnpm build
 pnpm exec tsc --noEmit
+pnpm exec tsc -p convex --noEmit
 ```
 
 `pnpm test` runs the Convex function tests. Each test sits next to its function as `convex/<module>.test.ts`.
+
+When you fix a violation listed in `eslint-suppressions.json`, run `pnpm exec eslint --prune-suppressions`, or `pnpm lint` fails.
+
+With `-p convex`, `tsc` runs the same type check as `npx convex deploy`.
 
 To generate types and deploy the Convex functions, first load `CONVEX_SELF_HOSTED_URL` and `CONVEX_SELF_HOSTED_ADMIN_KEY` from `convex-admin.env`. Then run:
 
