@@ -112,12 +112,16 @@ describe("parseIssueKey", () => {
 });
 
 describe("formatParsedKey", () => {
+  test.each(["CIT-12", "CIT-12.3"])("writes %s back as it was parsed", (key) => {
+    expect(formatParsedKey(parseIssueKey(key)!)).toBe(key);
+  });
+
   test.each([
-    ["story", { teamKey: "CIT", number: 12 }, { kind: "story", number: 12 }, undefined, "CIT-12"],
-    ["subtask", { teamKey: "CIT", number: 12, subNumber: 3 }, { kind: "subtask", subNumber: 3 }, 12, "CIT-12.3"],
-  ] as const)("a parsed %s key is the key formatIssueKey gives the same issue", (_kind, parsed, issue, parentNumber, expected) => {
-    expect(formatParsedKey(parsed)).toBe(expected);
-    expect(formatParsedKey(parsed)).toBe(formatIssueKey(parsed.teamKey, issue, parentNumber));
+    ["cit-012", "CIT-12"],
+    [" CIT-12 ", "CIT-12"],
+    ["CIT-12.03", "CIT-12.3"],
+  ])("writes the look-alike %j as the canonical %s", (key, canonical) => {
+    expect(formatParsedKey(parseIssueKey(key)!)).toBe(canonical);
   });
 });
 

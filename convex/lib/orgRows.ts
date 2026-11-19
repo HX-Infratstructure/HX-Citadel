@@ -55,8 +55,9 @@ export function inOrg<TableInfo extends GenericTableInfo & { document: { orgId: 
 }
 
 /**
- * The most children one issue may have. Above the largest fan-out in use (a feature with 200 stories) and well
- * below where a story delete, at seven index reads per sub-task, would reach Convex's 4,096 per transaction.
+ * The most children one issue may have. Above the largest fan-out in use (a feature with 200 stories), and small
+ * enough that every reader of one issue's children (the Done gate, the hierarchy panel, a project cascade's level)
+ * stays a small read.
  */
 export const MAX_CHILDREN = 250;
 

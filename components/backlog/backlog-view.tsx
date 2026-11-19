@@ -20,7 +20,7 @@ import { api } from "@/convex/_generated/api";
 import { Doc, Id } from "@/convex/_generated/dataModel";
 import { errorMessage } from "@/lib/error-message";
 import { sortOrderBetween } from "@/lib/sort-order";
-import { rankAnnouncements, rankCollision } from "./backlog-dnd";
+import { canDropAt, LOAD_MORE_TO_PLACE, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
 import { BacklogRow } from "./backlog-row";
 
 /** The new `sortOrder` for the row moved from `from` to `to`, or undefined when it stays put. */
@@ -37,45 +37,18 @@ function rankAfterMove(
   return sortOrder === issues[from].sortOrder ? undefined : sortOrder;
 }
 
-/** The backlog as it looks after an update: planned rows leave, reranked rows move. */
-function backlogAfterUpdate(
-  backlog: Doc<"issues">[],
-  update: { issueId: Id<"issues">; sortOrder?: number; cycleId?: Id<"cycles"> | null }
-): Doc<"issues">[] {
-  if (update.cycleId) {
-    return backlog.filter((issue) => issue._id !== update.issueId);
-  }
-  const { sortOrder } = update;
-  if (sortOrder === undefined) {
-    return backlog;
-  }
-  return backlog
-    .map((issue) =>
-      issue._id === update.issueId ? { ...issue, sortOrder } : issue
-    )
-    .sort((a, b) => b.sortOrder - a.sortOrder);
-}
-
 export function BacklogView({
   team,
   issues,
+  moreToLoad,
 }: {
   team: Doc<"teams">;
   issues: Doc<"issues">[];
+  moreToLoad: boolean;
 }) {
   const cycles = useQuery(api.cycles.listByTeam, { teamId: team._id });
-  const updateIssue = useMutation(api.issues.update).withOptimisticUpdate(
-    (localStore, args) => {
-      const query = { teamId: team._id };
-      const current = localStore.getQuery(api.issues.listBacklog, query);
-      if (current) {
-        localStore.setQuery(
-          api.issues.listBacklog,
-          query,
-          backlogAfterUpdate(current, args)
-        );
-      }
-    }
+  const updateIssue = useMutation(api.issues.update).withOptimisticUpdate((localStore, args) =>
+    updateBacklog(localStore, team._id, args)
   );
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -100,6 +73,10 @@ export function BacklogView({
     if (from === -1 || to === -1) {
       return;
     }
+    if (!canDropAt(to, issues.length, moreToLoad)) {
+      toast(LOAD_MORE_TO_PLACE);
+      return;
+    }
     const sortOrder = rankAfterMove(issues, from, to);
     if (sortOrder !== undefined) {
       update({ issueId: issues[from]._id, sortOrder }, "Failed to rank story");
@@ -110,7 +87,7 @@ export function BacklogView({
     <DndContext
       sensors={sensors}
       collisionDetection={rankCollision}
-      accessibility={{ announcements: rankAnnouncements(issues) }}
+      accessibility={{ announcements: rankAnnouncements(issues, moreToLoad) }}
       onDragEnd={handleDragEnd}
     >
       <SortableContext

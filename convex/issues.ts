@@ -1,3 +1,4 @@
+import { PaginationOptions, paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { ObjectType, v } from "convex/values";
 import { invalid, notFound, refuse } from "./lib/refusals";
 import { Doc, Id } from "./_generated/dataModel";
@@ -7,11 +8,10 @@ import { isGatedStatus } from "../lib/issue-status";
 import { respaceTie, SORT_GAP } from "../lib/sort-order";
 import { changedFields, fieldText, FieldLogOptions, logActivity, logFieldChanges } from "./lib/activity";
 import { orgAdminMutation, orgMutation, orgQuery } from "./lib/customFunctions";
-import { deleteIssueOwnedRows } from "./lib/issueCleanup";
 import { IssueKeys } from "./lib/issueKeys";
 import { patchIssue } from "./lib/issueVersion";
 import { findMembership } from "./lib/mirror";
-import { inOrg, orgChildren, orgRow, requireOrgRow } from "./lib/orgRows";
+import { inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
 import { OrgScope } from "./lib/orgScope";
 import { assertCycleInTeam } from "./lib/rules/cycles";
 import {
@@ -20,7 +20,6 @@ import {
   CLOSED_STATUSES,
 } from "./lib/rules/doneGate";
 import {
-  assertNoChildren,
   assertParentOpen,
   assertValidParent,
   cascadeProject,
@@ -28,7 +27,6 @@ import {
   nextSubNumber,
 } from "./lib/rules/levels";
 import {
-  assertNotTestingSubtask,
   assertProofUrl,
   assertTestingSubtask,
   createTestingSubtask,
@@ -103,32 +101,49 @@ const OPEN_STATUSES = issueStatusValidator.members
   .map((member) => member.value)
   .filter((status) => !CLOSED_STATUSES.has(status));
 
+/** Rows and bytes one page may read, rows its filter drops included: well inside Convex's 32,000 documents and 16 MiB. */
+export const PAGE_READ_ROWS = 8_000;
+const PAGE_READ_BYTES = 8 * 1024 * 1024;
+
 /**
- * The backlog: open stories with no cycle, the top `LIST_LIMIT` by `sortOrder` (owner's rank).
- * Reads the newest `LIST_LIMIT` of each open status only, so neither a long closed history nor a crowded status
- * counts against the read limit. New stories rank on top, so a crowded status gives up its oldest.
+ * `paginationOpts` with the page held to at most `LIST_LIMIT` items and `PAGE_READ_ROWS` rows or `PAGE_READ_BYTES`
+ * read, whatever the client asks for. A page that runs out of reads first comes back `SplitRequired`, holding every
+ * match among the rows it read, and its `continueCursor` resumes after the last row read. A caller that follows
+ * `continueCursor`, like the REST list, misses nothing; `usePaginatedQuery` replaces the page by its two halves at
+ * `splitCursor`.
+ */
+export function capPage(paginationOpts: PaginationOptions): PaginationOptions {
+  return {
+    ...paginationOpts,
+    numItems: Math.min(paginationOpts.numItems, LIST_LIMIT),
+    maximumRowsRead: PAGE_READ_ROWS,
+    maximumBytesRead: PAGE_READ_BYTES,
+  };
+}
+
+/**
+ * The backlog, one page at a time: open stories with no cycle, highest `sortOrder` (owner's rank) first.
+ * It reads the team's rank index in order and filters inside the query, so the first page always starts at the
+ * top-ranked story, however old it is. Closed rows count toward a page's reads, so a page under many of them
+ * can come back short, or empty, with a cursor to the rest.
  */
 export const listBacklog = orgQuery({
-  args: { teamId: v.id("teams") },
-  returns: v.array(v.object(issueShape)),
+  args: { teamId: v.id("teams"), paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(v.object(issueShape)),
   handler: async (ctx, args) => {
     await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
-    const byStatus = await Promise.all(
-      OPEN_STATUSES.map((status) =>
-        inOrg(
-          ctx.db
-            .query("issues")
-            .withIndex("by_team_and_status", (q) => q.eq("teamId", args.teamId).eq("status", status))
-            .order("desc"),
-          ctx.org._id
-        ).take(LIST_LIMIT)
+    return await inOrg(
+      ctx.db.query("issues").withIndex("by_team_and_sort_order", (q) => q.eq("teamId", args.teamId)).order("desc"),
+      ctx.org._id
+    )
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("kind"), "story"),
+          q.eq(q.field("cycleId"), undefined),
+          q.or(...OPEN_STATUSES.map((status) => q.eq(q.field("status"), status)))
+        )
       )
-    );
-    return byStatus
-      .flat()
-      .filter((issue) => issue.kind === "story" && issue.cycleId === undefined)
-      .sort((a, b) => b.sortOrder - a.sortOrder)
-      .slice(0, LIST_LIMIT);
+      .paginate(capPage(args.paginationOpts));
   },
 });
 
@@ -326,9 +341,9 @@ export const create = orgMutation({
 });
 
 /**
- * The team's issues at `rank`, other than `issue`, in creation order. Bounded by design: every write gives a team
- * distinct ranks (create takes the highest + `SORT_GAP`, `placeRank` re-spaces every row it ties, the seed spaces
- * by position), so a rank holds only rows a legacy write left tied.
+ * The team's issues at `rank`, other than `issue`, in creation order. Bounded by design: create takes the highest +
+ * `SORT_GAP`, `placeRank` re-spaces every row it ties and the seed spaces by position, so a rank holds one story,
+ * its Complete testing sub-task (which takes the story's rank, `createTestingSubtask`) and rows a legacy write left tied.
  */
 async function othersAtRank(
   ctx: MutationCtx,
@@ -589,58 +604,6 @@ export const revertChange = orgAdminMutation({
       { issueId: issue._id, ...(await toArgs(ctx, issue, change.oldValue)) },
       { type: "reverted" }
     );
-    return null;
-  },
-});
-
-/** Deletes an issue and every row that belongs to it. */
-async function deleteIssueRow(ctx: MutationCtx, issue: Doc<"issues">): Promise<void> {
-  await deleteIssueOwnedRows(ctx, issue);
-  await ctx.db.delete(issue._id);
-}
-
-/** A story's subtasks go with it, the Complete testing one included. */
-async function deleteStorySubtasks(ctx: MutationCtx, story: Doc<"issues">): Promise<void> {
-  if (story.kind !== "story") {
-    return;
-  }
-  const subtasks = await orgChildren(ctx, story.orgId, story._id);
-  for (const subtask of subtasks) {
-    await deleteIssueRow(ctx, subtask);
-  }
-}
-
-/** A deleted issue's rows go with it, so the deletion is logged on the surviving parent. */
-async function logChildDeleted(
-  ctx: MutationCtx,
-  child: Doc<"issues">,
-  parent: Doc<"issues"> | null,
-  actorId: Id<"users">
-): Promise<void> {
-  if (parent === null) {
-    return;
-  }
-  await logActivity(ctx, {
-    orgId: child.orgId,
-    issueId: parent._id,
-    actorId,
-    type: "child_deleted",
-    field: "child",
-    oldValue: await new IssueKeys(ctx, child.orgId).label(child),
-  });
-}
-
-export const remove = orgMutation({
-  args: { issueId: v.id("issues") },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
-    assertNotTestingSubtask(issue, "deleted");
-    await assertNoChildren(ctx, issue);
-    const parent = issue.parentIssueId ? await orgRow(ctx, ctx.org._id, issue.parentIssueId) : null;
-    await deleteStorySubtasks(ctx, issue);
-    await deleteIssueRow(ctx, issue);
-    await logChildDeleted(ctx, issue, parent, ctx.user._id);
     return null;
   },
 });

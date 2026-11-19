@@ -103,7 +103,7 @@ async function refuseWhileHeld(
 
 /**
  * Removes the agent's membership and keeps its user row, so its comments and activity still name it.
- * False when the name is no agent member, so a rerun is a no-op. Its next request adds the membership back.
+ * False when the name is no agent member, so a rerun is a no-op. Its next successful write adds the membership back.
  */
 export async function removeAgentMembership(
   ctx: MutationCtx,

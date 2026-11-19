@@ -80,6 +80,17 @@ describe("hx-citadel", () => {
     expect(sent.headers.get("If-Match")).toBe('"7"');
   });
 
+  it("create --parent without --team leaves the team to the server, which takes the parent's", async () => {
+    const fetchMock = stubFetch({ status: 200, body: record, etag: '"7"' }, { status: 201, body: issue });
+    const result = await cli(["create", "--parent", "HX-1", "--title", "Wire it"]);
+
+    expect(result.code).toBe(0);
+    const sent = call(fetchMock, 1);
+    expect(sent).toMatchObject({ url: `${API}/api/v1/issues`, method: "POST" });
+    expect(sent.body).toEqual({ title: "Wire it", parentKey: "HX-1" });
+    expect(sent.headers.get("If-Match")).toBe('"7"');
+  });
+
   it("create without --parent sends no read and no If-Match", async () => {
     const fetchMock = stubFetch({ status: 201, body: issue });
     const result = await cli(["create", "--team", "HX", "--title", "Ship it"]);
@@ -180,6 +191,7 @@ describe("hx-citadel", () => {
     ["a missing positional", ["proof", "HX-1"], ENV, /URL/],
     ["an extra positional", ["get", "HX-1", "HX-2"], ENV, /HX-2/],
     ["a missing required flag", ["list"], ENV, /--team/],
+    ["a create with neither --team nor --parent", ["create", "--title", "T"], ENV, /--team KEY or --parent KEY/],
   ])("%s gives exit 2 before any call", async (_name, argv, env, message) => {
     const fetchMock = stubFetch();
     const result = await cli(argv, env);

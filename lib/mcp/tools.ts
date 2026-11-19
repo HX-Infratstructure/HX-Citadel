@@ -60,20 +60,22 @@ export function createCitadelMcpServer(api: CitadelApi): McpServer {
   server.registerTool(
     MCP_TOOL.createIssue,
     {
-      description: "POST /api/v1/issues: create an issue; a new story gets its testing sub-task .1",
-      inputSchema: {
-        ...editShape,
-        ifMatch: editShape.ifMatch.describe("The parentKey issue's version last read; a stale one is refused with code stale"),
-        teamKey: z.string().min(1),
-        title: z.string().min(1),
-        description: z.string().optional(),
-        kind: literals(issueKindValidator).optional(),
-        type: literals(issueTypeValidator).optional(),
-        status: status.optional(),
-        priority: priority.optional(),
-        parentKey: z.string().optional(),
-        assignee: z.string().optional(),
-      },
+      description: "POST /api/v1/issues: create an issue in teamKey, or under parentKey in the parent's team; a new story gets its testing sub-task .1",
+      inputSchema: z
+        .object({
+          ...editShape,
+          ifMatch: editShape.ifMatch.describe("The parentKey issue's version last read; a stale one is refused with code stale"),
+          teamKey: z.string().min(1).optional(),
+          title: z.string().min(1),
+          description: z.string().optional(),
+          kind: literals(issueKindValidator).optional(),
+          type: literals(issueTypeValidator).optional(),
+          status: status.optional(),
+          priority: priority.optional(),
+          parentKey: z.string().optional(),
+          assignee: z.string().optional(),
+        })
+        .refine((args) => args.teamKey !== undefined || args.parentKey !== undefined, { message: "Give teamKey or parentKey" }),
     },
     (args) => toolResult(() => api.createIssue(...writeArgs(args)))
   );

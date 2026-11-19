@@ -4,6 +4,7 @@ import { ConvexError } from "convex/values";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
 import { Id, TableNames } from "./_generated/dataModel";
+import { deleteIssuesWithOwnedRows } from "./lib/issueCleanup";
 import { MAX_CHILDREN } from "./lib/orgRows";
 import schema from "./schema";
 import { ORG, registerWorkspaceEnv } from "./workspace.fixture";
@@ -86,10 +87,10 @@ describe("rows from another workspace that point at our story", () => {
     expect(asked.decision).toMatchObject({ question: "Ours?", status: "open" });
   });
 
-  test("removing the story deletes our rows and leaves the foreign rows", async () => {
+  test("deleting the story with its owned rows deletes our rows and leaves the foreign rows", async () => {
     const { t, admin, storyId, rows } = await setup();
     await comment(admin, storyId);
-    await admin.mutation(api.issues.remove, { issueId: storyId });
+    await t.run(async (ctx) => await deleteIssuesWithOwnedRows(ctx, [(await ctx.db.get(storyId))!]));
 
     const left = await t.run(async (ctx) => ({
       comments: await ctx.db.query("comments").collect(),
@@ -108,7 +109,7 @@ describe("an issue or cycle from another workspace that names our team", () => {
   test("stays out of the team's lists, the backlog, the agent list and the number lookup", async () => {
     const { t, admin, teamId, storyId } = await setup();
     const listed = await admin.query(api.issues.listByTeam, { teamId });
-    const backlog = await admin.query(api.issues.listBacklog, { teamId });
+    const { page: backlog } = await admin.query(api.issues.listBacklog, { teamId, paginationOpts: { numItems: 10, cursor: null } });
     const agentList = await t.query(internal.agentApi.listIssues, { agentName: "cc1", teamKey: "ENG" });
     const byNumber = await admin.query(api.issues.getByNumber, { teamId, number: 1 });
     const cycles = await admin.query(api.cycles.listByTeam, { teamId });
@@ -173,7 +174,9 @@ const onStory = (orgId: Id<"organizations">, s: Setup) => ({ orgId, issueId: s.s
 
 const LOADERS = [
   loader("Team", "issues.listByTeam", team, (s, teamId) => s.admin.query(api.issues.listByTeam, { teamId })),
-  loader("Team", "issues.listBacklog", team, (s, teamId) => s.admin.query(api.issues.listBacklog, { teamId })),
+  loader("Team", "issues.listBacklog", team, (s, teamId) =>
+    s.admin.query(api.issues.listBacklog, { teamId, paginationOpts: { numItems: 10, cursor: null } })
+  ),
   loader("Team", "issues.listParentCandidates", team, (s, teamId) =>
     s.admin.query(api.issues.listParentCandidates, { teamId, kind: "story" })
   ),
@@ -182,10 +185,12 @@ const LOADERS = [
   loader("Team", "views.teamIssueLabels", team, (s, teamId) => s.admin.query(api.views.teamIssueLabels, { teamId })),
   loader("Team", "cycles.listByTeam", team, (s, teamId) => s.admin.query(api.cycles.listByTeam, { teamId })),
   loader("Project", "projects.listIssues", project, (s, projectId) => s.admin.query(api.projects.listIssues, { projectId })),
+  loader("Project", "projects.progress", project, (s, projectId) => s.admin.query(api.projects.progress, { projectId })),
   loader("Project", "issues.create epic", project, (s, projectId) =>
     s.admin.mutation(api.issues.create, { teamId: s.teamId, title: "Epic", kind: "epic", projectId })
   ),
   loader("Cycle", "cycles.listIssues", cycle, (s, cycleId) => s.admin.query(api.cycles.listIssues, { cycleId })),
+  loader("Cycle", "cycles.progress", cycle, (s, cycleId) => s.admin.query(api.cycles.progress, { cycleId })),
   loader("Cycle", "issues.update cycleId", cycle, (s, cycleId) =>
     s.admin.mutation(api.issues.update, { issueId: s.storyId, cycleId })
   ),
@@ -307,7 +312,6 @@ const READS_OF_CHILDREN: { name: string; call: (s: Setup) => Promise<unknown> }[
       return await s.admin.mutation(api.issues.update, { issueId: s.storyId, projectId });
     },
   },
-  { name: "the delete", call: (s) => s.admin.mutation(api.issues.remove, { issueId: s.storyId }) },
 ];
 
 describe("an issue's children", () => {

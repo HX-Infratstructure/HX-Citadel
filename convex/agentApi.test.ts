@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import { ConvexError, type Value } from "convex/values";
 import { internal } from "./_generated/api";
 import { pageFailure } from "./agentApi";
+import { PAGE_READ_ROWS } from "./issues";
 import { AGENT, freshKey, registerWorkspaceEnv, workspaceTest, writeHeaders, type WorkspaceTest } from "./workspace.fixture";
 
 const WIP_REFUSAL = "cc1 already has ENG-1 In Progress; move it to In Review or Done first";
@@ -155,6 +156,23 @@ describe("internal.agentApi.listIssues past the newest 500 issues", () => {
     expect(expected.length).toBeGreaterThan(500);
     expect(listed.every((issue) => issue.status === "todo" && issue.assignee === "cc1")).toBe(true);
     expect(listed.map((issue) => issue._id).sort()).toEqual([...expected].sort());
+  });
+
+  test("GET stops a page at the read limit, and its cursor reaches a rare match past it once", async () => {
+    const t = await workspaceTest();
+    const { issue: match } = await t.mutation(internal.agentApi.createIssue, { agentName: "cc1", teamKey: "ENG", title: "Rare" });
+    await t.run((ctx) => ctx.db.patch(match._id, { status: "in_review" }));
+    await fill(t, PAGE_READ_ROWS + 1_000);
+    const filters = "&status=in_review";
+    let next = await page(t, filters);
+    expect(next, "the first page read only non-matching rows").toEqual({ issues: [], nextCursor: expect.any(String) });
+    const listed = [...next.issues];
+    for (let pages = 1; typeof next.nextCursor === "string" && pages < 10; pages++) {
+      next = await page(t, `${filters}&cursor=${encodeURIComponent(next.nextCursor)}`);
+      listed.push(...next.issues);
+    }
+    expect(next.nextCursor).toBeNull();
+    expect(listed.map((issue) => issue._id)).toEqual([match._id]);
   });
 
   test("GET with an empty cursor is 400 validation", async () => {

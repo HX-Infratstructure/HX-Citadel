@@ -51,4 +51,34 @@ describe("createCitadelMcpServer", () => {
     expect(headers.get(AGENT_HEADER)).toBe("cc2");
     expect(headers.get(IF_MATCH_HEADER)).toBe('"7"');
   });
+
+  // Catches: a create_issue schema stricter than REST, where parentKey alone is enough and the team is the parent's.
+  it("create_issue with only parentKey posts it without a teamKey", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ issue: { key: "HX-1.2", version: 1 } }), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect("cc2");
+
+    const result = await client.callTool({
+      name: MCP_TOOL.createIssue,
+      arguments: { parentKey: "HX-1", title: "Wire it", idempotencyKey: "k-2" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`${SITE}/api/v1/issues`);
+    expect(JSON.parse(init.body as string)).toEqual({ parentKey: "HX-1", title: "Wire it" });
+  });
+
+  // Catches: a create_issue that sends neither teamKey nor parentKey, which REST can only refuse.
+  it("create_issue with neither teamKey nor parentKey refuses before any REST call", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect("cc2");
+
+    const result = await client.callTool({ name: MCP_TOOL.createIssue, arguments: { title: "Orphan", idempotencyKey: "k-3" } });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toMatch(/teamKey or parentKey/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

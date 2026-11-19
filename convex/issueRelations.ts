@@ -288,7 +288,7 @@ export const setParent = orgMutation({
     if ((issue.parentIssueId ?? null) === args.parentIssueId) {
       return null;
     }
-    assertNotTestingSubtask(issue, "moved");
+    assertNotTestingSubtask(issue);
     const keys = new IssueKeys(ctx, ctx.org._id);
 
     let newParent: Doc<"issues"> | null = null;

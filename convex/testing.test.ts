@@ -118,14 +118,6 @@ describe("Complete testing sub-task", () => {
     expect(await children(subtask)).toHaveLength(0);
   });
 
-  test("deleting the testing subtask is refused", async () => {
-    const { asMember, create, testingSubtaskOf } = await setup();
-    const testing = await testingSubtaskOf(await create("story"));
-    await expect(
-      asMember.mutation(api.issues.remove, { issueId: testing._id })
-    ).rejects.toThrow("The Complete testing sub-task can't be deleted");
-  });
-
   test("moving the testing subtask is refused", async () => {
     const { asMember, create, testingSubtaskOf } = await setup();
     const testing = await testingSubtaskOf(await create("story"));
@@ -187,20 +179,5 @@ describe("Complete testing sub-task", () => {
     const saved = await t.run((ctx) => ctx.db.get(testing._id));
     expect(saved).not.toBeNull();
     expect(saved?.proofUrl).toBeUndefined();
-  });
-
-  test("deleting the story removes its subtasks, the testing one included", async () => {
-    const { t, asMember, create, children } = await setup();
-    const storyId = await create("story");
-    await create("subtask", { parentIssueId: storyId });
-    const childIds = (await children(storyId)).map((child) => child._id);
-    expect(childIds).toHaveLength(2);
-
-    await asMember.mutation(api.issues.remove, { issueId: storyId });
-
-    expect(await t.run((ctx) => ctx.db.get(storyId))).toBeNull();
-    for (const childId of childIds) {
-      expect(await t.run((ctx) => ctx.db.get(childId))).toBeNull();
-    }
   });
 });

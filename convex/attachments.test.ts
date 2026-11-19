@@ -56,20 +56,6 @@ async function setup() {
       fileSize: 5,
     });
 
-  /** Shared rows can only exist from data written before `create` refused them. */
-  const insertSharedRow = (issueId: Id<"issues">, storageId: Id<"_storage">) =>
-    t.run((ctx) =>
-      ctx.db.insert("attachments", {
-        orgId,
-        issueId,
-        storageId,
-        fileName: "proof.txt",
-        fileType: "text/plain",
-        fileSize: 5,
-        uploadedBy: memberId,
-      })
-    );
-
   const removeAttachment = (attachmentId: Id<"attachments">) =>
     asMember.mutation(api.attachments.remove, { attachmentId });
 
@@ -83,7 +69,7 @@ async function setup() {
     return t.withIdentity({ subject: "user_other", org_id: ORG_CLAIM });
   };
 
-  return { t, orgId, memberId, asMember, createIssue, storeFile, attach, insertSharedRow, removeAttachment, storedFile, asOtherMember };
+  return { t, orgId, memberId, asMember, createIssue, storeFile, attach, removeAttachment, storedFile, asOtherMember };
 }
 
 describe("attachments keep one owner per stored file", () => {
@@ -104,22 +90,6 @@ describe("attachments keep one owner per stored file", () => {
 
     await attach(issueId, await storeFile());
     await attach(issueId, await storeFile());
-  });
-
-  test("removing one of two attachments that share a file keeps the file", async () => {
-    const { createIssue, storeFile, attach, insertSharedRow, removeAttachment, storedFile } =
-      await setup();
-    const firstId = await createIssue();
-    const secondId = await createIssue();
-    const file = await storeFile();
-    const firstAttachment = await attach(firstId, file);
-    const secondAttachment = await insertSharedRow(secondId, file);
-
-    await removeAttachment(firstAttachment);
-    expect(await storedFile(file)).not.toBeNull();
-
-    await removeAttachment(secondAttachment);
-    expect(await storedFile(file)).toBeNull();
   });
 });
 

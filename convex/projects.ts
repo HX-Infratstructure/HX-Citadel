@@ -34,8 +34,12 @@ export const progressShape = v.object({
   canceled: v.number(),
 });
 
-/** Issue counts by status, the one progress rule for projects and cycles. */
-export function countByStatus(issues: Doc<"issues">[]) {
+/**
+ * Issue counts by status over every issue the query yields, the one progress rule for projects and cycles.
+ * Bounded by design: it reads each issue, so a query that counts more issues than Convex lets one query
+ * read fails whole with Convex's read-limit error, never a short count.
+ */
+export async function countByStatus(issues: AsyncIterable<Doc<"issues">>) {
   const progress = {
     total: 0,
     backlog: 0,
@@ -45,19 +49,19 @@ export function countByStatus(issues: Doc<"issues">[]) {
     done: 0,
     canceled: 0,
   };
-  for (const issue of issues) {
+  for await (const issue of issues) {
     progress.total += 1;
     progress[issue.status] += 1;
   }
   return progress;
 }
 
-/** A project's issues, at most `LIST_LIMIT`. */
-async function projectIssues(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">, projectId: Id<"projects">) {
-  return await inOrg(
+/** Every issue of a project in the workspace. */
+function projectIssueQuery(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">, projectId: Id<"projects">) {
+  return inOrg(
     ctx.db.query("issues").withIndex("by_project", (q) => q.eq("projectId", projectId)),
     orgId
-  ).take(LIST_LIMIT);
+  );
 }
 
 /** Bounded by design: people create projects by hand, a few dozen per workspace; no agent route creates one. */
@@ -98,7 +102,7 @@ export const listWithProgress = orgQuery({
     return await Promise.all(
       projects.map(async (project) => ({
         ...project,
-        progress: countByStatus(await projectIssues(ctx, ctx.org._id, project._id)),
+        progress: await countByStatus(projectIssueQuery(ctx, ctx.org._id, project._id)),
       }))
     );
   },
@@ -110,13 +114,23 @@ export const get = orgQuery({
   handler: async (ctx, args) => await orgRow(ctx, ctx.org._id, args.projectId),
 });
 
-/** All issues assigned to a project (project detail page computes progress from this). */
+/** A project's issues for the detail page list, at most `LIST_LIMIT`; `progress` counts them all. */
 export const listIssues = orgQuery({
   args: { projectId: v.id("projects") },
   returns: v.array(v.object(issueShape)),
   handler: async (ctx, args) => {
     await requireOrgRow(ctx, ctx.org._id, args.projectId, "Project");
-    return await projectIssues(ctx, ctx.org._id, args.projectId);
+    return await projectIssueQuery(ctx, ctx.org._id, args.projectId).take(LIST_LIMIT);
+  },
+});
+
+/** A project's issue counts by status, over every issue, for the detail page. */
+export const progress = orgQuery({
+  args: { projectId: v.id("projects") },
+  returns: progressShape,
+  handler: async (ctx, args) => {
+    await requireOrgRow(ctx, ctx.org._id, args.projectId, "Project");
+    return await countByStatus(projectIssueQuery(ctx, ctx.org._id, args.projectId));
   },
 });
 
@@ -219,10 +233,7 @@ export const remove = orgMutation({
     const project = await requireOrgRow(ctx, ctx.org._id, args.projectId, "Project");
 
     // Bounded by design: assertNoEpics must see every issue, and the mutation is atomic, so a project too big to read fails whole and detaches nothing.
-    const issues = await inOrg(
-      ctx.db.query("issues").withIndex("by_project", (q) => q.eq("projectId", project._id)),
-      ctx.org._id
-    ).collect();
+    const issues = await projectIssueQuery(ctx, ctx.org._id, project._id).collect();
     assertNoEpics(issues);
     for (const issue of issues) {
       await patchIssue(ctx, issue, { projectId: undefined });

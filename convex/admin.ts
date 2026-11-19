@@ -132,6 +132,15 @@ async function viewsOpeningTeam(ctx: MutationCtx, team: Doc<"teams">, cursor: st
   return { views, isDone, continueCursor };
 }
 
+/**
+ * Deletes a page of issues within one run's owned-row budget (`CLEANUP_BUDGET`). `more` says a next run has
+ * issues to delete: the budget ran out first, or the page was full.
+ */
+async function deleteIssuePage(ctx: MutationCtx, issues: Doc<"issues">[]) {
+  const { counts, finished } = await deleteIssuesWithOwnedRows(ctx, issues);
+  return { counts, more: !finished || issues.length === PAGE_SIZE };
+}
+
 /** The next run of a team clear, bound to the team's id so a team created again with its key is never touched. */
 async function scheduleTeamPage(ctx: MutationCtx, team: Doc<"teams">, viewsCursor: string | null) {
   await ctx.scheduler.runAfter(0, internal.admin.continueTeamClear, {
@@ -142,17 +151,18 @@ async function scheduleTeamPage(ctx: MutationCtx, team: Doc<"teams">, viewsCurso
 }
 
 /**
- * One run of a team clear: a page of the team's issues; once they are gone, a page of its cycles; once
- * those are gone, a page of the workspace's saved views from `viewsCursor`; once every view is read, the
- * team. Every run starts with the issues and the cycles, so the run that deletes the team has seen it hold none.
+ * One run of a team clear: a page of the team's issues within the row budget; once they are gone, a page of
+ * its cycles; once those are gone, a page of the workspace's saved views from `viewsCursor`; once every view
+ * is read, the team. Every run starts with the issues and the cycles, so the run that deletes the team has
+ * seen it hold none.
  */
 async function clearTeamPage(ctx: MutationCtx, team: Doc<"teams">, viewsCursor: string | null): Promise<TeamCounts> {
   const issues = await inOrg(
     ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", team._id)),
     team.orgId
   ).take(PAGE_SIZE);
-  const issueCounts = await deleteIssuesWithOwnedRows(ctx, issues);
-  if (issues.length === PAGE_SIZE) {
+  const { counts: issueCounts, more } = await deleteIssuePage(ctx, issues);
+  if (more) {
     await scheduleTeamPage(ctx, team, viewsCursor);
     return { ...issueCounts, cycles: 0, views: 0, teams: 0 };
   }
@@ -176,11 +186,14 @@ async function scheduleOrgPage(ctx: MutationCtx, orgId: OrgId) {
   await ctx.scheduler.runAfter(0, internal.admin.continueOrgClear, { orgId });
 }
 
-/** A page of the workspace's issues; when it is the last, a page of its teams' cycles and of each org-only table. */
+/**
+ * A page of the workspace's issues within the row budget; when it is the last, a page of its teams' cycles
+ * and of each org-only table.
+ */
 async function clearOrgPage(ctx: MutationCtx, orgId: OrgId): Promise<ContentCounts> {
   const issues = await ORG_ROWS.issues(ctx, orgId, PAGE_SIZE);
-  const issueCounts = await deleteIssuesWithOwnedRows(ctx, issues);
-  if (issues.length === PAGE_SIZE) {
+  const { counts: issueCounts, more } = await deleteIssuePage(ctx, issues);
+  if (more) {
     await scheduleOrgPage(ctx, orgId);
     return sumCounts([issueCounts]);
   }
@@ -208,9 +221,8 @@ export const orgHasContent = internalQuery({
 
 /**
  * Each run deletes one page and schedules the next until nothing is left. Returns what this run
- * deleted. A rerun starts from the rows that are left. A page of `PAGE_SIZE` issues takes every row
- * they own, read whole (`ISSUE_OWNED_ROWS`), so a page whose issues own more than one mutation can
- * delete fails and changes nothing, and a rerun reads the same issues and fails again.
+ * deleted. A rerun starts from the rows that are left. A run stays within `CLEANUP_BUDGET` (rows, bytes
+ * and queries) for the rows its issues own, so an issue that owns more loses a chunk per run and goes once it owns nothing.
  */
 export const clearOrgContent = internalMutation({
   args: { clerkOrgId: v.string() },

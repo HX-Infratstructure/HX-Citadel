@@ -36,7 +36,7 @@ import { formatDateRange } from "@/components/projects/dates";
 import { GroupedIssueList } from "@/components/projects/grouped-issue-list";
 import {
   completionPercent,
-  progressFromIssues,
+  EMPTY_PROGRESS,
 } from "@/components/projects/project-meta";
 import { IssueProgressBar } from "@/components/projects/progress-bar";
 
@@ -98,7 +98,8 @@ function CycleDetail({
   const [editOpen, setEditOpen] = useState(false);
 
   const status = cycleStatus(cycle);
-  const progress = progressFromIssues(issues ?? []);
+  const progress =
+    useQuery(api.cycles.progress, { cycleId: cycle._id }) ?? EMPTY_PROGRESS;
 
   const addIssue = (issueId: Id<"issues">) => {
     updateIssue({ issueId, cycleId: cycle._id }).catch((error: unknown) => {

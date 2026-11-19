@@ -2,9 +2,8 @@ import { paginationOptsValidator, paginationResultValidator } from "convex/serve
 import { v } from "convex/values";
 import { ATTACHMENT_TOO_LARGE, MAX_ATTACHMENT_BYTES } from "../lib/api-contract";
 import { invalid, refuse } from "./lib/refusals";
-import { getOrgIssue, LIST_LIMIT } from "./issues";
+import { capPage, getOrgIssue } from "./issues";
 import { logActivity } from "./lib/activity";
-import { deleteAttachmentFiles } from "./lib/issueCleanup";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { inOrg, requireOrgRow } from "./lib/orgRows";
 
@@ -90,7 +89,7 @@ export const listByIssue = orgQuery({
     const result = await inOrg(
       ctx.db.query("attachments").withIndex("by_issue", (q) => q.eq("issueId", args.issueId)).order("desc"),
       ctx.org._id
-    ).paginate({ ...args.paginationOpts, numItems: Math.min(args.paginationOpts.numItems, LIST_LIMIT) });
+    ).paginate(capPage(args.paginationOpts));
 
     const page = [];
     for (const attachment of result.page) {
@@ -122,7 +121,7 @@ export const remove = orgMutation({
       refuse("Only the uploader or an admin can delete an attachment");
     }
 
-    await deleteAttachmentFiles(ctx, [attachment]);
+    await ctx.storage.delete(attachment.storageId);
     await ctx.db.delete(attachment._id);
 
     await logActivity(ctx, {

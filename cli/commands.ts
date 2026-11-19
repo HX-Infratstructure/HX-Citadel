@@ -95,7 +95,7 @@ export const commands = {
 
   create: async (context, args) => {
     const body = {
-      teamKey: required(args, "team", "--team KEY"),
+      teamKey: args.parent ? args.team : required(args, "team", "--team KEY or --parent KEY"),
       title: required(args, "title", "--title T"),
       kind: args.kind,
       type: args.type,

@@ -215,35 +215,6 @@ describe("R6: one activity row per change", () => {
       { field: "project", oldValue: "A", newValue: ids.projectB },
     ]);
   });
-
-  test("deleting a sub-task logs child_deleted on its surviving story", async () => {
-    const { asMember, ids, create, rows } = await setup();
-    const storyId = await create("story");
-    const subtaskId = await create("subtask", { parentIssueId: storyId });
-    await asMember.mutation(api.issues.remove, { issueId: subtaskId });
-    expect((await rows(storyId)).slice(1)).toEqual([
-      row(ids.memberId, "child_deleted", { field: "child", oldValue: "HXT-1.2 A subtask", newValue: undefined }),
-    ]);
-  });
-
-  test("deleting a sub-task whose parent is in another workspace logs nothing about that story", async () => {
-    const { t, asMember, create } = await setup();
-    const storyId = await create("story");
-    const subtaskId = await create("subtask", { parentIssueId: storyId });
-    const foreignStoryId = await t.run(async (ctx) => {
-      const otherOrg = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
-      const otherTeam = await ctx.db.insert("teams", { orgId: otherOrg, name: "Other", key: "OTH", nextIssueNumber: 8 });
-      const { creatorId } = (await ctx.db.get(storyId))!;
-      const foreign = { orgId: otherOrg, teamId: otherTeam, creatorId, kind: "story", number: 7, sortOrder: 1 } as const;
-      const foreignId = await ctx.db.insert("issues", { ...foreign, title: "Foreign", status: "todo", priority: "none" });
-      await ctx.db.patch(subtaskId, { parentIssueId: foreignId });
-      return foreignId;
-    });
-    await asMember.mutation(api.issues.remove, { issueId: subtaskId });
-    const logged = await t.run((ctx) => ctx.db.query("activity").collect());
-    expect(logged.filter((entry) => entry.issueId === foreignStoryId)).toEqual([]);
-    expect(logged.map((entry) => entry.oldValue).filter((value) => value?.includes("-7."))).toEqual([]);
-  });
 });
 
 describe("listByIssue name resolution", () => {
