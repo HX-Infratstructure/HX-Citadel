@@ -13,6 +13,7 @@ type DraggedOver = Dragged & { over: { id: UniqueIdentifier } | null };
 
 /**
  * The rank for the story moved from index `from` to `to` of the loaded backlog, in rank order; its last story is the floor.
+ * `from` and `to` are indexes of loaded stories.
  * A move inside a run of stories at the story's own rank is refused as no room: that rank is unchanged, so the server
  * would not move the story.
  */
@@ -40,6 +41,9 @@ export function rankAnnouncements(stories: RankedStory[], moreToLoad: boolean) {
   const index = (id: UniqueIdentifier) => stories.findIndex((story) => story._id === id);
   const position = (id: UniqueIdentifier) => `position ${index(id) + 1} of ${stories.length}`;
   const dropped = (active: UniqueIdentifier, over: UniqueIdentifier) => {
+    if (index(active) === -1 || index(over) === -1) {
+      return `${title(active)} was not moved: the backlog changed during the drag.`;
+    }
     const drop = moveRank({ stories, from: index(active), to: index(over), moreToLoad });
     return "refused" in drop
       ? `${title(active)} stays at ${position(active)}. ${REFUSAL_MESSAGE[drop.refused]}`

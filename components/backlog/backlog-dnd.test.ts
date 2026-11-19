@@ -72,6 +72,24 @@ describe("rankAnnouncements", () => {
   });
 });
 
+describe("rankAnnouncements when the backlog changes during the drag", () => {
+  it("says the story was not moved when the dragged story left the backlog during the drag", () => {
+    for (const moreToLoad of [true, false]) {
+      expect(rankAnnouncements(stories, moreToLoad).onDragEnd({ active: { id: "id-gone" }, over: { id: "id-b" } })).toBe(
+        "Story was not moved: the backlog changed during the drag."
+      );
+    }
+  });
+
+  it("says the story was not moved when the story it was dropped on left the backlog during the drag", () => {
+    for (const moreToLoad of [true, false]) {
+      expect(rankAnnouncements(stories, moreToLoad).onDragEnd({ active: { id: "id-a" }, over: { id: "id-gone" } })).toBe(
+        "Login page was not moved: the backlog changed during the drag."
+      );
+    }
+  });
+});
+
 describe("moveRank", () => {
   it("refuses a move to the bottom while more of the backlog is to load", () => {
     expect(moveRank({ stories, from: 0, to: 2, moreToLoad: true })).toEqual({ refused: "loadMore" });
