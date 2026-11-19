@@ -54,37 +54,23 @@ export const listByTeam = orgQuery({
 });
 
 /**
- * Every cycle in the org with team info and per-status issue counts —
- * powers the cycles index page.
+ * Every cycle in the workspace, each team's newest first, with no issue reads.
+ * Powers the cycles index, whose rows each load their own `progress`.
  */
-export const listWithProgress = orgQuery({
+export const list = orgQuery({
   args: {},
-  returns: v.array(
-    v.object({
-      ...cycleShape,
-      teamName: v.string(),
-      teamKey: v.string(),
-      progress: progressShape,
-    })
-  ),
+  returns: v.array(v.object(cycleShape)),
   handler: async (ctx) => {
     // Bounded by design: a workspace's teams, a handful, made by hand.
     const teams = await ctx.db
       .query("teams")
       .withIndex("by_org", (q) => q.eq("orgId", ctx.org._id))
       .collect();
-    const result = [];
+    const cyclesByTeam = [];
     for (const team of teams) {
-      for (const cycle of await teamCycles(ctx, ctx.org._id, team._id)) {
-        result.push({
-          ...cycle,
-          teamName: team.name,
-          teamKey: team.key,
-          progress: await countByStatus(cycleIssueQuery(ctx, ctx.org._id, cycle._id)),
-        });
-      }
+      cyclesByTeam.push(await teamCycles(ctx, ctx.org._id, team._id));
     }
-    return result;
+    return cyclesByTeam.flat();
   },
 });
 
@@ -122,7 +108,7 @@ export const listIssues = orgQuery({
   },
 });
 
-/** A cycle's issue counts by status, over every issue, for the detail page. */
+/** A cycle's issue counts by status, over every issue, for the detail page and each row of the cycles index. */
 export const progress = orgQuery({
   args: { cycleId: v.id("cycles") },
   returns: progressShape,

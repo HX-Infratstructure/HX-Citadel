@@ -86,26 +86,14 @@ async function assertLead(ctx: MutationCtx, orgId: Id<"organizations">, leadId: 
   }
 }
 
-/** Lightweight project list for pickers (no progress computation). */
+/**
+ * The workspace's projects, with no issue reads.
+ * Powers the pickers and the projects index; each index row loads its own `progress`.
+ */
 export const list = orgQuery({
   args: {},
   returns: v.array(v.object(projectShape)),
   handler: async (ctx) => await orgProjects(ctx, ctx.org._id),
-});
-
-/** Projects with issue counts by status — powers the projects index page. */
-export const listWithProgress = orgQuery({
-  args: {},
-  returns: v.array(v.object({ ...projectShape, progress: progressShape })),
-  handler: async (ctx) => {
-    const projects = await orgProjects(ctx, ctx.org._id);
-    return await Promise.all(
-      projects.map(async (project) => ({
-        ...project,
-        progress: await countByStatus(projectIssueQuery(ctx, ctx.org._id, project._id)),
-      }))
-    );
-  },
 });
 
 export const get = orgQuery({
@@ -124,7 +112,7 @@ export const listIssues = orgQuery({
   },
 });
 
-/** A project's issue counts by status, over every issue, for the detail page. */
+/** A project's issue counts by status, over every issue, for the detail page and each row of the projects index. */
 export const progress = orgQuery({
   args: { projectId: v.id("projects") },
   returns: progressShape,

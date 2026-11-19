@@ -7,19 +7,15 @@ import { api } from "@/convex/_generated/api";
 import { Doc } from "@/convex/_generated/dataModel";
 import { UserAvatar } from "@/components/shared/user-avatar";
 import { formatDay } from "./dates";
-import { DEFAULT_PROJECT_COLOR, IssueProgress } from "./project-meta";
+import { DEFAULT_PROJECT_COLOR } from "./project-meta";
 import { ProjectStatusIcon } from "./project-status-icon";
-import { IssueProgressBar } from "./progress-bar";
+import { RowProgress } from "./row-progress";
 
-export function ProjectRow({
-  project,
-}: {
-  project: Doc<"projects"> & { progress: IssueProgress };
-}) {
+export function ProjectRow({ project }: { project: Doc<"projects"> }) {
   const params = useParams<{ orgSlug: string }>();
   const members = useQuery(api.organizations.listMembers);
+  const progress = useQuery(api.projects.progress, { projectId: project._id });
   const lead = members?.find((m) => m.userId === project.leadId);
-  const activeIssues = project.progress.total - project.progress.canceled;
 
   return (
     <Link
@@ -34,14 +30,7 @@ export function ProjectRow({
       <span className="min-w-0 flex-1 truncate font-medium">
         {project.name}
       </span>
-      <span className="hidden w-16 shrink-0 text-right text-xs text-muted-foreground sm:block">
-        {activeIssues} {activeIssues === 1 ? "issue" : "issues"}
-      </span>
-      <IssueProgressBar
-        progress={project.progress}
-        showPercent
-        className="hidden w-44 shrink-0 md:flex"
-      />
+      <RowProgress progress={progress} countClassName="sm:block" />
       <span className="hidden w-14 shrink-0 text-right text-xs text-muted-foreground lg:block">
         {project.targetDate ? formatDay(project.targetDate) : "—"}
       </span>

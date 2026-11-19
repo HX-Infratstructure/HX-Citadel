@@ -11,8 +11,8 @@ const ORG = "org_hx";
 const MEMBER = "user_member";
 const DAY = 86_400_000;
 
-async function setup() {
-  const t = convexTest(schema, modules);
+async function setup(transactionLimits?: { documentsRead: number }) {
+  const t = convexTest({ schema, modules, transactionLimits });
   const ids = await t.run(async (ctx) => {
     const orgId = await ctx.db.insert("organizations", { clerkOrgId: ORG, name: "HX", slug: "hx" });
     const userId = await ctx.db.insert("users", { clerkId: MEMBER, name: "Member", email: "member@example.com" });
@@ -38,7 +38,7 @@ describe("cycle dates", () => {
 });
 
 describe("a cycle with more than LIST_LIMIT issues", () => {
-  test("lists LIST_LIMIT of them and counts every one, on the list and the detail", async () => {
+  test("lists LIST_LIMIT of them, and the index row's progress counts every one", async () => {
     const s = await setup();
     await s.t.run(async (ctx) => {
       for (let number = 1; number <= LIST_LIMIT + 1; number++) {
@@ -58,12 +58,86 @@ describe("a cycle with more than LIST_LIMIT issues", () => {
     });
 
     const issues = await s.member.query(api.cycles.listIssues, { cycleId: s.cycleId });
-    const [cycle] = await s.member.query(api.cycles.listWithProgress, {});
-    const detail = await s.member.query(api.cycles.progress, { cycleId: s.cycleId });
+    const [cycle] = await s.member.query(api.cycles.list, {});
+    const row = await s.member.query(api.cycles.progress, { cycleId: cycle._id });
 
     const expected = { total: LIST_LIMIT + 1, done: LIST_LIMIT, todo: 1 };
     expect(issues).toHaveLength(LIST_LIMIT);
-    expect(cycle.progress).toMatchObject(expected);
-    expect(detail).toMatchObject(expected);
+    expect(row).toMatchObject(expected);
+  });
+});
+
+describe("cycles.list", () => {
+  test("lists every cycle newest first within 10 document reads, so it reads no issues", async () => {
+    const s = await setup({ documentsRead: 10 });
+    await s.t.run(async (ctx) => {
+      const cycleIds = [
+        s.cycleId,
+        await ctx.db.insert("cycles", { orgId: s.orgId, teamId: s.teamId, number: 2, startDate: DAY, endDate: 2 * DAY }),
+        await ctx.db.insert("cycles", { orgId: s.orgId, teamId: s.teamId, number: 3, startDate: 2 * DAY, endDate: 3 * DAY }),
+      ];
+      let number = 0;
+      for (const cycleId of cycleIds) {
+        for (let i = 0; i < 20; i++) {
+          number++;
+          await ctx.db.insert("issues", {
+            orgId: s.orgId,
+            teamId: s.teamId,
+            kind: "story",
+            number,
+            title: `Story ${number}`,
+            status: "todo",
+            priority: "none",
+            creatorId: s.userId,
+            cycleId,
+            sortOrder: number,
+          });
+        }
+      }
+    });
+
+    const cycles = await s.member.query(api.cycles.list, {});
+
+    expect(cycles.map((cycle) => cycle.number)).toEqual([3, 2, 1]);
+  });
+});
+
+describe("cycles.progress for the index rows", () => {
+  test("each row's progress reads within 30 documents", async () => {
+    const s = await setup({ documentsRead: 30 });
+    await s.t.run(async (ctx) => {
+      const cycleIds = [
+        s.cycleId,
+        await ctx.db.insert("cycles", { orgId: s.orgId, teamId: s.teamId, number: 2, startDate: DAY, endDate: 2 * DAY }),
+        await ctx.db.insert("cycles", { orgId: s.orgId, teamId: s.teamId, number: 3, startDate: 2 * DAY, endDate: 3 * DAY }),
+      ];
+      let number = 0;
+      for (const cycleId of cycleIds) {
+        for (let i = 0; i < 20; i++) {
+          number++;
+          await ctx.db.insert("issues", {
+            orgId: s.orgId,
+            teamId: s.teamId,
+            kind: "story",
+            number,
+            title: `Story ${number}`,
+            status: "todo",
+            priority: "none",
+            creatorId: s.userId,
+            cycleId,
+            sortOrder: number,
+          });
+        }
+      }
+    });
+
+    const cycles = await s.member.query(api.cycles.list, {});
+
+    for (const cycle of cycles) {
+      expect(await s.member.query(api.cycles.progress, { cycleId: cycle._id })).toMatchObject({
+        total: 20,
+        todo: 20,
+      });
+    }
   });
 });
