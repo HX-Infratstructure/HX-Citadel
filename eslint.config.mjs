@@ -9,7 +9,7 @@ const eslintConfig = defineConfig([
   ...convexPlugin.configs.recommended,
   // AGENTS.md "Code standards", rule 5 "Keep code flat".
   { rules: { "no-nested-ternary": "error" } },
-  // AGENTS.md "Code standards", rule 8. These numbers live only here; existing violations are in eslint-suppressions.json (see rule 8).
+  // AGENTS.md "Code standards", rule 8. These numbers live only here; existing violations are in eslint-suppressions.json.
   {
     files: ["**/*.{ts,tsx}"],
     ignores: ["**/*.test.ts", "**/*.fixture.ts", "components/ui/**", "**/*.d.ts"],

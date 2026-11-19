@@ -9,7 +9,7 @@
     "dev:backend": "convex dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "eslint --max-warnings 0",
     "test": "vitest run",
     "seed:demo": "convex run seed:demoData",
     "citadel": "tsx cli/hx-citadel.ts",
