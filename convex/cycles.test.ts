@@ -157,8 +157,8 @@ describe("cycles.remove past the cascade budget", () => {
     Object.assign(CASCADE_BUDGET, real);
   });
 
-  const withStories = async (count: number) => {
-    const s = await setup();
+  const withStories = async (count: number, transactionLimits?: { documentsRead: number }) => {
+    const s = await setup(transactionLimits);
     await s.t.run(async (ctx) => {
       for (let number = 1; number <= count; number++) {
         await ctx.db.insert("issues", {
@@ -197,5 +197,13 @@ describe("cycles.remove past the cascade budget", () => {
 
     expect(await cyclesOf(s)).toEqual(Array(5).fill(undefined));
     expect(await s.t.run((ctx) => ctx.db.get(s.cycleId))).toBeNull();
+  });
+
+  test("refuses a cycle with 30 issues within 20 document reads, reading at most cap + 1 of them", async () => {
+    const s = await withStories(30, { documentsRead: 20 });
+
+    await expect(s.member.mutation(api.cycles.remove, { cycleId: s.cycleId })).rejects.toThrow(
+      "This cycle has more than 5 issues. Move some to another cycle before deleting it."
+    );
   });
 });
