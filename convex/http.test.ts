@@ -1,38 +1,12 @@
-/// <reference types="vite/client" />
-import { convexTest } from "convex-test";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import schema from "./schema";
+import { describe, expect, test } from "vitest";
+import { AGENT, registerWorkspaceEnv, workspaceTest, writeHeaders, type WorkspaceTest } from "./workspace.fixture";
 
-const modules = import.meta.glob("./**/*.*s");
+registerWorkspaceEnv();
 
-const ORG = "org_hx";
-
-beforeEach(() => {
-  process.env.HX_WORKSPACE_ORG_ID = ORG;
-});
-
-afterEach(() => {
-  delete process.env.HX_WORKSPACE_ORG_ID;
-});
-
-async function setup() {
-  const t = convexTest(schema, modules);
-  await t.run(async (ctx) => {
-    const orgId = await ctx.db.insert("organizations", { clerkOrgId: ORG, name: "HX", slug: "hx" });
-    await ctx.db.insert("teams", { orgId, name: "Engineering", key: "ENG", nextIssueNumber: 1 });
-  });
-  return t;
-}
-
-type T = Awaited<ReturnType<typeof setup>>;
-
-let keyCount = 0;
-const writeHeaders = () => ({ "X-Agent-Id": "cc1", "Idempotency-Key": `http-test-${++keyCount}` });
-
-const send = async (t: T, method: string, path: string, body?: string) => {
+const send = async (t: WorkspaceTest, method: string, path: string, body?: string) => {
   const response = await t.fetch(`/api/v1/issues${path}`, {
     method,
-    headers: method === "GET" ? { "X-Agent-Id": "cc1" } : writeHeaders(),
+    headers: method === "GET" ? AGENT : writeHeaders(),
     body,
   });
   return { status: response.status, body: await response.json() };
@@ -40,7 +14,7 @@ const send = async (t: T, method: string, path: string, body?: string) => {
 
 describe("the agent routes' request contract", () => {
   test.each(["[]", '"a story"', "1", "null", "true"])("a JSON body %s that is not an object is 400 validation", async (body) => {
-    const t = await setup();
+    const t = await workspaceTest();
     expect(await send(t, "POST", "", body)).toEqual({
       status: 400,
       body: { code: "validation", message: "The request body must be a JSON object" },
@@ -53,14 +27,14 @@ describe("the agent routes' request contract", () => {
     ["a body without a required field", "POST", "", { teamKey: "ENG" }],
     ["a PATCH field outside its union", "PATCH", "/ENG-1", { priority: "huge" }],
   ])("%s is refused by the function's validator as 400 validation with the validator's words", async (_label, method, path, body) => {
-    const t = await setup();
+    const t = await workspaceTest();
     await send(t, "POST", "", JSON.stringify({ teamKey: "ENG", title: "Story" }));
     const refused = await send(t, method, path, JSON.stringify(body));
     expect(refused).toEqual({ status: 400, body: { code: "validation", message: expect.stringMatching(/^Validator error: /) } });
   });
 
   test("a query parameter outside its union is refused by the query's validator as 400 validation", async () => {
-    const t = await setup();
+    const t = await workspaceTest();
     expect(await send(t, "GET", "?team=ENG&status=doing")).toEqual({
       status: 400,
       body: { code: "validation", message: expect.stringMatching(/^Validator error: /) },
@@ -69,15 +43,15 @@ describe("the agent routes' request contract", () => {
 });
 
 async function withStory() {
-  const t = await setup();
+  const t = await workspaceTest();
   await send(t, "POST", "", JSON.stringify({ teamKey: "ENG", title: "Story" }));
   return t;
 }
 
-const answer = async (t: T, method: string, path: string, body?: unknown) => {
+const answer = async (t: WorkspaceTest, method: string, path: string, body?: unknown) => {
   const response = await t.fetch(`/api/v1/issues${path}`, {
     method,
-    headers: method === "GET" ? { "X-Agent-Id": "cc1" } : writeHeaders(),
+    headers: method === "GET" ? AGENT : writeHeaders(),
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return { status: response.status, etag: response.headers.get("ETag"), body: await response.json() };
@@ -104,7 +78,7 @@ describe("the /api/v1/issues/{key}[/{action}] routes", () => {
     ["POST", "/ENG-1"],
   ])("a write without Idempotency-Key is 400 before its path is read: %s %s", async (method, path) => {
     const t = await withStory();
-    const response = await t.fetch(`/api/v1/issues${path}`, { method, headers: { "X-Agent-Id": "cc1" }, body: "{}" });
+    const response = await t.fetch(`/api/v1/issues${path}`, { method, headers: AGENT, body: "{}" });
     expect({ status: response.status, code: (await response.json()).code }).toEqual({ status: 400, code: "idempotency_key_required" });
   });
 
@@ -161,7 +135,7 @@ describe("a sub-task through either create route", () => {
   });
 
   test("POST /issues with neither teamKey nor parentKey is 400 validation", async () => {
-    const t = await setup();
+    const t = await workspaceTest();
     const response = await answer(t, "POST", "", { title: "Rootless" });
     expect({ status: response.status, code: response.body.code }).toEqual({ status: 400, code: "validation" });
   });

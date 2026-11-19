@@ -1,22 +1,16 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { ORG, registerWorkspaceEnv } from "./workspace.fixture";
 
 const modules = import.meta.glob("./**/*.*s");
 
-const ORG = "org_hx";
 const HUMAN = "user_human";
 
-beforeEach(() => {
-  process.env.HX_WORKSPACE_ORG_ID = ORG;
-});
-
-afterEach(() => {
-  delete process.env.HX_WORKSPACE_ORG_ID;
-});
+registerWorkspaceEnv();
 
 async function setup() {
   const t = convexTest(schema, modules);

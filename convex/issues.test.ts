@@ -6,6 +6,7 @@ import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { LIST_LIMIT, PAGE_READ_ROWS } from "./issues";
 import schema from "./schema";
+import { writeHeaders } from "./workspace.fixture";
 
 const modules = import.meta.glob("./**/*.*s");
 
@@ -668,11 +669,10 @@ describe("a title is never blank", () => {
   const blank = { code: "validation", message: "Title cannot be empty" };
   const refusalOf = (error: unknown) => (error instanceof ConvexError ? error.data : error);
 
-  let keyCount = 0;
   const rest = (t: Awaited<ReturnType<typeof setup>>["t"], method: string, path: string, body: unknown) =>
     t.fetch(`/api/v1/issues${path}`, {
       method,
-      headers: { "X-Agent-Id": "cc1", "Idempotency-Key": `blank-title-${++keyCount}` },
+      headers: writeHeaders(),
       body: JSON.stringify(body),
     });
 
