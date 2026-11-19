@@ -1,6 +1,11 @@
 /** Spacing between neighbors when a row lands at the top or bottom of a list. */
 export const SORT_GAP = 1000;
 
+type Ranked = { sortOrder: number; _creationTime: number };
+
+/** Highest first, in the order `by_team_and_sort_order` reads desc: rank, then creation time. */
+export const byRank = (a: Ranked, b: Ranked) => b.sortOrder - a.sortOrder || b._creationTime - a._creationTime;
+
 /**
  * The fractional `sortOrder` for a row dropped between two neighbors in a
  * list sorted highest first. Undefined when there are no neighbors.
@@ -19,6 +24,28 @@ export function sortOrderBetween(
     return below + SORT_GAP;
   }
   return undefined;
+}
+
+export const LOAD_MORE_TO_PLACE = "Load more to place it here.";
+
+/**
+ * The rank for a row dropped between its loaded neighbours in a list that shows part of one rank order. `floor` is
+ * the lowest loaded rank of that order, and every row not loaded yet ranks at or below it. While more is to load, the
+ * floor stands in for a missing lower neighbour, and a rank at or below it is refused: the server re-spaces a tie
+ * downward, below the loaded pages. Refused too when there is nothing to rank against.
+ */
+export function rankInLoaded({ above, below, floor, moreToLoad }: {
+  above?: number;
+  below?: number;
+  floor?: number;
+  moreToLoad: boolean;
+}): { sortOrder: number } | { refused: true } {
+  if (!moreToLoad) {
+    const sortOrder = sortOrderBetween(above, below);
+    return sortOrder === undefined ? { refused: true } : { sortOrder };
+  }
+  const sortOrder = sortOrderBetween(above, below ?? floor);
+  return sortOrder !== undefined && floor !== undefined && sortOrder > floor ? { sortOrder } : { refused: true };
 }
 
 /**

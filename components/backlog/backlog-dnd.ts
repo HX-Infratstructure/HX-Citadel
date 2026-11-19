@@ -1,23 +1,25 @@
 import { closestCenter, CollisionDetection, pointerWithin, UniqueIdentifier } from "@dnd-kit/core";
+import { arrayMove } from "@dnd-kit/sortable";
 import type { OptimisticLocalStore } from "convex/browser";
-import { api } from "../../convex/_generated/api";
+import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { byRank, LOAD_MORE_TO_PLACE, rankInLoaded } from "@/lib/sort-order";
 
-type RankedStory = { _id: string; title: string };
 type RankedIssue = { _id: string; sortOrder: number; _creationTime: number };
+type RankedStory = RankedIssue & { title: string };
 type BacklogUpdate = { issueId: Id<"issues">; sortOrder?: number; cycleId?: Id<"cycles"> | null };
 type Dragged = { active: { id: UniqueIdentifier } };
 type DraggedOver = Dragged & { over: { id: UniqueIdentifier } | null };
 
-export const LOAD_MORE_TO_PLACE = "Load more to place a story here.";
-
-/**
- * Whether a story dropped at index `to` of `loaded` stories can be ranked. While more of
- * the backlog is still to load, the last loaded story's lower neighbour is unknown, so a
- * drop there would rank the story below stories not loaded yet.
- */
-export function canDropAt(to: number, loaded: number, moreToLoad: boolean): boolean {
-  return !moreToLoad || to < loaded - 1;
+/** The rank for the story moved from index `from` to `to` of the loaded backlog, in rank order; its last story is the floor. */
+export function moveRank(stories: RankedIssue[], from: number, to: number, moreToLoad: boolean) {
+  const moved = arrayMove(stories, from, to);
+  return rankInLoaded({
+    above: moved[to - 1]?.sortOrder,
+    below: moved[to + 1]?.sortOrder,
+    floor: stories.at(-1)?.sortOrder,
+    moreToLoad,
+  });
 }
 
 /** Screen-reader announcements for ranking: story titles and 1-based positions, never internal ids. */
@@ -27,9 +29,9 @@ export function rankAnnouncements(stories: RankedStory[], moreToLoad: boolean) {
   const index = (id: UniqueIdentifier) => stories.findIndex((story) => story._id === id);
   const position = (id: UniqueIdentifier) => `position ${index(id) + 1} of ${stories.length}`;
   const dropped = (active: UniqueIdentifier, over: UniqueIdentifier) =>
-    canDropAt(index(over), stories.length, moreToLoad)
-      ? `${title(active)} dropped at ${position(over)}.`
-      : `${title(active)} stays at ${position(active)}. ${LOAD_MORE_TO_PLACE}`;
+    "refused" in moveRank(stories, index(active), index(over), moreToLoad)
+      ? `${title(active)} stays at ${position(active)}. ${LOAD_MORE_TO_PLACE}`
+      : `${title(active)} dropped at ${position(over)}.`;
 
   return {
     onDragStart: ({ active }: Dragged) =>
@@ -53,9 +55,6 @@ export function rankAnnouncements(stories: RankedStory[], moreToLoad: boolean) {
  */
 export const rankCollision: CollisionDetection = (args) =>
   args.pointerCoordinates && pointerWithin(args).length === 0 ? [] : closestCenter(args);
-
-/** Highest first, in the order `listBacklog` reads `by_team_and_sort_order`: rank, then creation time. */
-const byRank = (a: RankedIssue, b: RankedIssue) => b.sortOrder - a.sortOrder || b._creationTime - a._creationTime;
 
 /**
  * The page that holds `story`. Loaded pages are consecutive rank ranges, so it is the top page whose

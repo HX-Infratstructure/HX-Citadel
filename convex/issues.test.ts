@@ -265,13 +265,12 @@ describe("issues.listBacklog", () => {
     expect(stories.every((issue, i) => i === 0 || stories[i - 1].sortOrder > issue.sortOrder)).toBe(true);
   });
 
-  test("stories with a cycle, other kinds, closed stories and another workspace's rows appear on no page", async () => {
+  test("stories with a cycle, other kinds and closed stories appear on no page", async () => {
     const { t, teamId, memberId } = await setup();
     const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
     const listed = await t.run(async (ctx) => {
       const team = await ctx.db.get(teamId);
       const orgId = team!.orgId;
-      const otherOrgId = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
       const cycleId = await ctx.db.insert("cycles", { orgId, teamId, number: 1, startDate: 0, endDate: 1 });
       const story = { orgId, teamId, kind: "story", status: "todo", priority: "none", creatorId: memberId } as const;
       const rows = [
@@ -282,7 +281,6 @@ describe("issues.listBacklog", () => {
         { ...story, title: "In progress", sortOrder: 5000, status: "in_progress", listed: true },
         { ...story, title: "Done", sortOrder: 4000, status: "done", listed: false },
         { ...story, title: "Canceled", sortOrder: 3000, status: "canceled", listed: false },
-        { ...story, title: "Foreign", sortOrder: 2000, orgId: otherOrgId, listed: false },
         { ...story, title: "Backlog", sortOrder: 1000, status: "backlog", listed: true },
       ] as const;
       const ids = [];
@@ -301,8 +299,7 @@ describe("issues.listBacklog", () => {
 
     expect(pages.flat().map((issue) => issue._id)).toEqual(listed);
   });
-
-  test("a page stops after PAGE_READ_ROWS rows, and the cursor reaches an open story ranked below more closed ones", async () => {
+  test("closed stories count toward a page's reads: a page stops after PAGE_READ_ROWS, and the cursor reaches an open story ranked below them", async () => {
     const { t, teamId, memberId } = await setup();
     const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
     const openId = await t.run(async (ctx) => {

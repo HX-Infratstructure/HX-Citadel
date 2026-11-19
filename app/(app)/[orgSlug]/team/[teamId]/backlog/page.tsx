@@ -1,14 +1,15 @@
 "use client";
 
-import { usePaginatedQuery, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
-import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { BacklogView } from "@/components/backlog/backlog-view";
+import { LoadMoreButton } from "@/components/shared/load-more-button";
+import { usePagedList } from "@/components/shared/use-paged-list";
 
 const PAGE_SIZE = 100;
 
@@ -17,13 +18,11 @@ export default function TeamBacklogPage() {
   const params = useParams<{ orgSlug: string; teamId: string }>();
   const teamId = params.teamId as Id<"teams">;
   const team = useQuery(api.teams.get, { teamId });
-  const { results: issues, status, loadMore } = usePaginatedQuery(
+  const { results: issues, firstPageLoading, paging } = usePagedList(
     api.issues.listBacklog,
     team ? { teamId } : "skip",
-    { initialNumItems: PAGE_SIZE }
+    PAGE_SIZE
   );
-
-  const moreToLoad = status === "CanLoadMore" || status === "LoadingMore";
 
   if (team === null) {
     return (
@@ -33,7 +32,7 @@ export default function TeamBacklogPage() {
     );
   }
 
-  if (team === undefined || status === "LoadingFirstPage") {
+  if (team === undefined || firstPageLoading) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <Loader2 className="size-4 animate-spin text-muted-foreground" />
@@ -50,24 +49,14 @@ export default function TeamBacklogPage() {
         <span className="text-muted-foreground">Backlog</span>
       </header>
       <ScrollArea className="flex-1">
-        {issues.length === 0 && !moreToLoad ? (
+        {issues.length === 0 && !paging.moreToLoad ? (
           <p className="py-32 text-center text-sm text-muted-foreground">
             The backlog is empty.
           </p>
         ) : (
-          <BacklogView team={team} issues={issues} moreToLoad={moreToLoad} />
+          <BacklogView team={team} issues={issues} moreToLoad={paging.moreToLoad} />
         )}
-        {moreToLoad && (
-          <Button
-            variant="ghost"
-            size="xs"
-            disabled={status === "LoadingMore"}
-            onClick={() => loadMore(PAGE_SIZE)}
-            className="mx-3 my-2 text-muted-foreground"
-          >
-            Load more
-          </Button>
-        )}
+        <LoadMoreButton paging={paging} className="mx-3 my-2" />
       </ScrollArea>
     </>
   );

@@ -7,10 +7,11 @@ import {
 } from "@dnd-kit/sortable";
 import { Plus } from "lucide-react";
 import { useState } from "react";
-import { Doc, Id } from "@/convex/_generated/dataModel";
+import { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
-import { IssueStatus } from "@/components/shared/issue-meta";
+import { IssueStatus, TeamIssue } from "@/components/shared/issue-meta";
 import { StatusIcon } from "@/components/shared/status-icon";
+import { loadedCount } from "@/components/shared/use-paged-list";
 import { isGatedStatus } from "@/lib/issue-status";
 import { cn } from "@/lib/utils";
 import { BoardCard, CardAssignee, CardLabel } from "./board-card";
@@ -18,22 +19,29 @@ import { QuickCreateCard } from "./quick-create-card";
 
 export const COLUMN_ID_PREFIX = "column:";
 
+/** An issue's labels as its card shows them, skipping ids that are not among the workspace's labels. */
+export function cardLabels(issue: TeamIssue, labelsById: Map<Id<"labels">, CardLabel>): CardLabel[] {
+  return issue.labelIds.flatMap((labelId) => labelsById.get(labelId) ?? []);
+}
+
 export function BoardColumn({
   status,
   label,
   issues,
+  moreToLoad,
   teamId,
   teamKey,
-  labelsByIssue,
+  labelsById,
   assigneesById,
   onOpenIssue,
 }: {
   status: IssueStatus;
   label: string;
-  issues: Doc<"issues">[];
+  issues: TeamIssue[];
+  moreToLoad: boolean;
   teamId: Id<"teams">;
   teamKey: string;
-  labelsByIssue: Map<Id<"issues">, CardLabel[]>;
+  labelsById: Map<Id<"labels">, CardLabel>;
   assigneesById: Map<string, CardAssignee>;
   onOpenIssue: (issueId: Id<"issues">) => void;
 }) {
@@ -49,7 +57,9 @@ export function BoardColumn({
       <div className="flex h-10 shrink-0 items-center gap-2 px-3">
         <StatusIcon status={status} />
         <span className="text-sm font-medium">{label}</span>
-        <span className="text-xs text-muted-foreground">{issues.length}</span>
+        <span className="text-xs text-muted-foreground">
+          {loadedCount(issues.length, moreToLoad)}
+        </span>
         {canQuickCreate ? (
           <Button
             variant="ghost"
@@ -85,7 +95,7 @@ export function BoardColumn({
               key={issue._id}
               issue={issue}
               teamKey={teamKey}
-              labels={labelsByIssue.get(issue._id) ?? []}
+              labels={cardLabels(issue, labelsById)}
               assignee={
                 issue.assigneeId
                   ? assigneesById.get(issue.assigneeId)

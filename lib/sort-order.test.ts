@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { respaceTie, SORT_GAP, sortOrderBetween } from "./sort-order";
+import { rankInLoaded, respaceTie, SORT_GAP, sortOrderBetween } from "./sort-order";
 
 describe("sortOrderBetween", () => {
   test("takes the midpoint between two neighbors", () => {
@@ -51,5 +51,34 @@ describe("respaceTie", () => {
     expect(new Set(ranks).size).toBe(3);
     expect(Math.min(...ranks)).toBeGreaterThan(0);
     expect(tied[0]).toBe(1000);
+  });
+});
+
+describe("rankInLoaded", () => {
+  test("refuses a drop between two rows tied at the floor while more is to load", () => {
+    expect(rankInLoaded({ above: 1000, below: 1000, floor: 1000, moreToLoad: true })).toEqual({ refused: true });
+  });
+
+  test("lands a bottom drop between its upper neighbour and the floor while more is to load", () => {
+    expect(rankInLoaded({ above: 3000, floor: 1000, moreToLoad: true })).toEqual({ sortOrder: 2000 });
+  });
+
+  test("refuses a bottom drop when the row above it is the floor", () => {
+    expect(rankInLoaded({ above: 1000, floor: 1000, moreToLoad: true })).toEqual({ refused: true });
+  });
+
+  test("ranks below the bottom row once everything is loaded", () => {
+    expect(rankInLoaded({ above: 1000, floor: 1000, moreToLoad: false })).toEqual({ sortOrder: 1000 - SORT_GAP });
+    expect(rankInLoaded({ above: 1000, below: 1000, floor: 1000, moreToLoad: false })).toEqual({ sortOrder: 1000 });
+  });
+
+  test("ranks top and middle drops against their loaded neighbours", () => {
+    expect(rankInLoaded({ below: 3000, floor: 1000, moreToLoad: true })).toEqual({ sortOrder: 3000 + SORT_GAP });
+    expect(rankInLoaded({ above: 5000, below: 3000, floor: 1000, moreToLoad: true })).toEqual({ sortOrder: 4000 });
+  });
+
+  test("refuses when there is nothing to rank against", () => {
+    expect(rankInLoaded({ floor: 1000, moreToLoad: false })).toEqual({ refused: true });
+    expect(rankInLoaded({ above: 3000, moreToLoad: true })).toEqual({ refused: true });
   });
 });

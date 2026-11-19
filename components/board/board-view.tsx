@@ -1,7 +1,7 @@
 "use client";
 
 import { errorMessage } from "@/lib/error-message";
-import { sortOrderBetween } from "@/lib/sort-order";
+import { LOAD_MORE_TO_PLACE } from "@/lib/sort-order";
 import {
   closestCorners,
   DndContext,
@@ -22,25 +22,13 @@ import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
-import { Doc, Id } from "@/convex/_generated/dataModel";
-import { IssueStatus, STATUSES } from "@/components/shared/issue-meta";
+import { Id } from "@/convex/_generated/dataModel";
+import { IssueStatus, STATUSES, TeamIssue } from "@/components/shared/issue-meta";
 import { BoardCardContent, CardAssignee, CardLabel } from "./board-card";
-import { BoardColumn, COLUMN_ID_PREFIX } from "./board-column";
-
-type Columns = Record<IssueStatus, Id<"issues">[]>;
+import { BoardColumn, cardLabels, COLUMN_ID_PREFIX } from "./board-column";
+import { boardColumns, Columns, dropRank, updateBoard } from "./board-dnd";
 
 const STATUS_SET = new Set<string>(STATUSES.map((s) => s.value));
-
-function emptyColumns(): Columns {
-  return {
-    backlog: [],
-    todo: [],
-    in_progress: [],
-    in_review: [],
-    done: [],
-    canceled: [],
-  };
-}
 
 function statusFromDroppableId(id: UniqueIdentifier): IssueStatus | null {
   if (typeof id !== "string" || !id.startsWith(COLUMN_ID_PREFIX)) {
@@ -66,21 +54,26 @@ function findContainer(
  * Kanban board: one column per status, drag-and-drop via @dnd-kit. Drops
  * persist through `issues.update` with a fractional sortOrder between the
  * new neighbors, applied optimistically so the realtime query never
- * flickers.
+ * flickers. `issues` are the filtered loaded pages of the team's list, and
+ * `floorRank` is the lowest rank of every loaded issue, unfiltered.
  */
 export function BoardView({
   issues,
+  moreToLoad,
+  floorRank,
   teamId,
   teamKey,
   orgSlug,
-  labelsByIssue,
+  labelsById,
   assigneesById,
 }: {
-  issues: Doc<"issues">[];
+  issues: TeamIssue[];
+  moreToLoad: boolean;
+  floorRank: number | undefined;
   teamId: Id<"teams">;
   teamKey: string;
   orgSlug: string;
-  labelsByIssue: Map<Id<"issues">, CardLabel[]>;
+  labelsById: Map<Id<"labels">, CardLabel>;
   assigneesById: Map<string, CardAssignee>;
 }) {
   const router = useRouter();
@@ -90,27 +83,7 @@ export function BoardView({
   );
 
   const updateIssue = useMutation(api.issues.update).withOptimisticUpdate(
-    (localStore, args) => {
-      const current = localStore.getQuery(api.issues.listByTeam, { teamId });
-      if (!current) {
-        return;
-      }
-      localStore.setQuery(
-        api.issues.listByTeam,
-        { teamId },
-        current.map((issue) =>
-          issue._id === args.issueId
-            ? {
-                ...issue,
-                ...(args.status !== undefined ? { status: args.status } : {}),
-                ...(args.sortOrder !== undefined
-                  ? { sortOrder: args.sortOrder }
-                  : {}),
-              }
-            : issue
-        )
-      );
-    }
+    (localStore, args) => updateBoard(localStore, teamId, args)
   );
 
   const issueById = useMemo(
@@ -118,15 +91,7 @@ export function BoardView({
     [issues]
   );
 
-  const serverColumns = useMemo(() => {
-    const columns = emptyColumns();
-    for (const issue of [...issues].sort(
-      (a, b) => b.sortOrder - a.sortOrder
-    )) {
-      columns[issue.status].push(issue._id);
-    }
-    return columns;
-  }, [issues]);
+  const serverColumns = useMemo(() => boardColumns(issues), [issues]);
 
   const [dragState, setDragState] = useState<{
     activeId: Id<"issues">;
@@ -245,20 +210,24 @@ export function BoardView({
       }
     }
 
-    const issue = issueById.get(activeId);
-    const items = workingColumns[activeContainer];
-    const index = items.indexOf(activeId);
-    if (!issue || index === -1) {
+    const column = workingColumns[activeContainer].flatMap(
+      (id) => issueById.get(id) ?? []
+    );
+    const index = column.findIndex((card) => card._id === activeId);
+    if (index === -1) {
       return;
     }
-
-    const above = index > 0 ? issueById.get(items[index - 1]) : undefined;
-    const below =
-      index < items.length - 1 ? issueById.get(items[index + 1]) : undefined;
-    const sortOrder =
-      sortOrderBetween(above?.sortOrder, below?.sortOrder) ?? issue.sortOrder;
-
+    const issue = column[index];
     const statusChanged = activeContainer !== issue.status;
+    if (!statusChanged && serverColumns[activeContainer][index] === activeId) {
+      return;
+    }
+    const drop = dropRank(column, index, moreToLoad, floorRank, statusChanged);
+    if ("refused" in drop) {
+      toast(LOAD_MORE_TO_PLACE);
+      return;
+    }
+    const { sortOrder } = drop;
     const orderChanged = sortOrder !== issue.sortOrder;
     if (!statusChanged && !orderChanged) {
       return;
@@ -298,10 +267,11 @@ export function BoardView({
             label={label}
             issues={columns[value]
               .map((id) => issueById.get(id))
-              .filter((issue): issue is Doc<"issues"> => issue !== undefined)}
+              .filter((issue): issue is TeamIssue => issue !== undefined)}
+            moreToLoad={moreToLoad}
             teamId={teamId}
             teamKey={teamKey}
-            labelsByIssue={labelsByIssue}
+            labelsById={labelsById}
             assigneesById={assigneesById}
             onOpenIssue={openIssue}
           />
@@ -312,7 +282,7 @@ export function BoardView({
           <BoardCardContent
             issue={activeIssue}
             teamKey={teamKey}
-            labels={labelsByIssue.get(activeIssue._id) ?? []}
+            labels={cardLabels(activeIssue, labelsById)}
             assignee={
               activeIssue.assigneeId
                 ? assigneesById.get(activeIssue.assigneeId)

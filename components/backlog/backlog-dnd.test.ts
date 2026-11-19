@@ -1,13 +1,14 @@
 import { CollisionDetection } from "@dnd-kit/core";
-import type { OptimisticLocalStore } from "convex/browser";
 import { describe, expect, it } from "vitest";
 import type { Id } from "@/convex/_generated/dataModel";
-import { canDropAt, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
+import { fakeLocalStore } from "@/components/fake-local-store";
+import { SORT_GAP } from "@/lib/sort-order";
+import { moveRank, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
 
 const stories = [
-  { _id: "id-a", title: "Login page" },
-  { _id: "id-b", title: "Export CSV" },
-  { _id: "id-c", title: "Dark mode" },
+  { _id: "id-a", title: "Login page", sortOrder: 30, _creationTime: 0 },
+  { _id: "id-b", title: "Export CSV", sortOrder: 20, _creationTime: 0 },
+  { _id: "id-c", title: "Dark mode", sortOrder: 10, _creationTime: 0 },
 ];
 
 describe("rankAnnouncements", () => {
@@ -42,26 +43,38 @@ describe("rankAnnouncements", () => {
   it("says the story stays put when it is dropped after the last loaded story with more to load", () => {
     const partial = rankAnnouncements(stories, true);
     expect(partial.onDragEnd({ active: { id: "id-a" }, over: { id: "id-c" } })).toBe(
-      "Login page stays at position 1 of 3. Load more to place a story here."
+      "Login page stays at position 1 of 3. Load more to place it here."
     );
     expect(partial.onDragEnd({ active: { id: "id-a" }, over: { id: "id-b" } })).toBe(
       "Login page dropped at position 2 of 3."
     );
   });
+
+  it("says the story stays put when it is dropped between two stories tied at the lowest loaded rank", () => {
+    const tied = [stories[0], { ...stories[1], sortOrder: 10, _creationTime: 1 }, stories[2]];
+    expect(rankAnnouncements(tied, true).onDragEnd({ active: { id: "id-a" }, over: { id: "id-b" } })).toBe(
+      "Login page stays at position 1 of 3. Load more to place it here."
+    );
+  });
 });
 
-describe("canDropAt", () => {
-  it("refuses a drop after the last loaded story while more are still to load", () => {
-    expect(canDropAt(2, 3, true)).toBe(false);
+describe("moveRank", () => {
+  it("refuses a move to the bottom while more of the backlog is to load", () => {
+    expect(moveRank(stories, 0, 2, true)).toEqual({ refused: true });
   });
 
-  it("allows an interior drop while more are still to load", () => {
-    expect(canDropAt(0, 3, true)).toBe(true);
-    expect(canDropAt(1, 3, true)).toBe(true);
+  it("ranks a move between loaded stories while more is to load", () => {
+    expect(moveRank(stories, 2, 0, true)).toEqual({ sortOrder: 30 + SORT_GAP });
+    expect(moveRank(stories, 2, 1, true)).toEqual({ sortOrder: 25 });
   });
 
-  it("allows a drop at the end once the whole backlog is loaded", () => {
-    expect(canDropAt(2, 3, false)).toBe(true);
+  it("refuses a move between two stories tied at the lowest loaded rank while more is to load", () => {
+    const tied = [stories[0], { ...stories[1], sortOrder: 10, _creationTime: 1 }, stories[2]];
+    expect(moveRank(tied, 0, 1, true)).toEqual({ refused: true });
+  });
+
+  it("ranks a move to the bottom below the last story once the whole backlog is loaded", () => {
+    expect(moveRank(stories, 0, 2, false)).toEqual({ sortOrder: 10 - SORT_GAP });
   });
 });
 
@@ -109,12 +122,7 @@ function backlog(...lists: Story[][][]) {
       value: { page, isDone: index === pages.length - 1 },
     }))
   );
-  const localStore = {
-    getAllQueries: () => queries.map(({ args, value }) => ({ args, value })),
-    setQuery: (_query: unknown, args: Page["args"], value: Page["value"]) => {
-      queries.find((query) => query.args === args)!.value = value;
-    },
-  } as unknown as OptimisticLocalStore;
+  const localStore = fakeLocalStore(queries);
   const move = (issueId: string, update: { sortOrder?: number; cycleId?: string }) =>
     updateBacklog(localStore, TEAM, { issueId, ...update } as Parameters<typeof updateBacklog>[2]);
   const shown = (id = 0) => queries.filter(({ args }) => args.paginationOpts.id === id).flatMap(({ value }) => value.page);

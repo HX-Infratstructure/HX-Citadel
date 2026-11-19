@@ -75,27 +75,8 @@ export async function getOrgIssue(
   return await requireOrgRow(ctx, orgId, issueId, "Issue");
 }
 
-/** The most issues one list returns, newest first. */
+/** The most issues one list or page returns. */
 export const LIST_LIMIT = 500;
-
-/** A team's issues, newest first, inside the caller's workspace. */
-export async function listTeamIssues(
-  ctx: { db: QueryCtx["db"] },
-  orgId: Id<"organizations">,
-  teamId: Id<"teams">
-): Promise<Doc<"issues">[]> {
-  await requireOrgRow(ctx, orgId, teamId, "Team");
-  return await inOrg(
-    ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", teamId)).order("desc"),
-    orgId
-  ).take(LIST_LIMIT);
-}
-
-export const listByTeam = orgQuery({
-  args: { teamId: v.id("teams") },
-  returns: v.array(v.object(issueShape)),
-  handler: async (ctx, args) => await listTeamIssues(ctx, ctx.org._id, args.teamId),
-});
 
 const OPEN_STATUSES = issueStatusValidator.members
   .map((member) => member.value)
@@ -122,6 +103,39 @@ export function capPage(paginationOpts: PaginationOptions): PaginationOptions {
 }
 
 /**
+ * The team's issues inside the workspace, highest `sortOrder` first. Other workspaces' rows are dropped inside the
+ * query, so they never use up a page. A team that is missing or in another workspace is not found.
+ */
+async function teamIssuesByRank(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">, teamId: Id<"teams">) {
+  await requireOrgRow(ctx, orgId, teamId, "Team");
+  return inOrg(
+    ctx.db.query("issues").withIndex("by_team_and_sort_order", (q) => q.eq("teamId", teamId)).order("desc"),
+    orgId
+  );
+}
+
+/**
+ * Reads issues' labels inside the workspace, in link order. A link to a label that is missing or in another
+ * workspace is skipped. Each distinct label is read once per reader, so one reader serves a whole page.
+ */
+export function orgIssueLabels(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">) {
+  const labels = new Map<Id<"labels">, Promise<Doc<"labels"> | null>>();
+  function label(labelId: Id<"labels">) {
+    let row = labels.get(labelId);
+    if (row === undefined) {
+      row = orgRow(ctx, orgId, labelId);
+      labels.set(labelId, row);
+    }
+    return row;
+  }
+  return async (issueId: Id<"issues">): Promise<Doc<"labels">[]> => {
+    const links = await ctx.db.query("issueLabels").withIndex("by_issue", (q) => q.eq("issueId", issueId)).collect();
+    const rows = await Promise.all(links.map((link) => label(link.labelId)));
+    return rows.filter((row) => row !== null);
+  };
+}
+
+/**
  * The backlog, one page at a time: open stories with no cycle, highest `sortOrder` (owner's rank) first.
  * It reads the team's rank index in order and filters inside the query, so the first page always starts at the
  * top-ranked story, however old it is. Closed rows count toward a page's reads, so a page under many of them
@@ -131,11 +145,7 @@ export const listBacklog = orgQuery({
   args: { teamId: v.id("teams"), paginationOpts: paginationOptsValidator },
   returns: paginationResultValidator(v.object(issueShape)),
   handler: async (ctx, args) => {
-    await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
-    return await inOrg(
-      ctx.db.query("issues").withIndex("by_team_and_sort_order", (q) => q.eq("teamId", args.teamId)).order("desc"),
-      ctx.org._id
-    )
+    return await (await teamIssuesByRank(ctx, ctx.org._id, args.teamId))
       .filter((q) =>
         q.and(
           q.eq(q.field("kind"), "story"),
@@ -144,6 +154,35 @@ export const listBacklog = orgQuery({
         )
       )
       .paginate(capPage(args.paginationOpts));
+  },
+});
+
+/**
+ * The average labels per issue a `listByTeam` page is sized for; nothing caps labels at write time. A page pinned by
+ * an end cursor reads its whole interval, ignoring `numItems` and `maximumRowsRead` (convex-backend
+ * `crates/database/src/query/index_range.rs:168-170`), and `usePaginatedQuery` splits it only above 2 ×
+ * `initialNumItems` rows. While the browser's page size is at most LIST_LIMIT, a page holds R ≤ 2 × LIST_LIMIT rows
+ * over at most PAGE_READ_ROWS + R rows read. `orgIssueLabels` reads one link range per row and each of the page's D
+ * distinct labels once. Index ranges: 1 + R + D ≤ 4,096 holds for up to 3,000 distinct labels; a workspace has a few
+ * dozen. Documents: PAGE_READ_ROWS + R + R × L + D ≤ 32,000 with D ≤ R gives L = (32,000 − 8,000 − 2,000) / 1,000.
+ */
+export const MAX_AVERAGE_LABELS_PER_ISSUE = Math.floor((32_000 - PAGE_READ_ROWS - 4 * LIST_LIMIT) / (2 * LIST_LIMIT));
+
+/**
+ * A team's issues, one page at a time, highest `sortOrder` first, each with the ids of its labels inside the
+ * workspace. The loaded pages always hold the team's top-ranked issues, so a browser filter over them sees each
+ * status's top-ranked issues.
+ */
+export const listByTeam = orgQuery({
+  args: { teamId: v.id("teams"), paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(v.object({ ...issueShape, labelIds: v.array(v.id("labels")) })),
+  handler: async (ctx, args) => {
+    const result = await (await teamIssuesByRank(ctx, ctx.org._id, args.teamId)).paginate(capPage(args.paginationOpts));
+    const labelsOf = orgIssueLabels(ctx, ctx.org._id);
+    const page = await Promise.all(
+      result.page.map(async (issue) => ({ ...issue, labelIds: (await labelsOf(issue._id)).map((label) => label._id) }))
+    );
+    return { ...result, page };
   },
 });
 

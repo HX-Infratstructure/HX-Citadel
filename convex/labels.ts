@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
-import { getOrgIssue } from "./issues";
+import { getOrgIssue, orgIssueLabels } from "./issues";
 import { logActivity } from "./lib/activity";
-import { orgRow, requireOrgRow } from "./lib/orgRows";
+import { requireOrgRow } from "./lib/orgRows";
 
 const labelShape = {
   _id: v.id("labels"),
@@ -40,18 +40,7 @@ export const listForIssue = orgQuery({
   returns: v.array(v.object(labelShape)),
   handler: async (ctx, args) => {
     await getOrgIssue(ctx, ctx.org._id, args.issueId);
-    const links = await ctx.db
-      .query("issueLabels")
-      .withIndex("by_issue", (q) => q.eq("issueId", args.issueId))
-      .collect();
-    const labels = [];
-    for (const link of links) {
-      const label = await orgRow(ctx, ctx.org._id, link.labelId);
-      if (label) {
-        labels.push(label);
-      }
-    }
-    return labels;
+    return await orgIssueLabels(ctx, ctx.org._id)(args.issueId);
   },
 });
 
