@@ -1,53 +1,32 @@
-/// <reference types="vite/client" />
-import { convexTest } from "convex-test";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { QueryCtx } from "./_generated/server";
 import { LIST_LIMIT } from "./issues";
 import { answerDecision, askDecision, DECISION_PAGE_MAX, listIssueDecisions, pageIssueDecisions } from "./lib/decisions";
-import schema from "./schema";
+import { AGENT, ORG, registerWorkspaceEnv, workspaceTest, writeHeaders, type WorkspaceTest } from "./workspace.fixture";
 
-const modules = import.meta.glob("./**/*.*s");
-
-const ORG = "org_hx";
 const ADMIN = "user_admin";
 const MEMBER = "user_member";
 const WAITING = "ENG-1 is already waiting on the owner: Ship now?";
 
-beforeEach(() => {
-  process.env.HX_WORKSPACE_ORG_ID = ORG;
-});
-
-afterEach(() => {
-  delete process.env.HX_WORKSPACE_ORG_ID;
-});
+registerWorkspaceEnv();
 
 async function setup() {
-  const t = convexTest(schema, modules);
-  await t.run(async (ctx) => {
-    const orgId = await ctx.db.insert("organizations", { clerkOrgId: ORG, name: "HX", slug: "hx" });
-    await ctx.db.insert("teams", { orgId, name: "Engineering", key: "ENG", nextIssueNumber: 1 });
-    for (const [clerkId, role] of [[ADMIN, "admin"], [MEMBER, "member"]] as const) {
-      const userId = await ctx.db.insert("users", { clerkId, name: clerkId, email: `${clerkId}@example.com` });
-      await ctx.db.insert("members", { orgId, userId, role, clerkMembershipId: `mem_${clerkId}` });
-    }
-  });
+  const t = await workspaceTest({ members: [{ clerkId: ADMIN, role: "admin" }, { clerkId: MEMBER, role: "member" }] });
   const { issue } = await t.mutation(internal.agentApi.createIssue, { agentName: "cc1", teamKey: "ENG", title: "Story" });
   return { t, issue };
 }
 
-type T = Awaited<ReturnType<typeof setup>>["t"];
+const as = (t: WorkspaceTest, clerkId: string) => t.withIdentity({ subject: clerkId, org_id: ORG });
 
-const as = (t: T, clerkId: string) => t.withIdentity({ subject: clerkId, org_id: ORG });
-
-const ask = (t: T, fields: { question?: string; choices?: string[]; recommended?: string } = {}, key = "ENG-1") =>
+const ask = (t: WorkspaceTest, fields: { question?: string; choices?: string[]; recommended?: string } = {}, key = "ENG-1") =>
   t.mutation(internal.agentApi.askDecision, { agentName: "cc1", key, question: "Ship now?", ...fields });
 
-const answer = (t: T, decisionId: Id<"decisions">, fields: { choice?: string; text?: string }) =>
+const answer = (t: WorkspaceTest, decisionId: Id<"decisions">, fields: { choice?: string; text?: string }) =>
   as(t, ADMIN).mutation(api.decisions.answer, { decisionId, ...fields });
 
-async function issueState(t: T, issueId: Id<"issues">) {
+async function issueState(t: WorkspaceTest, issueId: Id<"issues">) {
   return await t.run(async (ctx) => {
     const issue = await ctx.db.get(issueId);
     const activity = await ctx.db
@@ -57,9 +36,6 @@ async function issueState(t: T, issueId: Id<"issues">) {
     return { status: issue?.status, version: issue?.version, activity };
   });
 }
-
-let keyCount = 0;
-const writeHeaders = () => ({ "X-Agent-Id": "cc1", "Idempotency-Key": `decision-${++keyCount}` });
 
 describe("asking a decision", () => {
   test("creates an open decision and one decision_asked row, and leaves the issue alone", async () => {
@@ -237,7 +213,7 @@ describe("answering a decision", () => {
 });
 
 /** `count` answered decisions on the story, asked by the agent and answered by the admin, oldest first. */
-async function seedDecisions(t: T, issueId: Id<"issues">, count: number) {
+async function seedDecisions(t: WorkspaceTest, issueId: Id<"issues">, count: number) {
   return await t.run(async (ctx) => {
     const { orgId } = (await ctx.db.get(issueId))!;
     const user = async (clerkId: string) =>
@@ -275,7 +251,7 @@ function countingUserReads(ctx: QueryCtx, userIds: Id<"users">[]) {
 }
 
 describe("a story's decision history", () => {
-  const page = (t: T, issueId: Id<"issues">, cursor: string | null, numItems = DECISION_PAGE_MAX) =>
+  const page = (t: WorkspaceTest, issueId: Id<"issues">, cursor: string | null, numItems = DECISION_PAGE_MAX) =>
     as(t, MEMBER).query(api.decisions.listForIssue, { issueId, paginationOpts: { cursor, numItems } });
 
   test("with 10 more than a page, the first page holds the newest and its cursor reaches the other 10", async () => {
@@ -345,7 +321,7 @@ describe("REST /api/v1/issues/{key}/decisions", () => {
         await ctx.db.insert("decisions", { orgId: issue.orgId, issueId: issue._id, askedBy, question: `Q${n}`, status: "answered" });
       }
     });
-    const list = await t.fetch("/api/v1/issues/ENG-1/decisions", { headers: { "X-Agent-Id": "cc1" } });
+    const list = await t.fetch("/api/v1/issues/ENG-1/decisions", { headers: AGENT });
     const { decisions } = (await list.json()) as { decisions: { question: string }[] };
     expect(decisions).toHaveLength(LIST_LIMIT);
     expect(decisions[0].question).toBe(`Q${LIST_LIMIT}`);
@@ -362,7 +338,7 @@ describe("REST /api/v1/issues/{key}/decisions", () => {
     const { decision } = (await first.json()) as { decision: { _id: Id<"decisions"> } };
     await answer(t, decision._id, { choice: "No" });
     await ask(t, { question: "Later?" });
-    const list = await t.fetch("/api/v1/issues/ENG-1/decisions", { headers: { "X-Agent-Id": "cc1" } });
+    const list = await t.fetch("/api/v1/issues/ENG-1/decisions", { headers: AGENT });
     expect(list.status).toBe(200);
     const { decisions } = (await list.json()) as { decisions: { question: string; issueId: string }[] };
     expect(decisions.map((d) => d.question)).toEqual(["Later?", "Ship now?"]);

@@ -2,48 +2,31 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { convexTest } from "convex-test";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { patchIssue } from "./lib/issueVersion";
 import schema from "./schema";
+import { AGENT, ORG, freshKey, registerWorkspaceEnv, workspaceTest, writeHeaders, type WorkspaceTest } from "./workspace.fixture";
 
 const modules = import.meta.glob("./**/*.*s");
 
-const ORG = "org_hx";
-const agent = { "X-Agent-Id": "cc1" };
-
-let keyCount = 0;
-const freshKey = () => ({ "Idempotency-Key": `test-${++keyCount}` });
-
-beforeEach(() => {
-  process.env.HX_WORKSPACE_ORG_ID = ORG;
-});
-
-afterEach(() => {
-  delete process.env.HX_WORKSPACE_ORG_ID;
-});
+registerWorkspaceEnv();
 
 async function setup() {
-  const t = convexTest(schema, modules);
-  await t.run(async (ctx) => {
-    const orgId = await ctx.db.insert("organizations", { clerkOrgId: ORG, name: "HX", slug: "hx" });
-    await ctx.db.insert("teams", { orgId, name: "Engineering", key: "ENG", nextIssueNumber: 1 });
-  });
-  await t.fetch("/api/v1/issues", { method: "POST", headers: { ...agent, ...freshKey() }, body: JSON.stringify({ teamKey: "ENG", title: "Story" }) });
+  const t = await workspaceTest();
+  await t.fetch("/api/v1/issues", { method: "POST", headers: writeHeaders(), body: JSON.stringify({ teamKey: "ENG", title: "Story" }) });
   return t;
 }
 
-type T = Awaited<ReturnType<typeof setup>>;
-
-const send = (t: T, method: string, path: string, body?: unknown, headers: Record<string, string> = agent) =>
+const send = (t: WorkspaceTest, method: string, path: string, body?: unknown, headers: Record<string, string> = AGENT) =>
   t.fetch(`/api/v1/issues${path}`, {
     method,
-    headers: { ...agent, ...(method === "GET" ? {} : freshKey()), ...headers },
+    headers: { ...AGENT, ...(method === "GET" ? {} : freshKey()), ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
-const versionOf = async (t: T, key: string) => (await (await send(t, "GET", `/${key}`)).json()).issue.version;
+const versionOf = async (t: WorkspaceTest, key: string) => (await (await send(t, "GET", `/${key}`)).json()).issue.version;
 
 describe("issues.version", () => {
   test("a new story and its testing sub-task start at version 1", async () => {
