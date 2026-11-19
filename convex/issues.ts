@@ -506,9 +506,7 @@ export async function updateIssue(
       );
     }
     updates.projectId = placement.projectId;
-    if (placement.projectId !== issue.projectId) {
-      await cascadeProject(ctx, issue._id, placement.projectId, actor);
-    }
+    await cascadeProject(ctx, issue, placement.projectId, actor);
   }
   if (args.cycleId !== undefined) {
     if (args.cycleId !== null) {

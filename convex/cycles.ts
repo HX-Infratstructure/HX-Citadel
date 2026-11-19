@@ -5,9 +5,9 @@ import { QueryCtx } from "./_generated/server";
 import { issueShape, LIST_LIMIT } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
-import { inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
+import { CASCADE_BUDGET, groupDigits, inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
 import { patchIssue } from "./lib/issueVersion";
-import { invalid } from "./lib/refusals";
+import { invalid, refuse } from "./lib/refusals";
 import { countByStatus, progressShape } from "./projects";
 
 export const cycleShape = {
@@ -205,8 +205,11 @@ export const remove = orgMutation({
   handler: async (ctx, args) => {
     const cycle = await requireOrgRow(ctx, ctx.org._id, args.cycleId, "Cycle");
 
-    // Bounded by design: one sprint's issues, and the mutation is atomic, so a cycle too big to read fails whole and unschedules nothing.
-    const issues = await cycleIssueQuery(ctx, ctx.org._id, cycle._id).collect();
+    // Bounded by design: one sprint's issues, and a cycle with more than CASCADE_BUDGET.rows issues is refused before any write.
+    const issues = await cycleIssueQuery(ctx, ctx.org._id, cycle._id).take(CASCADE_BUDGET.rows + 1);
+    if (issues.length > CASCADE_BUDGET.rows) {
+      refuse(`This cycle has more than ${groupDigits(CASCADE_BUDGET.rows)} issues. Move some to another cycle before deleting it.`);
+    }
     for (const issue of issues) {
       await patchIssue(ctx, issue, { cycleId: undefined });
       await logActivity(ctx, {

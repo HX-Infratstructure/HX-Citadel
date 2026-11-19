@@ -1,9 +1,15 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import { LIST_LIMIT } from "./issues";
+import { CASCADE_BUDGET } from "./lib/orgRows";
 import schema from "./schema";
+
+vi.mock("./lib/orgRows", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./lib/orgRows")>();
+  return { ...original, CASCADE_BUDGET: { ...original.CASCADE_BUDGET } };
+});
 
 const modules = import.meta.glob("./**/*.*s");
 
@@ -139,5 +145,65 @@ describe("cycles.progress for the index rows", () => {
         todo: 20,
       });
     }
+  });
+});
+
+describe("cycles.remove past the cascade budget", () => {
+  const real = { ...CASCADE_BUDGET };
+  beforeEach(() => {
+    Object.assign(CASCADE_BUDGET, { rows: 5, queries: 4 });
+  });
+  afterEach(() => {
+    Object.assign(CASCADE_BUDGET, real);
+  });
+
+  const withStories = async (count: number, transactionLimits?: { documentsRead: number }) => {
+    const s = await setup(transactionLimits);
+    await s.t.run(async (ctx) => {
+      for (let number = 1; number <= count; number++) {
+        await ctx.db.insert("issues", {
+          orgId: s.orgId,
+          teamId: s.teamId,
+          kind: "story",
+          number,
+          title: `Story ${number}`,
+          status: "todo",
+          priority: "none",
+          creatorId: s.userId,
+          cycleId: s.cycleId,
+          sortOrder: number,
+        });
+      }
+    });
+    return s;
+  };
+  const cyclesOf = async (s: Awaited<ReturnType<typeof setup>>) =>
+    (await s.t.run((ctx) => ctx.db.query("issues").collect())).map((issue) => issue.cycleId);
+
+  test("refuses a cycle with 6 issues past a cap of 5, and unschedules none", async () => {
+    const s = await withStories(6);
+
+    await expect(s.member.mutation(api.cycles.remove, { cycleId: s.cycleId })).rejects.toThrow(
+      "This cycle has more than 5 issues. Move some to another cycle before deleting it."
+    );
+
+    expect(await cyclesOf(s)).toEqual(Array(6).fill(s.cycleId));
+  });
+
+  test("deletes a cycle with 5 issues at the cap, and unschedules them all", async () => {
+    const s = await withStories(5);
+
+    await s.member.mutation(api.cycles.remove, { cycleId: s.cycleId });
+
+    expect(await cyclesOf(s)).toEqual(Array(5).fill(undefined));
+    expect(await s.t.run((ctx) => ctx.db.get(s.cycleId))).toBeNull();
+  });
+
+  test("refuses a cycle with 30 issues within 20 document reads, reading at most cap + 1 of them", async () => {
+    const s = await withStories(30, { documentsRead: 20 });
+
+    await expect(s.member.mutation(api.cycles.remove, { cycleId: s.cycleId })).rejects.toThrow(
+      "This cycle has more than 5 issues. Move some to another cycle before deleting it."
+    );
   });
 });

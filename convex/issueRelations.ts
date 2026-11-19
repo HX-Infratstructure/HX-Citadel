@@ -335,7 +335,7 @@ export const setParent = orgMutation({
     const actor = { orgId: ctx.org._id, actorId: ctx.user._id };
     await patchIssue(ctx, issue._id, moved);
     await logFieldChanges(ctx, actor, issue._id, changedFields(issue, moved));
-    await cascadeProject(ctx, issue._id, placement.projectId, actor);
+    await cascadeProject(ctx, issue, placement.projectId, actor);
 
     await logActivity(ctx, {
       orgId: ctx.org._id,
