@@ -18,6 +18,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCommands } from "@/components/commands/command-provider";
 import { BoardView } from "@/components/board/board-view";
 import { CardAssignee, CardLabel } from "@/components/board/board-card";
+import { LoadMoreButton } from "@/components/shared/load-more-button";
+import { usePagedList } from "@/components/shared/use-paged-list";
 import { FilterBar } from "@/components/views/filter-bar";
 import { FilteredIssueList } from "@/components/views/filtered-issue-list";
 import {
@@ -61,8 +63,10 @@ function TeamBoardContent() {
   const { openCreateIssue } = useCommands();
 
   const team = useQuery(api.teams.get, { teamId });
-  const issues = useQuery(api.issues.listByTeam, { teamId });
-  const labelRows = useQuery(api.views.teamIssueLabels, { teamId });
+  const { results: issues, firstPageLoading, paging } = usePagedList(
+    api.issues.listByTeam,
+    team ? { teamId } : "skip"
+  );
   const members = useQuery(api.organizations.listMembers);
   const orgLabels = useQuery(api.labels.list);
 
@@ -79,23 +83,13 @@ function TeamBoardContent() {
     });
   };
 
-  const labelsByIssue = useMemo(() => {
-    const map = new Map<Id<"issues">, CardLabel[]>();
-    for (const row of labelRows ?? []) {
-      const list = map.get(row.issueId) ?? [];
-      list.push({ labelId: row.labelId, name: row.name, color: row.color });
-      map.set(row.issueId, list);
-    }
-    return map;
-  }, [labelRows]);
-
-  const labelIdsByIssue = useMemo(() => {
-    const map = new Map<Id<"issues">, Set<string>>();
-    for (const [issueId, labels] of labelsByIssue) {
-      map.set(issueId, new Set(labels.map((label) => label.labelId)));
-    }
-    return map;
-  }, [labelsByIssue]);
+  const labelsById = useMemo(
+    () =>
+      new Map<Id<"labels">, CardLabel>(
+        (orgLabels ?? []).map((label) => [label._id, { labelId: label._id, name: label.name, color: label.color }])
+      ),
+    [orgLabels]
+  );
 
   const assigneesById = useMemo(() => {
     const map = new Map<string, CardAssignee>();
@@ -105,17 +99,20 @@ function TeamBoardContent() {
     return map;
   }, [members]);
 
-  const filteredIssues = useMemo(
-    () =>
-      (issues ?? []).filter((issue) =>
-        issueMatchesFilters(issue, filters, labelIdsByIssue)
-      ),
-    [issues, filters, labelIdsByIssue]
-  );
+  // The floor is the lowest rank loaded, over every status and before filtering: each issue not yet loaded ranks at
+  // or below it.
+  const loaded = {
+    floor: issues.reduce<number | undefined>(
+      (floor, issue) => (floor === undefined || issue.sortOrder < floor ? issue.sortOrder : floor),
+      undefined
+    ),
+    moreToLoad: paging.moreToLoad,
+  };
 
-  if (team === undefined || issues === undefined) {
-    return <CenteredSpinner />;
-  }
+  const filteredIssues = useMemo(
+    () => issues.filter((issue) => issueMatchesFilters(issue, filters)),
+    [issues, filters]
+  );
 
   if (team === null) {
     return (
@@ -123,6 +120,10 @@ function TeamBoardContent() {
         Team not found.
       </div>
     );
+  }
+
+  if (team === undefined || firstPageLoading) {
+    return <CenteredSpinner />;
   }
 
   return (
@@ -179,15 +180,19 @@ function TeamBoardContent() {
           members={members ?? []}
           labels={orgLabels ?? []}
         />
+        {display === "board" ? (
+          <LoadMoreButton paging={paging} className="ml-auto" />
+        ) : null}
       </div>
 
       {display === "board" ? (
         <BoardView
           issues={filteredIssues}
+          loaded={loaded}
           teamId={teamId}
           teamKey={team.key}
           orgSlug={params.orgSlug}
-          labelsByIssue={labelsByIssue}
+          labelsById={labelsById}
           assigneesById={assigneesById}
         />
       ) : (
@@ -195,6 +200,7 @@ function TeamBoardContent() {
           issues={filteredIssues}
           teamKey={team.key}
           hasActiveFilters={countActiveFilters(filters) > 0}
+          paging={paging}
         />
       )}
     </>

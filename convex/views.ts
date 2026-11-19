@@ -1,7 +1,6 @@
 import { v } from "convex/values";
-import { LIST_LIMIT } from "./issues";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
-import { inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
+import { requireOrgRow } from "./lib/orgRows";
 import { invalid, refuse } from "./lib/refusals";
 
 const viewShape = {
@@ -116,58 +115,5 @@ export const remove = orgMutation({
     }
     await ctx.db.delete(view._id);
     return null;
-  },
-});
-
-/**
- * Label assignments for every issue in a team — one round trip powering both
- * label chips on board cards and client-side label filtering.
- */
-export const teamIssueLabels = orgQuery({
-  args: { teamId: v.id("teams") },
-  returns: v.array(
-    v.object({
-      issueId: v.id("issues"),
-      labelId: v.id("labels"),
-      name: v.string(),
-      color: v.string(),
-    })
-  ),
-  handler: async (ctx, args) => {
-    await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
-    const issues = await inOrg(
-      ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", args.teamId)).order("desc"),
-      ctx.org._id
-    ).take(LIST_LIMIT);
-
-    const labelCache = new Map<
-      string,
-      { _id: string; name: string; color: string } | null
-    >();
-    const result = [];
-    for (const issue of issues) {
-      // Bounded by design: one issue's labels, a few; the loop runs at most LIST_LIMIT times.
-      const links = await ctx.db
-        .query("issueLabels")
-        .withIndex("by_issue", (q) => q.eq("issueId", issue._id))
-        .collect();
-      for (const link of links) {
-        let label = labelCache.get(link.labelId);
-        if (label === undefined) {
-          const doc = await orgRow(ctx, ctx.org._id, link.labelId);
-          label = doc ? { _id: doc._id, name: doc.name, color: doc.color } : null;
-          labelCache.set(link.labelId, label);
-        }
-        if (label) {
-          result.push({
-            issueId: issue._id,
-            labelId: link.labelId,
-            name: label.name,
-            color: label.color,
-          });
-        }
-      }
-    }
-    return result;
   },
 });

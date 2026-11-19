@@ -9,7 +9,6 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import {
-  arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
@@ -19,23 +18,9 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import { Doc, Id } from "@/convex/_generated/dataModel";
 import { errorMessage } from "@/lib/error-message";
-import { sortOrderBetween } from "@/lib/sort-order";
-import { canDropAt, LOAD_MORE_TO_PLACE, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
+import { REFUSAL_MESSAGE } from "@/lib/sort-order";
+import { moveRank, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
 import { BacklogRow } from "./backlog-row";
-
-/** The new `sortOrder` for the row moved from `from` to `to`, or undefined when it stays put. */
-function rankAfterMove(
-  issues: Doc<"issues">[],
-  from: number,
-  to: number
-): number | undefined {
-  const moved = arrayMove(issues, from, to);
-  const sortOrder = sortOrderBetween(
-    moved[to - 1]?.sortOrder,
-    moved[to + 1]?.sortOrder
-  );
-  return sortOrder === issues[from].sortOrder ? undefined : sortOrder;
-}
 
 export function BacklogView({
   team,
@@ -73,13 +58,13 @@ export function BacklogView({
     if (from === -1 || to === -1) {
       return;
     }
-    if (!canDropAt(to, issues.length, moreToLoad)) {
-      toast(LOAD_MORE_TO_PLACE);
+    const drop = moveRank({ stories: issues, from, to, moreToLoad });
+    if ("refused" in drop) {
+      toast(REFUSAL_MESSAGE[drop.refused]);
       return;
     }
-    const sortOrder = rankAfterMove(issues, from, to);
-    if (sortOrder !== undefined) {
-      update({ issueId: issues[from]._id, sortOrder }, "Failed to rank story");
+    if (drop.sortOrder !== issues[from].sortOrder) {
+      update({ issueId: issues[from]._id, sortOrder: drop.sortOrder }, "Failed to rank story");
     }
   };
 

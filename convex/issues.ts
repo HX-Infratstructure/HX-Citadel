@@ -1,6 +1,7 @@
 import { PaginationOptions, paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { ObjectType, v } from "convex/values";
 import { invalid, notFound, refuse } from "./lib/refusals";
+import { MAX_LABELS_PER_ISSUE } from "../lib/api-contract";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
 import { PARENT_KIND } from "../lib/issue-key";
@@ -75,33 +76,17 @@ export async function getOrgIssue(
   return await requireOrgRow(ctx, orgId, issueId, "Issue");
 }
 
-/** The most issues one list returns, newest first. */
+/** The most issues one list or page returns. */
 export const LIST_LIMIT = 500;
-
-/** A team's issues, newest first, inside the caller's workspace. */
-export async function listTeamIssues(
-  ctx: { db: QueryCtx["db"] },
-  orgId: Id<"organizations">,
-  teamId: Id<"teams">
-): Promise<Doc<"issues">[]> {
-  await requireOrgRow(ctx, orgId, teamId, "Team");
-  return await inOrg(
-    ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", teamId)).order("desc"),
-    orgId
-  ).take(LIST_LIMIT);
-}
-
-export const listByTeam = orgQuery({
-  args: { teamId: v.id("teams") },
-  returns: v.array(v.object(issueShape)),
-  handler: async (ctx, args) => await listTeamIssues(ctx, ctx.org._id, args.teamId),
-});
 
 const OPEN_STATUSES = issueStatusValidator.members
   .map((member) => member.value)
   .filter((status) => !CLOSED_STATUSES.has(status));
 
-/** Rows and bytes one page may read, rows its filter drops included: well inside Convex's 32,000 documents and 16 MiB. */
+/** Convex fails a query or mutation past this many documents read. */
+const CONVEX_DOCUMENT_READS = 32_000;
+
+/** Rows and bytes one page may read, rows its filter drops included: well inside `CONVEX_DOCUMENT_READS` and 16 MiB. */
 export const PAGE_READ_ROWS = 8_000;
 const PAGE_READ_BYTES = 8 * 1024 * 1024;
 
@@ -122,6 +107,39 @@ export function capPage(paginationOpts: PaginationOptions): PaginationOptions {
 }
 
 /**
+ * The team's issues inside the workspace, highest `sortOrder` first. Other workspaces' rows are dropped inside the
+ * query, so they never use up a page. A team that is missing or in another workspace is not found.
+ */
+async function teamIssuesByRank(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">, teamId: Id<"teams">) {
+  await requireOrgRow(ctx, orgId, teamId, "Team");
+  return inOrg(
+    ctx.db.query("issues").withIndex("by_team_and_sort_order", (q) => q.eq("teamId", teamId)).order("desc"),
+    orgId
+  );
+}
+
+/**
+ * Reads issues' labels inside the workspace, in link order. A link to a label that is missing or in another
+ * workspace is skipped. Each distinct label is read once per reader, so one reader serves a whole page.
+ */
+function orgIssueLabels(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">) {
+  const labels = new Map<Id<"labels">, Promise<Doc<"labels"> | null>>();
+  function label(labelId: Id<"labels">) {
+    let row = labels.get(labelId);
+    if (row === undefined) {
+      row = orgRow(ctx, orgId, labelId);
+      labels.set(labelId, row);
+    }
+    return row;
+  }
+  return async (issueId: Id<"issues">): Promise<Doc<"labels">[]> => {
+    const links = await ctx.db.query("issueLabels").withIndex("by_issue", (q) => q.eq("issueId", issueId)).collect();
+    const rows = await Promise.all(links.map((link) => label(link.labelId)));
+    return rows.filter((row) => row !== null);
+  };
+}
+
+/**
  * The backlog, one page at a time: open stories with no cycle, highest `sortOrder` (owner's rank) first.
  * It reads the team's rank index in order and filters inside the query, so the first page always starts at the
  * top-ranked story, however old it is. Closed rows count toward a page's reads, so a page under many of them
@@ -131,11 +149,7 @@ export const listBacklog = orgQuery({
   args: { teamId: v.id("teams"), paginationOpts: paginationOptsValidator },
   returns: paginationResultValidator(v.object(issueShape)),
   handler: async (ctx, args) => {
-    await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
-    return await inOrg(
-      ctx.db.query("issues").withIndex("by_team_and_sort_order", (q) => q.eq("teamId", args.teamId)).order("desc"),
-      ctx.org._id
-    )
+    return await (await teamIssuesByRank(ctx, ctx.org._id, args.teamId))
       .filter((q) =>
         q.and(
           q.eq(q.field("kind"), "story"),
@@ -144,6 +158,45 @@ export const listBacklog = orgQuery({
         )
       )
       .paginate(capPage(args.paginationOpts));
+  },
+});
+
+/** The documents every `listByTeam` call reads before its page: the caller's user, workspace and membership, and the team (4), rounded up. */
+const PAGE_FIXED_READS = 8;
+
+/**
+ * The most rows a `listByTeam` page pinned by an end cursor can hold and still read inside `CONVEX_DOCUMENT_READS`.
+ * Such a page reads its whole interval, ignoring `numItems` and `maximumRowsRead` (convex-backend
+ * `crates/database/src/query/index_range.rs:168-170`), and `usePaginatedQuery` splits it only above 2 ×
+ * `initialNumItems` rows, after a read that returned them, so it grows past 2 × LIST_LIMIT rows before a split; a test
+ * in `issues.test.ts` holds this bound at 2 × LIST_LIMIT or more. It reads
+ * PAGE_FIXED_READS, at most PAGE_READ_ROWS rows its filter drops, for each row the row itself and its label links (at
+ * most `MAX_LABELS_PER_ISSUE`, enforced when a label is added), and each distinct label once (`orgIssueLabels`).
+ * The bound assumes a page's distinct labels are no more than its rows (a workspace has a few dozen labels; nothing
+ * caps them). A page of 2 × LIST_LIMIT rows then has `PINNED_PAGE_MAX_ROWS - 2 * LIST_LIMIT` rows of headroom, and
+ * room for `CONVEX_DOCUMENT_READS - PAGE_FIXED_READS - PAGE_READ_ROWS - 2 * LIST_LIMIT * (MAX_LABELS_PER_ISSUE + 1)`
+ * distinct labels.
+ * Index ranges, 1 + rows + distinct labels, stay inside Convex's 4,096 while a workspace has a few dozen labels.
+ */
+export const PINNED_PAGE_MAX_ROWS = Math.floor(
+  (CONVEX_DOCUMENT_READS - PAGE_FIXED_READS - PAGE_READ_ROWS) / (MAX_LABELS_PER_ISSUE + 2)
+);
+
+/**
+ * A team's issues, one page at a time, highest `sortOrder` first, each with the ids of its labels inside the
+ * workspace. The loaded pages always hold the team's top-ranked issues, so a browser filter over them sees each
+ * status's top-ranked issues.
+ */
+export const listByTeam = orgQuery({
+  args: { teamId: v.id("teams"), paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(v.object({ ...issueShape, labelIds: v.array(v.id("labels")) })),
+  handler: async (ctx, args) => {
+    const result = await (await teamIssuesByRank(ctx, ctx.org._id, args.teamId)).paginate(capPage(args.paginationOpts));
+    const labelsOf = orgIssueLabels(ctx, ctx.org._id);
+    const page = await Promise.all(
+      result.page.map(async (issue) => ({ ...issue, labelIds: (await labelsOf(issue._id)).map((label) => label._id) }))
+    );
+    return { ...result, page };
   },
 });
 
@@ -357,54 +410,51 @@ async function othersAtRank(
   return atRank.filter((other) => other._id !== issue._id);
 }
 
-/** The team's closest rank below `rank`, if any. */
-async function nextLowerRank(
+/** The team's closest rank above `rank`, if any. */
+async function nextHigherRank(
   ctx: MutationCtx,
   issue: Doc<"issues">,
   rank: number
 ): Promise<number | undefined> {
-  const nextLower = await inOrg(
+  const nextHigher = await inOrg(
     ctx.db
       .query("issues")
-      .withIndex("by_team_and_sort_order", (q) => q.eq("teamId", issue.teamId).lt("sortOrder", rank))
-      .order("desc"),
+      .withIndex("by_team_and_sort_order", (q) => q.eq("teamId", issue.teamId).gt("sortOrder", rank))
+      .order("asc"),
     issue.orgId
   ).first();
-  return nextLower?.sortOrder;
+  return nextHigher?.sortOrder;
 }
 
 /**
- * The rank to store for an issue moved to `rank`. Other issues in the team that
- * already hold `rank` are re-spaced first, in creation order, and the moved
- * issue takes a rank inside their run, so it never ties a neighbour. When the
- * gap to the next lower rank can't hold distinct numbers, the issues at that
- * rank join the run and the gap widens to the rank below them.
+ * The rank to store for an issue moved to `rank`. Other issues in the team that already hold `rank` are re-spaced
+ * upward first (`respaceTie`), and the moved issue takes the middle of their run, so it never ties a neighbour and no
+ * issue ends below `rank`. When the gap to the next higher rank can't hold distinct numbers, the issues at that rank
+ * join the run and the gap widens to the rank above them.
  */
 async function placeRank(
   ctx: MutationCtx,
   issue: Doc<"issues">,
   rank: number
 ): Promise<number> {
-  const tied = await othersAtRank(ctx, issue, rank);
-  if (tied.length === 0) {
+  const run = await othersAtRank(ctx, issue, rank);
+  if (run.length === 0) {
     return rank;
   }
-  const below: Doc<"issues">[] = [];
-  let floor = await nextLowerRank(ctx, issue, rank);
-  let ranks = respaceTie(rank, tied.length, floor, below.length);
-  while (ranks === undefined && floor !== undefined) {
-    below.push(...(await othersAtRank(ctx, issue, floor)));
-    floor = await nextLowerRank(ctx, issue, floor);
-    ranks = respaceTie(rank, tied.length, floor, below.length);
+  let ceiling = await nextHigherRank(ctx, issue, rank);
+  let ranks = respaceTie(rank, run, ceiling);
+  while (ranks === undefined && ceiling !== undefined) {
+    run.push(...(await othersAtRank(ctx, issue, ceiling)));
+    ceiling = await nextHigherRank(ctx, issue, ceiling);
+    ranks = respaceTie(rank, run, ceiling);
   }
   if (ranks === undefined) {
+    // Unreachable while ranks stay within ±2^62: with no ceiling the run steps by SORT_GAP, wider than a float's
+    // spacing there.
     refuse("There is no room to rank this issue here");
   }
-  for (const [index, other] of tied.entries()) {
-    await patchIssue(ctx, other, { sortOrder: ranks.tied[index] });
-  }
-  for (const [index, other] of below.entries()) {
-    await patchIssue(ctx, other, { sortOrder: ranks.below[index] });
+  for (const { row, sortOrder } of ranks.others) {
+    await patchIssue(ctx, row, { sortOrder });
   }
   return ranks.moved;
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { MAX_LABELS_PER_ISSUE, TOO_MANY_LABELS } from "@/lib/api-contract";
 import { errorMessage } from "@/lib/error-message";
 import { useMutation, useQuery } from "convex/react";
 import { Check, Plus } from "lucide-react";
@@ -61,6 +62,11 @@ export function LabelsPanel({ issue }: IssueDetailSlotProps) {
   const createAndApply = async () => {
     const name = query.trim();
     if (!name) {
+      return;
+    }
+    // This count is a UX guard only; the server's cap in `convex/labels.ts` is the rule.
+    if ((issueLabels?.length ?? 0) >= MAX_LABELS_PER_ISSUE) {
+      toast.error(TOO_MANY_LABELS);
       return;
     }
     setQuery("");

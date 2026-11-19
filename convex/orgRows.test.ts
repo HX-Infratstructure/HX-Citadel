@@ -108,7 +108,7 @@ describe("rows from another workspace that point at our story", () => {
 describe("an issue or cycle from another workspace that names our team", () => {
   test("stays out of the team's lists, the backlog, the agent list and the number lookup", async () => {
     const { t, admin, teamId, storyId } = await setup();
-    const listed = await admin.query(api.issues.listByTeam, { teamId });
+    const { page: listed } = await admin.query(api.issues.listByTeam, { teamId, paginationOpts: { numItems: 10, cursor: null } });
     const { page: backlog } = await admin.query(api.issues.listBacklog, { teamId, paginationOpts: { numItems: 10, cursor: null } });
     const agentList = await t.query(internal.agentApi.listIssues, { agentName: "cc1", teamKey: "ENG" });
     const byNumber = await admin.query(api.issues.getByNumber, { teamId, number: 1 });
@@ -173,7 +173,9 @@ const cycle: Seed<"cycles"> = (ctx, orgId, s) =>
 const onStory = (orgId: Id<"organizations">, s: Setup) => ({ orgId, issueId: s.storyId });
 
 const LOADERS = [
-  loader("Team", "issues.listByTeam", team, (s, teamId) => s.admin.query(api.issues.listByTeam, { teamId })),
+  loader("Team", "issues.listByTeam", team, (s, teamId) =>
+    s.admin.query(api.issues.listByTeam, { teamId, paginationOpts: { numItems: 10, cursor: null } })
+  ),
   loader("Team", "issues.listBacklog", team, (s, teamId) =>
     s.admin.query(api.issues.listBacklog, { teamId, paginationOpts: { numItems: 10, cursor: null } })
   ),
@@ -182,7 +184,6 @@ const LOADERS = [
   ),
   loader("Team", "issues.create", team, (s, teamId) => s.admin.mutation(api.issues.create, { teamId, title: "New" })),
   loader("Team", "search.issues", team, (s, teamId) => s.admin.query(api.search.issues, { query: "Ours", teamId })),
-  loader("Team", "views.teamIssueLabels", team, (s, teamId) => s.admin.query(api.views.teamIssueLabels, { teamId })),
   loader("Team", "cycles.listByTeam", team, (s, teamId) => s.admin.query(api.cycles.listByTeam, { teamId })),
   loader("Project", "projects.listIssues", project, (s, projectId) => s.admin.query(api.projects.listIssues, { projectId })),
   loader("Project", "projects.progress", project, (s, projectId) => s.admin.query(api.projects.progress, { projectId })),
@@ -264,18 +265,23 @@ describe("a row loaded by id", () => {
     expect(await refusals(await setup())).toEqual([notFound, notFound]);
   });
 
-  test("a label from another workspace linked to our story is not listed", async () => {
-    const { t, admin, storyId, foreignIssueId } = await setup();
+  test("a label from another workspace, or a deleted one, linked to our story is listed by neither listForIssue nor listByTeam", async () => {
+    const { t, admin, teamId, orgId, storyId, foreignIssueId } = await setup();
     await t.run(async (ctx) => {
       const otherOrgId = (await ctx.db.get(foreignIssueId))!.orgId;
       const foreignLabel = await ctx.db.insert("labels", { orgId: otherOrgId, name: "Foreign", color: "#000000" });
+      const deletedLabel = await ctx.db.insert("labels", { orgId, name: "Deleted", color: "#000000" });
       await ctx.db.insert("issueLabels", { issueId: storyId, labelId: foreignLabel });
+      await ctx.db.insert("issueLabels", { issueId: storyId, labelId: deletedLabel });
+      await ctx.db.delete(deletedLabel);
     });
     const ourLabel = await admin.mutation(api.labels.create, { name: "Ours", color: "#ffffff" });
     await admin.mutation(api.labels.toggleOnIssue, { issueId: storyId, labelId: ourLabel });
 
     const labels = await admin.query(api.labels.listForIssue, { issueId: storyId });
+    const { page } = await admin.query(api.issues.listByTeam, { teamId, paginationOpts: { numItems: 10, cursor: null } });
     expect(labels.map((label) => label.name)).toEqual(["Ours"]);
+    expect(page.map((issue) => issue.labelIds)).toEqual([[ourLabel]]);
   });
 });
 

@@ -1,9 +1,9 @@
-import { Doc, Id } from "@/convex/_generated/dataModel";
 import {
   IssuePriority,
   IssueStatus,
   PRIORITIES,
   STATUSES,
+  TeamIssue,
 } from "@/components/shared/issue-meta";
 
 /**
@@ -117,9 +117,8 @@ export function countActiveFilters(filters: IssueFilters): number {
 }
 
 export function issueMatchesFilters(
-  issue: Doc<"issues">,
-  filters: IssueFilters,
-  labelIdsByIssue: Map<Id<"issues">, Set<string>>
+  issue: Pick<TeamIssue, "status" | "priority" | "assigneeId" | "labelIds">,
+  filters: IssueFilters
 ): boolean {
   if (
     filters.statuses.length > 0 &&
@@ -143,11 +142,11 @@ export function issueMatchesFilters(
       return false;
     }
   }
-  if (filters.labels.length > 0) {
-    const labelIds = labelIdsByIssue.get(issue._id);
-    if (!labelIds || !filters.labels.some((label) => labelIds.has(label))) {
-      return false;
-    }
+  if (
+    filters.labels.length > 0 &&
+    !issue.labelIds.some((labelId) => filters.labels.includes(labelId))
+  ) {
+    return false;
   }
   return true;
 }

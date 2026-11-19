@@ -290,14 +290,19 @@ describe("a rank change is ordering, not content", () => {
     const { t, asMember, storyId, teamId } = setup;
     const movedId = await asMember.mutation(api.issues.create, { teamId, title: "Moved", kind: "story" });
     const rankOf = (issueId: Id<"issues">) => t.run(async (ctx) => (await ctx.db.get(issueId))!.sortOrder);
-    return { ...setup, movedId, rankOf, tie: await rankOf(storyId) };
+    /** The ranks of the story, its testing sub-task and the moved story are distinct and none is below the tie. */
+    const respacedAboveTie = async (tie: number) => {
+      const ranks = await Promise.all([storyId, setup.testingId, movedId].map(rankOf));
+      return new Set(ranks).size === 3 && Math.min(...ranks) >= tie;
+    };
+    return { ...setup, movedId, rankOf, respacedAboveTie, tie: await rankOf(storyId) };
   }
 
   test("dragging a story onto a tie re-spaces its neighbours and keeps every version", async () => {
-    const { asMember, storyId, testingId, movedId, rankOf, tie, version } = await tiedStories();
+    const { asMember, storyId, testingId, movedId, rankOf, respacedAboveTie, tie, version } = await tiedStories();
     expect(await rankOf(testingId)).toBe(tie);
     await asMember.mutation(api.issues.update, { issueId: movedId, sortOrder: tie });
-    expect(await rankOf(testingId)).not.toBe(tie);
+    expect(await respacedAboveTie(tie)).toBe(true);
     expect([await version(storyId), await version(testingId), await version(movedId)]).toEqual([1, 1, 1]);
   });
 
@@ -311,9 +316,9 @@ describe("a rank change is ordering, not content", () => {
   });
 
   test("a drag that also changes a field bumps the moved issue once and its neighbours not at all", async () => {
-    const { asMember, testingId, movedId, rankOf, tie, version } = await tiedStories();
+    const { asMember, testingId, movedId, respacedAboveTie, tie, version } = await tiedStories();
     await asMember.mutation(api.issues.update, { issueId: movedId, sortOrder: tie, priority: "high" });
-    expect(await rankOf(testingId)).not.toBe(tie);
+    expect(await respacedAboveTie(tie)).toBe(true);
     expect([await version(movedId), await version(testingId)]).toEqual([2, 1]);
   });
 });

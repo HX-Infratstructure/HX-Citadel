@@ -1,8 +1,10 @@
-import { Doc } from "@/convex/_generated/dataModel";
+import { Doc, Id } from "@/convex/_generated/dataModel";
 import { STATUS_LABELS } from "@/lib/issue-status";
 
 export type IssueStatus = Doc<"issues">["status"];
 export type IssuePriority = Doc<"issues">["priority"];
+/** A row of `issues.listByTeam`: the issue with its label ids. */
+export type TeamIssue = Doc<"issues"> & { labelIds: Id<"labels">[] };
 
 const STATUS_ORDER: IssueStatus[] = ["backlog", "todo", "in_progress", "in_review", "done", "canceled"];
 

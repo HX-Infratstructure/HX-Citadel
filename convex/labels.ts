@@ -1,8 +1,10 @@
 import { v } from "convex/values";
+import { MAX_LABELS_PER_ISSUE, TOO_MANY_LABELS } from "../lib/api-contract";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { getOrgIssue } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgRow, requireOrgRow } from "./lib/orgRows";
+import { refuse } from "./lib/refusals";
 
 const labelShape = {
   _id: v.id("labels"),
@@ -78,6 +80,9 @@ export const toggleOnIssue = orgMutation({
       await ctx.db.delete(existing._id);
       await logActivity(ctx, { ...entry, type: "label_removed", oldValue: label.name });
       return false;
+    }
+    if (links.length >= MAX_LABELS_PER_ISSUE) {
+      refuse(TOO_MANY_LABELS);
     }
     await ctx.db.insert("issueLabels", {
       issueId: args.issueId,

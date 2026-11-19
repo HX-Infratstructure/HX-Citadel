@@ -44,3 +44,7 @@ const MAX_ATTACHMENT_MB = 25;
 /** The server refuses a larger attachment; the upload panel checks first so a too-large file is never uploaded. */
 export const MAX_ATTACHMENT_BYTES = MAX_ATTACHMENT_MB * 1024 * 1024;
 export const ATTACHMENT_TOO_LARGE = `Attachments are limited to ${MAX_ATTACHMENT_MB} MB`;
+
+/** The most labels one issue may carry, enforced when a label is added; `issues.listByTeam`'s read bound derives from it. */
+export const MAX_LABELS_PER_ISSUE = 20;
+export const TOO_MANY_LABELS = `An issue can have at most ${MAX_LABELS_PER_ISSUE} labels`;

@@ -1,13 +1,14 @@
 import { CollisionDetection } from "@dnd-kit/core";
-import type { OptimisticLocalStore } from "convex/browser";
 import { describe, expect, it } from "vitest";
 import type { Id } from "@/convex/_generated/dataModel";
-import { canDropAt, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
+import { fakeLocalStore } from "@/components/fake-local-store";
+import { NO_ROOM_TO_PLACE, SORT_GAP } from "@/lib/sort-order";
+import { moveRank, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
 
 const stories = [
-  { _id: "id-a", title: "Login page" },
-  { _id: "id-b", title: "Export CSV" },
-  { _id: "id-c", title: "Dark mode" },
+  { _id: "id-a", title: "Login page", sortOrder: 30, _creationTime: 0 },
+  { _id: "id-b", title: "Export CSV", sortOrder: 20, _creationTime: 0 },
+  { _id: "id-c", title: "Dark mode", sortOrder: 10, _creationTime: 0 },
 ];
 
 describe("rankAnnouncements", () => {
@@ -42,26 +43,108 @@ describe("rankAnnouncements", () => {
   it("says the story stays put when it is dropped after the last loaded story with more to load", () => {
     const partial = rankAnnouncements(stories, true);
     expect(partial.onDragEnd({ active: { id: "id-a" }, over: { id: "id-c" } })).toBe(
-      "Login page stays at position 1 of 3. Load more to place a story here."
+      "Login page stays at position 1 of 3. Load more to place it here."
     );
     expect(partial.onDragEnd({ active: { id: "id-a" }, over: { id: "id-b" } })).toBe(
       "Login page dropped at position 2 of 3."
     );
   });
+
+  it("says the story stays put when it is dropped between two stories tied at the lowest loaded rank", () => {
+    const tied = [stories[0], { ...stories[1], sortOrder: 10, _creationTime: 1 }, stories[2]];
+    expect(rankAnnouncements(tied, true).onDragEnd({ active: { id: "id-a" }, over: { id: "id-b" } })).toBe(
+      "Login page stays at position 1 of 3. Load more to place it here."
+    );
+  });
+
+  it("says the story stays put when it is moved into a run of 3 stories at one rank, and names the spot of a story dropped in place (CodeRabbit 4624154372)", () => {
+    const run = stories.map((story, index) => ({ ...story, sortOrder: 20, _creationTime: 3 - index }));
+    const announce = rankAnnouncements(run, false);
+    expect(announce.onDragEnd({ active: { id: "id-a" }, over: { id: "id-b" } })).toBe(`Login page stays at position 1 of 3. ${NO_ROOM_TO_PLACE}`);
+    expect(announce.onDragEnd({ active: { id: "id-b" }, over: { id: "id-b" } })).toBe("Export CSV dropped at position 2 of 3.");
+  });
+
+  it("says the story stays put when it is dropped into a gap with no room, with every story loaded", () => {
+    const crowded = [{ ...stories[0], sortOrder: 2000 }, { ...stories[1], sortOrder: 900 }, { ...stories[2], sortOrder: 899.9999999999999 }];
+    expect(rankAnnouncements(crowded, false).onDragEnd({ active: { id: "id-a" }, over: { id: "id-b" } })).toBe(
+      `Login page stays at position 1 of 3. ${NO_ROOM_TO_PLACE}`
+    );
+  });
 });
 
-describe("canDropAt", () => {
-  it("refuses a drop after the last loaded story while more are still to load", () => {
-    expect(canDropAt(2, 3, true)).toBe(false);
+describe("rankAnnouncements when the backlog changes during the drag", () => {
+  it("says the story was not moved when the dragged story left the backlog during the drag", () => {
+    for (const moreToLoad of [true, false]) {
+      expect(rankAnnouncements(stories, moreToLoad).onDragEnd({ active: { id: "id-gone" }, over: { id: "id-b" } })).toBe(
+        "Story was not moved: the backlog changed during the drag."
+      );
+    }
   });
 
-  it("allows an interior drop while more are still to load", () => {
-    expect(canDropAt(0, 3, true)).toBe(true);
-    expect(canDropAt(1, 3, true)).toBe(true);
+  it("says the story was not moved when the story it was dropped on left the backlog during the drag", () => {
+    for (const moreToLoad of [true, false]) {
+      expect(rankAnnouncements(stories, moreToLoad).onDragEnd({ active: { id: "id-a" }, over: { id: "id-gone" } })).toBe(
+        "Login page was not moved: the backlog changed during the drag."
+      );
+    }
+  });
+});
+
+describe("moveRank", () => {
+  it("refuses a move to the bottom while more of the backlog is to load", () => {
+    expect(moveRank({ stories, from: 0, to: 2, moreToLoad: true })).toEqual({ refused: "loadMore" });
   });
 
-  it("allows a drop at the end once the whole backlog is loaded", () => {
-    expect(canDropAt(2, 3, false)).toBe(true);
+  it("ranks a move between loaded stories while more is to load", () => {
+    expect(moveRank({ stories, from: 2, to: 0, moreToLoad: true })).toEqual({ sortOrder: 30 + SORT_GAP });
+    expect(moveRank({ stories, from: 2, to: 1, moreToLoad: true })).toEqual({ sortOrder: 25 });
+  });
+
+  it("refuses a move between two stories tied at the lowest loaded rank while more is to load", () => {
+    const tied = [stories[0], { ...stories[1], sortOrder: 10, _creationTime: 1 }, stories[2]];
+    expect(moveRank({ stories: tied, from: 0, to: 1, moreToLoad: true })).toEqual({ refused: "loadMore" });
+  });
+
+  it("ranks a move to the bottom below the last story once the whole backlog is loaded", () => {
+    expect(moveRank({ stories, from: 0, to: 2, moreToLoad: false })).toEqual({ sortOrder: 10 - SORT_GAP });
+  });
+
+  const lowest = { _id: "id-d", title: "Search", sortOrder: 5, _creationTime: 0 };
+
+  it("ranks a move between two stories tied above the floor at their shared rank while more is to load", () => {
+    const tied = [stories[0], { ...stories[1], _creationTime: 1 }, { ...stories[2], sortOrder: 20 }, lowest];
+    expect(moveRank({ stories: tied, from: 0, to: 1, moreToLoad: true })).toEqual({ sortOrder: 20 });
+  });
+
+  it("ranks the grid move of S290 between S300 and S298 at 299000, the rank of S299, which is outside the backlog", () => {
+    const grid = [
+      { _id: "id-300", title: "S300", sortOrder: 300000, _creationTime: 0 },
+      { _id: "id-298", title: "S298", sortOrder: 298000, _creationTime: 0 },
+      { _id: "id-290", title: "S290", sortOrder: 290000, _creationTime: 0 },
+      { _id: "id-051", title: "S051", sortOrder: 51000, _creationTime: 0 },
+    ];
+    for (const moreToLoad of [true, false]) {
+      expect(moveRank({ stories: grid, from: 2, to: 1, moreToLoad })).toEqual({ sortOrder: 299000 });
+    }
+  });
+
+  it("refuses a move into a run of 3 stories at one rank, which would keep its own rank, whether or not more is to load (CodeRabbit 4624154372)", () => {
+    const run = [...stories.map((story, index) => ({ ...story, sortOrder: 20, _creationTime: 3 - index })), lowest];
+    for (const moreToLoad of [true, false]) {
+      expect(moveRank({ stories: run, from: 0, to: 1, moreToLoad })).toEqual({ refused: "noRoom" });
+      expect(moveRank({ stories: run, from: 2, to: 1, moreToLoad })).toEqual({ refused: "noRoom" });
+    }
+  });
+
+  it.each([
+    ["the midpoint rounds to the upper story", 900, 899.9999999999999],
+    ["the midpoint rounds to the lower story", 900.0000000000001, 900],
+    ["CodeRabbit 4623425278", 1000, 999.9999999999999],
+  ])("refuses a move into a gap with no room, whether or not more is to load: %s", (_, upper, lower) => {
+    const crowded = [{ ...stories[0], sortOrder: 2000 }, { ...stories[1], sortOrder: upper }, { ...stories[2], sortOrder: lower }, lowest];
+    for (const moreToLoad of [true, false]) {
+      expect(moveRank({ stories: crowded, from: 0, to: 1, moreToLoad })).toEqual({ refused: "noRoom" });
+    }
   });
 });
 
@@ -109,12 +192,7 @@ function backlog(...lists: Story[][][]) {
       value: { page, isDone: index === pages.length - 1 },
     }))
   );
-  const localStore = {
-    getAllQueries: () => queries.map(({ args, value }) => ({ args, value })),
-    setQuery: (_query: unknown, args: Page["args"], value: Page["value"]) => {
-      queries.find((query) => query.args === args)!.value = value;
-    },
-  } as unknown as OptimisticLocalStore;
+  const localStore = fakeLocalStore(queries);
   const move = (issueId: string, update: { sortOrder?: number; cycleId?: string }) =>
     updateBacklog(localStore, TEAM, { issueId, ...update } as Parameters<typeof updateBacklog>[2]);
   const shown = (id = 0) => queries.filter(({ args }) => args.paginationOpts.id === id).flatMap(({ value }) => value.page);
