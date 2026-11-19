@@ -9,6 +9,17 @@ const eslintConfig = defineConfig([
   ...convexPlugin.configs.recommended,
   // AGENTS.md "Code standards", rule 5 "Keep code flat".
   { rules: { "no-nested-ternary": "error" } },
+  // AGENTS.md "Code standards", rule 8. These numbers live only here.
+  {
+    files: ["**/*.{ts,tsx}"],
+    ignores: ["**/*.test.ts", "**/*.fixture.ts", "components/ui/**", "**/*.d.ts"],
+    rules: {
+      complexity: ["warn", 10],
+      "max-lines-per-function": ["warn", { max: 60, skipBlankLines: true, skipComments: true }],
+      "max-params": ["warn", 4],
+      "max-lines": ["warn", { max: 150, skipBlankLines: true, skipComments: true }],
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

@@ -33,7 +33,7 @@ HX-Citadel is the HX team's work tracker for agentic and agile development, with
 
 ## Code standards
 
-The owner set these rules on 2026-11-17.
+The owner set rules 1 to 7 on 2026-11-17.
 
 1. **Reuse before you write.** Search for an existing validator, constant, helper or rule, and use it.
 2. **One home per rule.** Define each rule or constant in one place. Docs link to it and do not restate it.
@@ -42,6 +42,14 @@ The owner set these rules on 2026-11-17.
 5. **Keep code flat.** No nested ternaries. Do not change arguments in place.
 6. **Prove it end to end before every push.**
 7. **Report against this list.** Each hand-back says how the diff meets each rule.
+8. **Follow the object-oriented design rules.** The owner set them on 2026-11-19.
+   - **Small units with one job.** Keep each file, class and function small, with one reason to change. If one unit both fetches data and applies business logic, split it. `eslint.config.mjs` sets the size and complexity limits.
+   - **Composition over inheritance.** Keep inheritance at most two levels deep. To reuse code, pass a dependency in through a constructor or an argument instead of subclassing.
+   - **Interfaces for external services.** Code that uses a database, an API or the file system depends on an interface, not on a concrete client.
+   - **Encapsulated state.** Keep instance fields private. Change an object's state only through its own methods, never from outside it.
+   - **Plan before coding.** Before you add or change a class, list its responsibilities and interfaces, or draw a short class diagram. Get the owner's approval before you write the code.
+
+   `pnpm lint:changed` checks the limits. It fails if a file your branch changes has any lint warning, even one the file had before.
 
 ## HX operations
 
@@ -66,12 +74,7 @@ The owner set these rules on 2026-11-17.
 
 ## Verifying your work
 
-```bash
-pnpm test               # Convex function tests (vitest + convex-test)
-pnpm lint
-pnpm build              # before tsc: tsc reads .next/types from the last build
-pnpm exec tsc --noEmit
-```
+Run the checks in the order the README's [Commands](README.md#commands) section lists them.
 
 Convex function tests live next to the function as `convex/<module>.test.ts`. A new test of the agent API takes its workspace from `convex/workspace.fixture.ts`.
 

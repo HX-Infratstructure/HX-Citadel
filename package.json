@@ -10,6 +10,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "lint:changed": "bash scripts/lint-changed.sh",
     "test": "vitest run",
     "seed:demo": "convex run seed:demoData",
     "citadel": "tsx cli/hx-citadel.ts",
