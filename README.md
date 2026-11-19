@@ -86,7 +86,6 @@ Install and check the code in this order. Run the build before `tsc`, because `p
 pnpm install --frozen-lockfile
 pnpm test
 pnpm lint
-pnpm lint:changed
 pnpm build
 pnpm exec tsc --noEmit
 pnpm exec tsc -p convex --noEmit
@@ -94,7 +93,7 @@ pnpm exec tsc -p convex --noEmit
 
 `pnpm test` runs the Convex function tests. Each test sits next to its function as `convex/<module>.test.ts`.
 
-`pnpm lint:changed` fails if a file your branch changes has any lint warning. `pnpm lint` fails only on errors.
+When you fix a violation listed in `eslint-suppressions.json`, run `pnpm exec eslint --prune-suppressions`, or `pnpm lint` fails.
 
 With `-p convex`, `tsc` runs the same type check as `npx convex deploy`.
 

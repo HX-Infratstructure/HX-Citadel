@@ -1,0 +1,375 @@
+{
+  "app/(app)/[orgSlug]/cycles/[cycleId]/page.tsx": {
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "app/(app)/[orgSlug]/cycles/page.tsx": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "app/(app)/[orgSlug]/issue/[issueId]/page.tsx": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "app/(app)/[orgSlug]/projects/[projectId]/page.tsx": {
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "app/(app)/[orgSlug]/projects/page.tsx": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "app/(app)/[orgSlug]/search/page.tsx": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "app/(app)/[orgSlug]/team/[teamId]/board/page.tsx": {
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "app/(app)/[orgSlug]/team/[teamId]/page.tsx": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/backlog/backlog-view.tsx": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/board/board-card.tsx": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/board/board-column.tsx": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/board/board-view.tsx": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 2
+    }
+  },
+  "components/commands/command-provider.tsx": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/cycles/create-cycle-dialog.tsx": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/cycles/edit-cycle-dialog.tsx": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/issue-detail/activity-section.tsx": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 3
+    }
+  },
+  "components/issue-detail/attachments-panel.tsx": {
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/issue-detail/comment-composer.tsx": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/issue-detail/issue-properties.tsx": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/issue-detail/labels-panel.tsx": {
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/issue-detail/mention-textarea.tsx": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/issue-detail/relations-panel.tsx": {
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/issue-detail/revert-change.tsx": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/issue-detail/sub-issues-panel.tsx": {
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/issue-detail/testing-proof.tsx": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/issues/create-issue-dialog.tsx": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/issues/create-issue-level.tsx": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "components/projects/create-project-dialog.tsx": {
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/projects/issue-project-cycle-panel.tsx": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/projects/project-properties.tsx": {
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/settings/members-manager.tsx": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 3
+    }
+  },
+  "components/shell/app-sidebar.tsx": {
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/shell/workspace-shell.tsx": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/teams/create-team-dialog.tsx": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/views/filter-bar.tsx": {
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "components/views/filters.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "components/views/view-switcher.tsx": {
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "convex/admin.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "convex/agentApi.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "convex/comments.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "convex/cycles.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "convex/issueRelations.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "convex/issues.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 2
+    }
+  },
+  "convex/lib/activity.ts": {
+    "max-params": {
+      "count": 1
+    }
+  },
+  "convex/lib/decisions.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "convex/lib/rules/levels.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "convex/mirror.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "convex/projects.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "convex/schema.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "convex/seed.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "convex/webhooks.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "lib/mcp/tools.ts": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "scripts/live-check/steps.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  }
+}
