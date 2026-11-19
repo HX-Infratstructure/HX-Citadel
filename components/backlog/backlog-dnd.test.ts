@@ -57,6 +57,13 @@ describe("rankAnnouncements", () => {
     );
   });
 
+  it("says the story stays put when it is moved into a run of 3 stories at one rank, and names the spot of a story dropped in place (CodeRabbit 4624154372)", () => {
+    const run = stories.map((story, index) => ({ ...story, sortOrder: 20, _creationTime: 3 - index }));
+    const announce = rankAnnouncements(run, false);
+    expect(announce.onDragEnd({ active: { id: "id-a" }, over: { id: "id-b" } })).toBe(`Login page stays at position 1 of 3. ${NO_ROOM_TO_PLACE}`);
+    expect(announce.onDragEnd({ active: { id: "id-b" }, over: { id: "id-b" } })).toBe("Export CSV dropped at position 2 of 3.");
+  });
+
   it("says the story stays put when it is dropped into a gap with no room, with every story loaded", () => {
     const crowded = [{ ...stories[0], sortOrder: 2000 }, { ...stories[1], sortOrder: 900 }, { ...stories[2], sortOrder: 899.9999999999999 }];
     expect(rankAnnouncements(crowded, false).onDragEnd({ active: { id: "id-a" }, over: { id: "id-b" } })).toBe(
@@ -100,6 +107,14 @@ describe("moveRank", () => {
     ];
     for (const moreToLoad of [true, false]) {
       expect(moveRank({ stories: grid, from: 2, to: 1, moreToLoad })).toEqual({ sortOrder: 299000 });
+    }
+  });
+
+  it("refuses a move into a run of 3 stories at one rank, which would keep its own rank, whether or not more is to load (CodeRabbit 4624154372)", () => {
+    const run = [...stories.map((story, index) => ({ ...story, sortOrder: 20, _creationTime: 3 - index })), lowest];
+    for (const moreToLoad of [true, false]) {
+      expect(moveRank({ stories: run, from: 0, to: 1, moreToLoad })).toEqual({ refused: "noRoom" });
+      expect(moveRank({ stories: run, from: 2, to: 1, moreToLoad })).toEqual({ refused: "noRoom" });
     }
   });
 

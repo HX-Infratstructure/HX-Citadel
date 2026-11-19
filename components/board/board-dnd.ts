@@ -1,7 +1,7 @@
 import type { OptimisticLocalStore } from "convex/browser";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { byRank, rankInLoaded } from "@/lib/sort-order";
+import { byRank, type DropRank, rankInLoaded } from "@/lib/sort-order";
 import type { IssueStatus } from "@/components/shared/issue-meta";
 
 type Card = { _id: Id<"issues">; status: IssueStatus; sortOrder: number; _creationTime: number };
@@ -35,6 +35,8 @@ export type LoadedOrder = { floor: number | undefined; moreToLoad: boolean };
 /**
  * The rank for the card at `index` of `column`, the target column's loaded cards in order with the card in place.
  * A card alone in its column keeps its rank.
+ * A move within the column inside a run of cards at the card's own rank is refused as no room: that rank is unchanged,
+ * so the server would not move the card.
  * A card moved in from another column keeps its rank where its spot can't be ranked: its status still changes, and an
  * unchanged rank never makes the server re-space a tie.
  */
@@ -43,13 +45,16 @@ export function dropRank({ column, index, loaded, fromOtherColumn }: {
   index: number;
   loaded: LoadedOrder;
   fromOtherColumn: boolean;
-}) {
+}): DropRank {
   const card = column[index];
   if (column.length === 1) {
     return { sortOrder: card.sortOrder };
   }
   const drop = rankInLoaded({ above: column[index - 1]?.sortOrder, below: column[index + 1]?.sortOrder, ...loaded });
-  return "refused" in drop && fromOtherColumn ? { sortOrder: card.sortOrder } : drop;
+  if (fromOtherColumn) {
+    return "refused" in drop ? { sortOrder: card.sortOrder } : drop;
+  }
+  return "sortOrder" in drop && drop.sortOrder === card.sortOrder ? { refused: "noRoom" } : drop;
 }
 
 /** Patches a card's status and rank in place on every loaded page of the team's board; the board sorts in the browser. */

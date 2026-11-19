@@ -3,7 +3,7 @@ import { arrayMove } from "@dnd-kit/sortable";
 import type { OptimisticLocalStore } from "convex/browser";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { byRank, rankInLoaded, REFUSAL_MESSAGE } from "@/lib/sort-order";
+import { byRank, type DropRank, rankInLoaded, REFUSAL_MESSAGE } from "@/lib/sort-order";
 
 type RankedIssue = { _id: string; sortOrder: number; _creationTime: number };
 type RankedStory = RankedIssue & { title: string };
@@ -11,20 +11,26 @@ type BacklogUpdate = { issueId: Id<"issues">; sortOrder?: number; cycleId?: Id<"
 type Dragged = { active: { id: UniqueIdentifier } };
 type DraggedOver = Dragged & { over: { id: UniqueIdentifier } | null };
 
-/** The rank for the story moved from index `from` to `to` of the loaded backlog, in rank order; its last story is the floor. */
+/**
+ * The rank for the story moved from index `from` to `to` of the loaded backlog, in rank order; its last story is the floor.
+ * A move inside a run of stories at the story's own rank is refused as no room: that rank is unchanged, so the server
+ * would not move the story.
+ */
 export function moveRank({ stories, from, to, moreToLoad }: {
   stories: RankedIssue[];
   from: number;
   to: number;
   moreToLoad: boolean;
-}) {
+}): DropRank {
   const moved = arrayMove(stories, from, to);
-  return rankInLoaded({
+  const drop = rankInLoaded({
     above: moved[to - 1]?.sortOrder,
     below: moved[to + 1]?.sortOrder,
     floor: stories.at(-1)?.sortOrder,
     moreToLoad,
   });
+  const rankUnchanged = from !== to && "sortOrder" in drop && drop.sortOrder === stories[from].sortOrder;
+  return rankUnchanged ? { refused: "noRoom" } : drop;
 }
 
 /** Screen-reader announcements for ranking: story titles and 1-based positions, never internal ids. */

@@ -97,6 +97,16 @@ describe("dropRank at a tie or a gap with no room", () => {
     }
   });
 
+  it("refuses a move into a run of 3 cards at one rank, which would keep its own rank, and keeps a card from another column at its rank (CodeRabbit 4624154372)", () => {
+    const [top, bottom] = [card("T3", "todo", 20, 3), card("T1", "todo", 20, 1)];
+    for (const loaded of [more(10), allLoaded(10)]) {
+      const drop = dropRank({ column: [top, card("T2", "todo", 20, 2), bottom], index: 1, loaded, fromOtherColumn: false });
+      expect(drop).toEqual({ refused: "noRoom" });
+      expect("refused" in drop && REFUSAL_MESSAGE[drop.refused]).toBe(NO_ROOM_TO_PLACE);
+      expect(dropRank({ column: [top, card("T2", "done", 20, 2), bottom], index: 1, loaded, fromOtherColumn: true })).toEqual({ sortOrder: 20 });
+    }
+  });
+
   it("tells the user to load more, or that the gap has no room, by the refusal's reason", () => {
     const message = (drop: ReturnType<typeof dropRank>) => ("refused" in drop ? REFUSAL_MESSAGE[drop.refused] : undefined);
     const noRoom = [card("U", "todo", 900), card("M", "todo", 2000), card("L", "todo", 899.9999999999999)];
