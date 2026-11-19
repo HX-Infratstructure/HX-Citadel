@@ -95,12 +95,14 @@ pnpm exec tsc -p convex --noEmit
 
 `pnpm lint` fails on any warning as well as any error.
 
-Editors show the violations listed in `eslint-suppressions.json` as errors, because only the `eslint` command reads that file. `pnpm lint` is the check.
+With ESLint 9.39.4, editors show the violations listed in `eslint-suppressions.json` as errors, because only the `eslint` command reads that file. `pnpm lint` is the check.
 
 Run `pnpm exec eslint --prune-suppressions` from the repository root in two cases:
 
 - after you fix a violation listed in `eslint-suppressions.json`;
-- after you delete or move a file listed there.
+- after you delete a file listed there.
+
+A moved file loses its entries. In the same change, bring the moved file within the limits in `eslint.config.mjs`. Then prune to remove the old path's entry.
 
 Prune only when `pnpm lint` shows no error except ESLint's advice to prune. A parse error stops ESLint from linting the file, so ESLint advises a prune that would delete the file's real entries. To undo a wrong prune, run `git checkout -- eslint-suppressions.json`.
 
