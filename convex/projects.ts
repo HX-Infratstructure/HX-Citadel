@@ -5,9 +5,9 @@ import { issueShape, LIST_LIMIT } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { findMembership } from "./lib/mirror";
-import { inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
+import { CASCADE_BUDGET, groupDigits, inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
 import { patchIssue } from "./lib/issueVersion";
-import { invalid, notFound } from "./lib/refusals";
+import { invalid, notFound, refuse } from "./lib/refusals";
 import { assertNoEpics } from "./lib/rules/levels";
 import { projectStatusValidator } from "./schema";
 
@@ -220,8 +220,11 @@ export const remove = orgMutation({
   handler: async (ctx, args) => {
     const project = await requireOrgRow(ctx, ctx.org._id, args.projectId, "Project");
 
-    // Bounded by design: assertNoEpics must see every issue, and the mutation is atomic, so a project too big to read fails whole and detaches nothing.
-    const issues = await projectIssueQuery(ctx, ctx.org._id, project._id).collect();
+    // Bounded by design: assertNoEpics must see every issue, so a project with more than CASCADE_BUDGET.rows issues is refused before any write.
+    const issues = await projectIssueQuery(ctx, ctx.org._id, project._id).take(CASCADE_BUDGET.rows + 1);
+    if (issues.length > CASCADE_BUDGET.rows) {
+      refuse(`This project has more than ${groupDigits(CASCADE_BUDGET.rows)} issues. Move some to another project before deleting it.`);
+    }
     assertNoEpics(issues);
     for (const issue of issues) {
       await patchIssue(ctx, issue, { projectId: undefined });

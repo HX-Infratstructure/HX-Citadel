@@ -1,12 +1,22 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { formatIssueKey } from "../lib/issue-key";
 import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
+import { CASCADE_BUDGET } from "./lib/orgRows";
 import schema from "./schema";
 
+vi.mock("./lib/orgRows", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./lib/orgRows")>();
+  return { ...original, CASCADE_BUDGET: { ...original.CASCADE_BUDGET } };
+});
+
 const modules = import.meta.glob("./**/*.*s");
+
+const CASCADE_REFUSAL =
+  "This change would move more than 5 issues to another project. Move a smaller part of the tree.";
+const WALK_REFUSAL = "This tree is too large to move in one step. Move a smaller part of it.";
 
 const ORG_CLAIM = "org_test";
 const MEMBER_CLERK_ID = "user_member";
@@ -14,7 +24,7 @@ const TEAM_KEY = "HXT";
 
 type Kind = "epic" | "feature" | "story" | "subtask";
 
-async function setup(transactionLimits: { databaseQueries?: number } | boolean = false) {
+async function setup(transactionLimits: { databaseQueries?: number; documentsRead?: number } | boolean = false) {
   const t = convexTest({ schema, modules, transactionLimits });
   const { teamId, projectId } = await t.run(async (ctx) => {
     const memberId = await ctx.db.insert("users", {
@@ -479,5 +489,150 @@ describe("issue levels", () => {
       await asMember.mutation(api.issues.update, { issueId: epicId, projectId: otherProject });
       expect((await t.run((ctx) => ctx.db.get(foreignId)))!.projectId).toBe(foreignProject);
     });
+  });
+});
+
+describe("cascade budget on an epic's project change", () => {
+  const real = { ...CASCADE_BUDGET };
+  beforeEach(() => {
+    Object.assign(CASCADE_BUDGET, { rows: 5, queries: 4 });
+  });
+  afterEach(() => {
+    Object.assign(CASCADE_BUDGET, real);
+  });
+
+  test("refuses moving 6 descendants past a row cap of 5, and moves none", async () => {
+    const { t, asMember, create, projectId, tree, insertOtherProject } = await setup();
+    const { epic, story } = await tree();
+    await create("subtask", { parentIssueId: story });
+    await create("subtask", { parentIssueId: story });
+    const newProject = await insertOtherProject();
+
+    await expect(
+      asMember.mutation(api.issues.update, { issueId: epic, projectId: newProject })
+    ).rejects.toThrow(CASCADE_REFUSAL);
+
+    const issues = await t.run((ctx) => ctx.db.query("issues").collect());
+    expect(issues.map((issue) => issue.projectId)).toEqual(Array(7).fill(projectId));
+  });
+
+  test("refuses a walk that needs 5 child queries past a query cap of 4", async () => {
+    const { asMember, create, projectId, insertOtherProject } = await setup();
+    const epic = await create("epic", { projectId });
+    for (let i = 0; i < 4; i++) {
+      await create("feature", { parentIssueId: epic });
+    }
+
+    await expect(
+      asMember.mutation(api.issues.update, { issueId: epic, projectId: await insertOtherProject() })
+    ).rejects.toThrow(WALK_REFUSAL);
+  });
+
+  test("moves 5 descendants in 4 child queries, at both caps", async () => {
+    const { t, asMember, create, projectId, insertOtherProject } = await setup();
+    const epic = await create("epic", { projectId });
+    const feature = await create("feature", { parentIssueId: epic });
+    await create("story", { parentIssueId: feature });
+    await create("story", { parentIssueId: feature });
+    const newProject = await insertOtherProject();
+
+    await asMember.mutation(api.issues.update, { issueId: epic, projectId: newProject });
+
+    const issues = await t.run((ctx) => ctx.db.query("issues").collect());
+    expect(issues.map((issue) => issue.projectId)).toEqual(Array(6).fill(newProject));
+  });
+});
+
+describe("cascade budget on a reparent", () => {
+  const real = { ...CASCADE_BUDGET };
+  beforeEach(() => {
+    Object.assign(CASCADE_BUDGET, { rows: 5, queries: 4 });
+  });
+  afterEach(() => {
+    Object.assign(CASCADE_BUDGET, real);
+  });
+
+  test("refuses moving a story with 6 sub-tasks under another project's feature, and writes nothing", async () => {
+    const { t, asMember, create, projectId, insertOtherProject } = await setup();
+    const story = await create("story", { projectId });
+    for (let i = 0; i < 5; i++) {
+      await create("subtask", { parentIssueId: story });
+    }
+    const feature = await create("feature", {
+      parentIssueId: await create("epic", { projectId: await insertOtherProject() }),
+    });
+    const state = () =>
+      t.run(async (ctx) => {
+        const row = (await ctx.db.get(story))!;
+        const activity = await ctx.db.query("activity").withIndex("by_issue", (q) => q.eq("issueId", story)).collect();
+        const subtasks = await ctx.db
+          .query("issues")
+          .withIndex("by_org_and_parent", (q) => q.eq("orgId", row.orgId).eq("parentIssueId", story))
+          .collect();
+        const { parentIssueId, projectId, version } = row;
+        return { parentIssueId, projectId, version, activity, subtasks: subtasks.map((s) => s.projectId) };
+      });
+    const before = await state();
+
+    await expect(
+      asMember.mutation(api.issueRelations.setParent, { issueId: story, parentIssueId: feature })
+    ).rejects.toThrow(CASCADE_REFUSAL);
+
+    expect(before.subtasks).toEqual(Array(6).fill(projectId));
+    expect(await state()).toEqual(before);
+  });
+});
+
+describe("cascade budget on a tree too large to read", () => {
+  const real = { ...CASCADE_BUDGET };
+  beforeEach(() => {
+    Object.assign(CASCADE_BUDGET, { rows: 5, queries: 4 });
+  });
+  afterEach(() => {
+    Object.assign(CASCADE_BUDGET, real);
+  });
+
+  test("refuses moving an epic whose feature has 5 stories of 30 sub-tasks within 20 document reads", async () => {
+    const { asMember, t, teamId, projectId, insertOtherProject } = await setup({ documentsRead: 20 });
+    const epic = await t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(projectId))!;
+      const creatorId = (await ctx.db.query("users").first())!._id;
+      const fields = { orgId, teamId, status: "todo", priority: "none", creatorId, projectId, sortOrder: 0 } as const;
+      const epic = await ctx.db.insert("issues", { ...fields, kind: "epic", title: "Epic" });
+      const feature = await ctx.db.insert("issues", { ...fields, kind: "feature", title: "Feature", parentIssueId: epic });
+      for (let s = 0; s < 5; s++) {
+        const story = await ctx.db.insert("issues", { ...fields, kind: "story", title: `Story ${s}`, parentIssueId: feature });
+        for (let i = 0; i < 30; i++) {
+          await ctx.db.insert("issues", { ...fields, kind: "subtask", title: `Sub-task ${i}`, parentIssueId: story });
+        }
+      }
+      return epic;
+    });
+
+    await expect(
+      asMember.mutation(api.issues.update, { issueId: epic, projectId: await insertOtherProject() })
+    ).rejects.toThrow(CASCADE_REFUSAL);
+  });
+});
+
+describe("setParent within one project", () => {
+  test("moves a feature with 40 stories to another epic within 30 document reads", async () => {
+    const { t, asMember, teamId, projectId } = await setup({ documentsRead: 30 });
+    const { feature, epicB } = await t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(projectId))!;
+      const creatorId = (await ctx.db.query("users").first())!._id;
+      const fields = { orgId, teamId, status: "todo", priority: "none", creatorId, projectId, sortOrder: 0 } as const;
+      const epicA = await ctx.db.insert("issues", { ...fields, kind: "epic", title: "Epic A" });
+      const epicB = await ctx.db.insert("issues", { ...fields, kind: "epic", title: "Epic B" });
+      const feature = await ctx.db.insert("issues", { ...fields, kind: "feature", title: "Feature", parentIssueId: epicA });
+      for (let i = 0; i < 40; i++) {
+        await ctx.db.insert("issues", { ...fields, kind: "story", title: `Story ${i}`, parentIssueId: feature });
+      }
+      return { feature, epicB };
+    });
+
+    await asMember.mutation(api.issueRelations.setParent, { issueId: feature, parentIssueId: epicB });
+
+    expect((await t.run((ctx) => ctx.db.get(feature)))!.parentIssueId).toBe(epicB);
   });
 });

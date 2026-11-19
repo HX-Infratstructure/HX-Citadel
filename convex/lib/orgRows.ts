@@ -61,6 +61,19 @@ export function inOrg<TableInfo extends GenericTableInfo & { document: { orgId: 
  */
 export const MAX_CHILDREN = 250;
 
+/**
+ * The most rows a project cascade, or a project or cycle remove, may change, and the most child queries a cascade's
+ * walk may make. Each changed row is two writes (the issue and its activity row), so both stay inside Convex's
+ * per-transaction limits (16,000 writes, 4,096 index ranges); past them the mutation is refused before any write
+ * persists.
+ */
+export const CASCADE_BUDGET = { rows: 7_900, queries: 4_000 } as const;
+
+/** A whole number with a comma between each group of three digits, as the refusal messages show a cap. */
+export function groupDigits(value: number): string {
+  return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
 /** An issue's children inside the workspace; more than `MAX_CHILDREN` is refused, never cut short. */
 export async function orgChildren(
   ctx: Db,

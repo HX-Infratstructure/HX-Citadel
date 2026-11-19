@@ -1,9 +1,15 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import { LIST_LIMIT } from "./issues";
+import { CASCADE_BUDGET } from "./lib/orgRows";
 import schema from "./schema";
+
+vi.mock("./lib/orgRows", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./lib/orgRows")>();
+  return { ...original, CASCADE_BUDGET: { ...original.CASCADE_BUDGET } };
+});
 
 const modules = import.meta.glob("./**/*.*s");
 
@@ -254,5 +260,57 @@ describe("projects.progress for the index rows", () => {
         todo: 20,
       });
     }
+  });
+});
+
+describe("projects.remove past the cascade budget", () => {
+  const real = { ...CASCADE_BUDGET };
+  beforeEach(() => {
+    Object.assign(CASCADE_BUDGET, { rows: 5, queries: 4 });
+  });
+  afterEach(() => {
+    Object.assign(CASCADE_BUDGET, real);
+  });
+
+  const withStories = async (count: number) => {
+    const s = await setupProject();
+    await s.t.run(async (ctx) => {
+      for (let number = 1; number <= count; number++) {
+        await ctx.db.insert("issues", {
+          orgId: s.orgId,
+          teamId: s.teamId,
+          kind: "story",
+          number,
+          title: `Story ${number}`,
+          status: "todo",
+          priority: "none",
+          creatorId: s.userId,
+          projectId: s.projectId,
+          sortOrder: number,
+        });
+      }
+    });
+    return s;
+  };
+  const projectsOf = async (s: ProjectSetup) =>
+    (await s.t.run((ctx) => ctx.db.query("issues").collect())).map((issue) => issue.projectId);
+
+  test("refuses a project with 6 issues past a cap of 5, and detaches none", async () => {
+    const s = await withStories(6);
+
+    await expect(s.member.mutation(api.projects.remove, { projectId: s.projectId })).rejects.toThrow(
+      "This project has more than 5 issues. Move some to another project before deleting it."
+    );
+
+    expect(await projectsOf(s)).toEqual(Array(6).fill(s.projectId));
+  });
+
+  test("deletes a project with 5 issues at the cap, and detaches them all", async () => {
+    const s = await withStories(5);
+
+    await s.member.mutation(api.projects.remove, { projectId: s.projectId });
+
+    expect(await projectsOf(s)).toEqual(Array(5).fill(undefined));
+    expect(await s.t.run((ctx) => ctx.db.get(s.projectId))).toBeNull();
   });
 });

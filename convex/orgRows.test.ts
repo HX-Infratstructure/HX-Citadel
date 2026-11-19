@@ -5,7 +5,7 @@ import { describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
 import { Id, TableNames } from "./_generated/dataModel";
 import { deleteIssuesWithOwnedRows } from "./lib/issueCleanup";
-import { MAX_CHILDREN } from "./lib/orgRows";
+import { groupDigits, MAX_CHILDREN } from "./lib/orgRows";
 import schema from "./schema";
 import { ORG, registerWorkspaceEnv } from "./workspace.fixture";
 
@@ -383,5 +383,13 @@ describe("an issue's children", () => {
     expect(refused).toEqual({ code: "rule_refused", message: expect.stringContaining("ENG-1") });
     expect(await childCount(s)).toBe(MAX_CHILDREN);
     expect(await s.t.run(async (ctx) => (await ctx.db.get(moving))?.parentIssueId)).toBe(otherStory);
+  });
+});
+
+describe("groupDigits", () => {
+  test("puts a comma between each group of three digits", () => {
+    expect(groupDigits(7900)).toBe("7,900");
+    expect(groupDigits(5)).toBe("5");
+    expect(groupDigits(1234567)).toBe("1,234,567");
   });
 });
