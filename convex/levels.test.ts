@@ -210,6 +210,18 @@ describe("issue levels", () => {
     expect((await asMember.query(api.issues.get, { issueId: moving }))?.subNumber).toBe(3);
   });
 
+  test("never reuses the key of a subtask moved away from its story", async () => {
+    const { asMember, create } = await setup();
+    const storyA = await create("story");
+    const storyB = await create("story");
+    const moving = await create("subtask", { parentIssueId: storyA });
+
+    await asMember.mutation(api.issueRelations.setParent, { issueId: moving, parentIssueId: storyB });
+    const next = await create("subtask", { parentIssueId: storyA });
+
+    expect((await asMember.query(api.issues.get, { issueId: next }))?.subNumber).toBe(3);
+  });
+
   test.each([
     ["without a project", false],
     ["with a project", true],
@@ -297,9 +309,15 @@ describe("issue levels", () => {
     }
   });
 
-  test("moves an epic's project without querying subtasks for children", async () => {
+  test("moves an epic's project across 402 descendants with 2 KB descriptions inside Convex's transaction limits", async () => {
+    // Every Convex default limit is enforced, and index ranges are capped at 300, so a cascade that queries subtasks
+    // for children or re-reads each descendant fails. Measured with ctx.meta.getTransactionMetrics() on this fixture
+    // (an epic and 402 descendants, 2 KB descriptions): 209 index ranges, 812 documents and 1,949,097 bytes read
+    // (convex-test counts each issue in its child query and again in its patch), 806 documents and 1,104,700 bytes
+    // written. Convex allows 4,096 index ranges, 32,000 documents and 16 MiB read, 16,000 documents and 16 MiB written.
     const { t, asMember, tree, insertOtherProject } = await setup({ databaseQueries: 300 });
     const { epic, feature, story } = await tree();
+    const description = "d".repeat(2048);
     await t.run(async (ctx) => {
       const shared = (await ctx.db.get(story))!;
       const fields = {
@@ -316,12 +334,19 @@ describe("issue levels", () => {
         const bulkStory = await ctx.db.insert("issues", { ...fields, kind: "story", parentIssueId: feature });
         await ctx.db.insert("issues", { ...fields, kind: "subtask", parentIssueId: bulkStory });
       }
+      for (const issue of await ctx.db.query("issues").collect()) {
+        await ctx.db.patch(issue._id, { description });
+      }
     });
     const newProject = await insertOtherProject();
 
-    await asMember.mutation(api.issues.update, { issueId: epic, projectId: newProject });
+    const metrics = await asMember.run(async (ctx) => {
+      await ctx.runMutation(api.issues.update, { issueId: epic, projectId: newProject });
+      return await ctx.meta.getTransactionMetrics();
+    });
 
     expect((await asMember.query(api.issues.get, { issueId: story }))!.projectId).toBe(newProject);
+    expect(metrics.bytesRead.used).toBeGreaterThan(402 * description.length);
   });
 
   test("refuses deleting a project that has an epic", async () => {
@@ -370,71 +395,6 @@ describe("issue levels", () => {
     ).rejects.toThrow("Project not found");
   });
 
-  test("refuses deleting an epic that has a feature, naming 1 feature", async () => {
-    const { t, asMember, tree } = await setup();
-    const { epic } = await tree();
-
-    await expect(
-      asMember.mutation(api.issues.remove, { issueId: epic })
-    ).rejects.toThrow("This epic still has 1 feature; move or delete them first");
-    expect(await t.run((ctx) => ctx.db.get(epic))).not.toBeNull();
-  });
-
-  test("refuses deleting a feature that has two stories, naming 2 stories", async () => {
-    const { t, asMember, create, projectId } = await setup();
-    const epic = await create("epic", { projectId });
-    const feature = await create("feature", { parentIssueId: epic });
-    await create("story", { parentIssueId: feature });
-    await create("story", { parentIssueId: feature });
-
-    await expect(
-      asMember.mutation(api.issues.remove, { issueId: feature })
-    ).rejects.toThrow("This feature still has 2 stories; move or delete them first");
-    expect(await t.run((ctx) => ctx.db.get(feature))).not.toBeNull();
-  });
-
-  test("deletes an empty feature, then its now empty epic", async () => {
-    const { t, asMember, create, projectId } = await setup();
-    const epic = await create("epic", { projectId });
-    const feature = await create("feature", { parentIssueId: epic });
-
-    await asMember.mutation(api.issues.remove, { issueId: feature });
-    await asMember.mutation(api.issues.remove, { issueId: epic });
-
-    expect(await t.run((ctx) => ctx.db.get(feature))).toBeNull();
-    expect(await t.run((ctx) => ctx.db.get(epic))).toBeNull();
-  });
-
-  test("deletes a story with its subtasks, the testing one included", async () => {
-    const { t, asMember, create } = await setup();
-    const story = await create("story");
-    await create("subtask", { parentIssueId: story });
-    const subtasks = await t.run((ctx) =>
-      ctx.db
-        .query("issues")
-        .withIndex("by_parent", (q) => q.eq("parentIssueId", story))
-        .collect()
-    );
-    expect(subtasks.map((subtask) => subtask.testing === true).sort()).toEqual([false, true]);
-
-    await asMember.mutation(api.issues.remove, { issueId: story });
-
-    for (const id of [story, ...subtasks.map((subtask) => subtask._id)]) {
-      expect(await t.run((ctx) => ctx.db.get(id))).toBeNull();
-    }
-  });
-
-  test("deletes a subtask that is not the testing one and keeps its story", async () => {
-    const { t, asMember, create } = await setup();
-    const story = await create("story");
-    const subtask = await create("subtask", { parentIssueId: story });
-
-    await asMember.mutation(api.issues.remove, { issueId: subtask });
-
-    expect(await t.run((ctx) => ctx.db.get(subtask))).toBeNull();
-    expect(await t.run((ctx) => ctx.db.get(story))).not.toBeNull();
-  });
-
   test("getByNumber finds the story and ignores subtasks", async () => {
     const { t, asMember, teamId, create } = await setup();
     const storyId = await create("story");
@@ -455,6 +415,69 @@ describe("issue levels", () => {
     expect(await asMember.query(api.issues.get, { issueId })).toMatchObject({
       kind: "story",
       type: "story",
+    });
+  });
+
+  test("a related sub-task whose parent is in another workspace shows no foreign story number", async () => {
+    const { t, asMember, create } = await setup();
+    const storyId = await create("story");
+    const subtaskId = await create("subtask", { parentIssueId: storyId });
+    const otherStory = await create("story");
+    await asMember.mutation(api.issueRelations.create, { issueId: otherStory, relatedIssueId: subtaskId, type: "related" });
+    await t.run(async (ctx) => {
+      const otherOrg = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
+      const otherTeam = await ctx.db.insert("teams", { orgId: otherOrg, name: "Other", key: "OTH", nextIssueNumber: 8 });
+      const { creatorId } = (await ctx.db.get(storyId))!;
+      const foreign = { orgId: otherOrg, teamId: otherTeam, creatorId, kind: "story", number: 7, sortOrder: 1 } as const;
+      const foreignId = await ctx.db.insert("issues", { ...foreign, title: "Foreign", status: "todo", priority: "none" });
+      await ctx.db.patch(subtaskId, { parentIssueId: foreignId });
+    });
+    const { title } = (await asMember.query(api.issues.get, { issueId: subtaskId }))!;
+    const related = await asMember.query(api.issueRelations.listForIssue, { issueId: otherStory });
+    expect(related.map(({ issue }) => issue.identifier)).toEqual([title]);
+  });
+
+  test("a parent in another workspace lends the issue no project on update", async () => {
+    const { t, asMember, teamId, create, insertForeignProject } = await setup();
+    const storyId = await create("story");
+    const foreignProject = await insertForeignProject();
+    await t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(foreignProject))!;
+      const { creatorId } = (await ctx.db.get(storyId))!;
+      const parentId = await ctx.db.insert("issues", {
+        orgId, teamId, creatorId, kind: "feature", projectId: foreignProject,
+        title: "Foreign", status: "todo", priority: "none", sortOrder: 1,
+      });
+      await ctx.db.patch(storyId, { parentIssueId: parentId });
+    });
+    await expect(
+      asMember.mutation(api.issues.update, { issueId: storyId, projectId: foreignProject })
+    ).rejects.toThrow("Parent issue not found");
+    expect((await t.run((ctx) => ctx.db.get(storyId)))!.projectId).toBeUndefined();
+  });
+
+  describe("a row in another workspace pointing at an epic", () => {
+    const withForeignChild = async () => {
+      const { t, asMember, projectId, create, insertForeignProject, insertOtherProject } = await setup();
+      const epicId = await create("epic", { projectId });
+      const foreignProject = await insertForeignProject();
+      const foreignId = await t.run(async (ctx) => {
+        const { orgId } = (await ctx.db.get(foreignProject))!;
+        const teamId = await ctx.db.insert("teams", { orgId, name: "Other", key: "OTH", nextIssueNumber: 1 });
+        const { creatorId } = (await ctx.db.get(epicId))!;
+        return ctx.db.insert("issues", {
+          orgId, teamId, creatorId, kind: "feature", parentIssueId: epicId, projectId: foreignProject,
+          title: "Foreign", status: "todo", priority: "none", sortOrder: 1,
+        });
+      });
+      return { t, asMember, epicId, foreignId, foreignProject, insertOtherProject };
+    };
+
+    test("does not follow the epic's project change", async () => {
+      const { t, asMember, epicId, foreignId, foreignProject, insertOtherProject } = await withForeignChild();
+      const otherProject = await insertOtherProject();
+      await asMember.mutation(api.issues.update, { issueId: epicId, projectId: otherProject });
+      expect((await t.run((ctx) => ctx.db.get(foreignId)))!.projectId).toBe(foreignProject);
     });
   });
 });

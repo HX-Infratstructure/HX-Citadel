@@ -1,5 +1,7 @@
 import { DAY_MS } from "@/lib/sprint";
 
+export { cycleName as cycleDisplayName } from "@/lib/sprint";
+
 type CycleLike = {
   number: number;
   name?: string;
@@ -8,11 +10,6 @@ type CycleLike = {
 };
 
 export type CycleStatus = "current" | "upcoming" | "completed";
-
-/** "Cycle 3" or the custom name when one is set. */
-export function cycleDisplayName(cycle: CycleLike): string {
-  return cycle.name ?? `Cycle ${cycle.number}`;
-}
 
 export function cycleStatus(cycle: CycleLike, now = Date.now()): CycleStatus {
   if (now < cycle.startDate) {

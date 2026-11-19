@@ -59,12 +59,13 @@ async function setup() {
   const move = (issueId: Id<"issues">, status: Status) =>
     asMember.mutation(api.issues.update, { issueId, status });
   const testingOf = async (storyId: Id<"issues">) => {
-    const children = await t.run((ctx) =>
-      ctx.db
+    const children = await t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(storyId))!;
+      return await ctx.db
         .query("issues")
-        .withIndex("by_parent", (q) => q.eq("parentIssueId", storyId))
-        .collect()
-    );
+        .withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", storyId))
+        .collect();
+    });
     return children.find((child) => child.testing)!._id;
   };
   const setProof = (issueId: Id<"issues">, proofUrl: string) =>
@@ -93,6 +94,22 @@ const GATED = [
 ] as const;
 
 describe("Done gate: a story", () => {
+  test("is not held by a row in another workspace that points at it", async () => {
+    const { t, storyWithWork, finishStory } = await setup();
+    const ids = await storyWithWork();
+    await t.run(async (ctx) => {
+      const { creatorId } = (await ctx.db.get(ids.story))!;
+      const orgId = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
+      const teamId = await ctx.db.insert("teams", { orgId, name: "Other", key: "OTH", nextIssueNumber: 1 });
+      await ctx.db.insert("issues", {
+        orgId, teamId, creatorId, kind: "subtask", subNumber: 9, parentIssueId: ids.story,
+        title: "Foreign", status: "todo", priority: "none", sortOrder: 1,
+      });
+    });
+    await finishStory(ids);
+    expect((await t.run((ctx) => ctx.db.get(ids.story)))!.status).toBe("done");
+  });
+
   test.each(GATED)("with an open sub-task can't go to %s and the refusal names it", async (label, status) => {
     const { move, storyWithWork } = await setup();
     const { story } = await storyWithWork();
@@ -199,7 +216,9 @@ describe("Done gate: every status write path", () => {
     const { teamId, t, move, storyWithWork } = await setup();
     if (path === "update") {
       const { story } = await storyWithWork();
-      await expect(move(story, "done")).rejects.toThrow(/^Can't move ENG-1 to Done: open — /);
+      await expect(move(story, "done")).rejects.toMatchObject({
+        data: { code: "rule_refused", message: expect.stringMatching(/^Can't move ENG-1 to Done: open — /) },
+      });
       return;
     }
     const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
@@ -265,12 +284,13 @@ describe("Done gate: no new child under a gated parent", () => {
     const feature = await create("feature", "Sign-in", epic);
     const story = await create("story", "Login", feature);
 
-    const children = await t.run((ctx) =>
-      ctx.db
+    const children = await t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(story))!;
+      return await ctx.db
         .query("issues")
-        .withIndex("by_parent", (q) => q.eq("parentIssueId", story))
-        .collect()
-    );
+        .withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", story))
+        .collect();
+    });
     expect(children.map((child) => [child.title, child.testing])).toEqual([["Complete testing", true]]);
   });
 

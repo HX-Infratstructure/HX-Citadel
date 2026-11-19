@@ -67,12 +67,13 @@ async function setup() {
     });
 
   const testingSubtask = async (storyId: Id<"issues">) =>
-    (await t.run((ctx) =>
-      ctx.db
+    (await t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(storyId))!;
+      return await ctx.db
         .query("issues")
-        .withIndex("by_parent", (q) => q.eq("parentIssueId", storyId))
-        .collect()
-    )).find((issue) => issue.testing)!;
+        .withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", storyId))
+        .collect();
+    })).find((issue) => issue.testing)!;
 
   return { t, asMember, ids, create, rows, testingSubtask };
 }
@@ -214,14 +215,43 @@ describe("R6: one activity row per change", () => {
       { field: "project", oldValue: "A", newValue: ids.projectB },
     ]);
   });
+});
 
-  test("deleting a sub-task logs child_deleted on its surviving story", async () => {
-    const { asMember, ids, create, rows } = await setup();
+describe("listByIssue name resolution", () => {
+  test("shows another organization's cycle and project by raw id, never by name", async () => {
+    const { t, asMember, ids, create } = await setup();
     const storyId = await create("story");
-    const subtaskId = await create("subtask", { parentIssueId: storyId });
-    await asMember.mutation(api.issues.remove, { issueId: subtaskId });
-    expect((await rows(storyId)).slice(1)).toEqual([
-      row(ids.memberId, "child_deleted", { field: "child", oldValue: "HXT-1.2 A subtask", newValue: undefined }),
+    const foreign = await t.run(async (ctx) => {
+      const orgId = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
+      const teamId = await ctx.db.insert("teams", { orgId, name: "Other", key: "OTH", nextIssueNumber: 1 });
+      const cycleId = await ctx.db.insert("cycles", { orgId, teamId, name: "Secret cycle", number: 7, startDate: 0, endDate: 1 });
+      const projectId = await ctx.db.insert("projects", { orgId, name: "Secret project", status: "planned" });
+      const story = (await ctx.db.get(storyId))!;
+      const entries = [
+        { field: "cycle", newValue: cycleId },
+        { field: "cycle", newValue: ids.cycleId },
+        { field: "project", newValue: projectId },
+        { field: "project", newValue: ids.projectA },
+      ];
+      for (const entry of entries) {
+        await ctx.db.insert("activity", {
+          orgId: story.orgId,
+          issueId: storyId,
+          actorId: ids.memberId,
+          type: `${entry.field}_changed`,
+          ...entry,
+        });
+      }
+      return { cycleId, projectId };
+    });
+
+    const feed = await asMember.query(api.activity.listByIssue, { issueId: storyId });
+
+    expect(feed.slice(1).map(({ field, newValue }) => ({ field, newValue }))).toEqual([
+      { field: "cycle", newValue: foreign.cycleId },
+      { field: "cycle", newValue: "Cycle 1" },
+      { field: "project", newValue: foreign.projectId },
+      { field: "project", newValue: "A" },
     ]);
   });
 });

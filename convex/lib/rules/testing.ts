@@ -1,11 +1,10 @@
 import { Doc, Id } from "../../_generated/dataModel";
+import { invalid, refuse } from "../refusals";
 import { MutationCtx } from "../../_generated/server";
 import { logActivity } from "../activity";
 import { nextSubNumber } from "./levels";
 
 export const TESTING_SUBTASK_TITLE = "Complete testing";
-
-type GuardedAction = "deleted" | "moved";
 
 const PROOF_PROTOCOLS = new Set(["http:", "https:"]);
 
@@ -19,7 +18,7 @@ export async function createTestingSubtask(
     teamId: story.teamId,
     kind: "subtask",
     testing: true,
-    subNumber: await nextSubNumber(ctx, story._id),
+    subNumber: await nextSubNumber(ctx, story.orgId, story._id),
     title: TESTING_SUBTASK_TITLE,
     status: "todo",
     priority: "none",
@@ -38,15 +37,15 @@ export async function createTestingSubtask(
   return subtaskId;
 }
 
-export function assertNotTestingSubtask(issue: Doc<"issues">, action: GuardedAction): void {
+export function assertNotTestingSubtask(issue: Doc<"issues">): void {
   if (issue.testing) {
-    throw new Error(`The ${TESTING_SUBTASK_TITLE} sub-task can't be ${action}`);
+    refuse(`The ${TESTING_SUBTASK_TITLE} sub-task can't be moved`);
   }
 }
 
 export function assertTestingSubtask(issue: Doc<"issues">): void {
   if (!issue.testing) {
-    throw new Error(`Only the ${TESTING_SUBTASK_TITLE} sub-task holds a proof URL`);
+    refuse(`Only the ${TESTING_SUBTASK_TITLE} sub-task holds a proof URL`);
   }
 }
 
@@ -70,6 +69,6 @@ function isAbsoluteHttpUrl(url: string): boolean {
 /** A proof is an absolute http(s) URL with a host; anything else is refused. */
 export function assertProofUrl(url: string): void {
   if (!isAbsoluteHttpUrl(url)) {
-    throw new Error("The proof must be an absolute http:// or https:// URL");
+    invalid("The proof must be an absolute http:// or https:// URL");
   }
 }

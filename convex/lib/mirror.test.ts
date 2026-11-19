@@ -75,18 +75,18 @@ describe("mirror lookups", () => {
     });
   });
 
-  test("throwing variants throw the message they are given", async () => {
+  test("throwing variants refuse with not_found and the message they are given", async () => {
     const { t, orgId, strangerId } = await setup();
     await t.run(async (ctx) => {
-      await expect(getUserByClerkIdOrThrow(ctx, "user_missing", "User not synced yet")).rejects.toThrow(
-        "User not synced yet"
-      );
-      await expect(getOrgByClerkIdOrThrow(ctx, "org_missing", "Organization org_missing not found")).rejects.toThrow(
-        "Organization org_missing not found"
-      );
+      await expect(getUserByClerkIdOrThrow(ctx, "user_missing", "User not synced yet")).rejects.toMatchObject({
+        data: { code: "not_found", message: "User not synced yet" },
+      });
+      await expect(
+        getOrgByClerkIdOrThrow(ctx, "org_missing", "Organization org_missing not found")
+      ).rejects.toMatchObject({ data: { code: "not_found", message: "Organization org_missing not found" } });
       await expect(
         getMembershipOrThrow(ctx, orgId, strangerId, "Not a member of this organization")
-      ).rejects.toThrow("Not a member of this organization");
+      ).rejects.toMatchObject({ data: { code: "not_found", message: "Not a member of this organization" } });
     });
   });
 });

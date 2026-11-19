@@ -1,4 +1,6 @@
 import { v } from "convex/values";
+import { refuse } from "./lib/refusals";
+import { isValidTeamKey, normalizeTeamKey, TEAM_KEY_RULE } from "../lib/issue-key";
 import { orgAdminMutation, orgQuery } from "./lib/customFunctions";
 
 const teamShape = {
@@ -42,11 +44,9 @@ export const create = orgAdminMutation({
   },
   returns: v.id("teams"),
   handler: async (ctx, args) => {
-    const key = args.key.toUpperCase().trim();
-    if (!/^[A-Z][A-Z0-9]{0,4}$/.test(key)) {
-      throw new Error(
-        "Team key must be 1-5 characters, letters and digits, starting with a letter"
-      );
+    const key = normalizeTeamKey(args.key);
+    if (!isValidTeamKey(key)) {
+      refuse(TEAM_KEY_RULE);
     }
     const existing = await ctx.db
       .query("teams")
@@ -55,7 +55,7 @@ export const create = orgAdminMutation({
       )
       .unique();
     if (existing) {
-      throw new Error(`Team key "${key}" is already in use`);
+      refuse(`Team key "${key}" is already in use`);
     }
     return await ctx.db.insert("teams", {
       orgId: ctx.org._id,

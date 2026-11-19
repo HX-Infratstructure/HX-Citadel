@@ -126,7 +126,7 @@ describe("seed.demoData", () => {
 
       for (const issue of issues) {
         await expect(
-          assertValidParent(ctx, issue.kind, {
+          assertValidParent(ctx, issue.orgId, issue.kind, {
             teamId: issue.teamId,
             parentIssueId: issue.parentIssueId,
             projectId: issue.projectId,
@@ -149,6 +149,9 @@ describe("seed.demoData", () => {
         );
         expect(testing, `${story.title} has one Complete testing sub-task`).toHaveLength(1);
         expect(story.type, `${story.title} has a type`).toBeDefined();
+        const subNumbers = issues.filter((issue) => issue.parentIssueId === story._id).map((issue) => issue.subNumber!);
+        expect(new Set(subNumbers).size, `${story.title}'s sub-task keys are unique`).toBe(subNumbers.length);
+        expect(story.nextSubNumber, `${story.title}'s counter is past every sub-task`).toBe(Math.max(...subNumbers) + 1);
       }
 
       for (const issue of issues.filter((row) => row.status === "in_progress")) {
@@ -190,7 +193,9 @@ describe("seed.demoData", () => {
         clerkOrgId: "org_unknown",
         clerkUserId: ADMIN_CLERK_ID,
       })
-    ).rejects.toThrow(/organization/i);
+    ).rejects.toMatchObject({
+      data: { code: "not_found", message: "Organization org_unknown is not synced to Convex." },
+    });
 
     const teams = await t.run((ctx) => ctx.db.query("teams").collect());
     expect(teams).toHaveLength(0);
@@ -204,7 +209,9 @@ describe("seed.demoData", () => {
         clerkOrgId: SEEDED_ORG,
         clerkUserId: OUTSIDER_CLERK_ID,
       })
-    ).rejects.toThrow(/not a member/i);
+    ).rejects.toMatchObject({
+      data: { code: "not_found", message: `User ${OUTSIDER_CLERK_ID} is not a member of organization ${SEEDED_ORG}.` },
+    });
 
     const teams = await t.run((ctx) => ctx.db.query("teams").collect());
     expect(teams).toHaveLength(0);

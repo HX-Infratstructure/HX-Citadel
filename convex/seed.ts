@@ -1,13 +1,15 @@
 import { v } from "convex/values";
+import { refuse } from "./lib/refusals";
 import { formatIssueKey } from "../lib/issue-key";
 import { isGatedStatus } from "../lib/issue-status";
 import { DAY_MS, SPRINT_DAYS, sprintEnd } from "../lib/sprint";
 import { Doc, Id } from "./_generated/dataModel";
 import { logActivity } from "./lib/activity";
+import { patchIssue } from "./lib/issueVersion";
 import { internalMutation } from "./_generated/server";
 import { storyType } from "./issues";
 import { getMembershipOrThrow, getOrgByClerkIdOrThrow, getUserByClerkIdOrThrow } from "./lib/mirror";
-import { nextSubNumber } from "./lib/rules/levels";
+import { FIRST_SUB_NUMBER, nextSubNumber } from "./lib/rules/levels";
 import { createTestingSubtask } from "./lib/rules/testing";
 
 /**
@@ -252,7 +254,7 @@ export const demoData = internalMutation({
       .withIndex("by_org", (q) => q.eq("orgId", org._id))
       .collect();
     if (existingTeams.length > 0) {
-      throw new Error("This workspace already has teams — demo data can only seed an empty workspace.");
+      refuse("This workspace already has teams — demo data can only seed an empty workspace.");
     }
 
     const now = Date.now();
@@ -350,14 +352,14 @@ export const demoData = internalMutation({
         issueCount++;
         if (isGatedStatus(story.status)) {
           const proofUrl = `https://example.com/proof/${formatIssueKey(team.key, story)}`;
-          await ctx.db.patch(testingId, { status: "done", proofUrl });
+          await patchIssue(ctx, testingId, { status: "done", proofUrl });
         }
         for (const subtask of subtasks) {
           const subtaskId = await ctx.db.insert("issues", {
             orgId,
             teamId,
             kind: "subtask",
-            subNumber: await nextSubNumber(ctx, story._id),
+            subNumber: await nextSubNumber(ctx, orgId, story._id),
             title: subtask.title,
             status: subtask.status,
             priority: "none",
@@ -374,7 +376,7 @@ export const demoData = internalMutation({
 
       const insertIssue = async (spec: IssueSpec, parent?: Doc<"issues">): Promise<void> => {
         const kind = spec.kind ?? "story";
-        const number = kind === "story" ? nextNumber++ : undefined;
+        const numbering = kind === "story" ? { number: nextNumber++, nextSubNumber: FIRST_SUB_NUMBER } : {};
         const ownProject = spec.project === undefined ? undefined : projectIds[spec.project];
         position++;
         const issueId = await ctx.db.insert("issues", {
@@ -382,7 +384,7 @@ export const demoData = internalMutation({
           teamId,
           kind,
           type: storyType(kind, spec.type),
-          number,
+          ...numbering,
           title: spec.title,
           description: spec.description,
           status: spec.status,

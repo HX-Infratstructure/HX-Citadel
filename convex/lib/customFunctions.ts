@@ -5,6 +5,7 @@ import {
 } from "convex-helpers/server/customFunctions";
 import { mutation, query } from "../_generated/server";
 import { getAuthContext, getCurrentUser } from "./auth";
+import { refuse } from "./refusals";
 
 /**
  * Org-agnostic authenticated functions — use when no active org is required
@@ -52,7 +53,7 @@ export const orgAdminMutation = customMutation(
   customCtx(async (ctx) => {
     const auth = await getAuthContext(ctx);
     if (auth.membership.role !== "admin") {
-      throw new Error("Admin access required");
+      refuse("Admin access required");
     }
     return auth;
   })

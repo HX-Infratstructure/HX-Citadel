@@ -40,6 +40,9 @@ export const memberRoleValidator = v.union(
   v.literal("member")
 );
 
+/** Absent means human. Agents are created by convex/lib/agents.ts, not Clerk. */
+export const userKindValidator = v.union(v.literal("human"), v.literal("agent"));
+
 export const projectStatusValidator = v.union(
   v.literal("backlog"),
   v.literal("planned"),
@@ -56,6 +59,30 @@ export const issueRelationTypeValidator = v.union(
   v.literal("duplicate_of")
 );
 
+export const decisionStatusValidator = v.union(v.literal("open"), v.literal("answered"));
+
+/** Where the owner answered: on the story, or in the Inbox copy (P3.6d carries that answer back). */
+export const decisionViaValidator = v.union(v.literal("story"), v.literal("inbox"));
+
+export const decisionAnswerValidator = v.object({ choice: v.optional(v.string()), text: v.optional(v.string()) });
+
+/** A decision an agent asks the owner about one story; the limits and rules live in `convex/lib/decisions.ts`. */
+export const decisionFields = {
+  orgId: v.id("organizations"),
+  issueId: v.id("issues"),
+  askedBy: v.id("users"),
+  question: v.string(),
+  choices: v.optional(v.array(v.string())),
+  recommended: v.optional(v.string()),
+  status: decisionStatusValidator,
+  answer: v.optional(decisionAnswerValidator),
+  answeredBy: v.optional(v.id("users")),
+  answeredVia: v.optional(decisionViaValidator),
+  answeredAt: v.optional(v.number()),
+  /** The Inbox copy's message id; P3.6d writes it. */
+  inboxMessageId: v.optional(v.string()),
+};
+
 export default defineSchema({
   // ── Synced from Clerk via webhooks ─────────────────────────────────────
   users: defineTable({
@@ -63,6 +90,7 @@ export default defineSchema({
     name: v.string(),
     email: v.string(),
     imageUrl: v.optional(v.string()),
+    kind: v.optional(userKindValidator),
   }).index("by_clerk_id", ["clerkId"]),
 
   organizations: defineTable({
@@ -109,6 +137,8 @@ export default defineSchema({
     number: v.optional(v.number()),
     /** Per-story sequence number, subtasks only, displayed as KEY-number.subNumber */
     subNumber: v.optional(v.number()),
+    /** Stories only: the subNumber the next subtask claims, so a moved or deleted subtask's key is never reused */
+    nextSubNumber: v.optional(v.number()),
     title: v.string(),
     description: v.optional(v.string()),
     status: issueStatusValidator,
@@ -127,6 +157,8 @@ export default defineSchema({
     testing: v.optional(v.boolean()),
     /** Absolute http(s) proof link, Complete testing sub-task only */
     proofUrl: v.optional(v.string()),
+    /** Bumped by one on every patch (`patchIssue`) that changes a field outside `BOOKKEEPING_FIELDS`; absent reads as 1 */
+    version: v.optional(v.number()),
   })
     .index("by_org", ["orgId"])
     .index("by_team", ["teamId"])
@@ -137,7 +169,7 @@ export default defineSchema({
     .index("by_assignee_kind_status", ["orgId", "assigneeId", "kind", "status"])
     .index("by_project", ["projectId"])
     .index("by_cycle", ["cycleId"])
-    .index("by_parent", ["parentIssueId"])
+    .index("by_org_and_parent", ["orgId", "parentIssueId"])
     .searchIndex("search_title", {
       searchField: "title",
       filterFields: ["orgId", "teamId"],
@@ -236,4 +268,20 @@ export default defineSchema({
   })
     .index("by_org", ["orgId"])
     .index("by_creator", ["creatorId"]),
+
+  decisions: defineTable(decisionFields)
+    .index("by_issue", ["issueId"])
+    .index("by_issue_and_status", ["issueId", "status"])
+    .index("by_org_and_status", ["orgId", "status"]),
+
+  idempotencyKeys: defineTable({
+    orgId: v.id("organizations"),
+    agentId: v.id("users"),
+    key: v.string(),
+    requestHash: v.string(),
+    body: v.any(),
+    createdAt: v.number(),
+  })
+    .index("by_org_and_key", ["orgId", "key"])
+    .index("by_created_at", ["createdAt"]),
 });

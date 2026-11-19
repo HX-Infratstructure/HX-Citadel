@@ -1,7 +1,9 @@
-import { formatIssueKey } from "../../../lib/issue-key";
+import { refuse } from "../refusals";
 import { GATED_LABELS, isGatedStatus } from "../../../lib/issue-status";
 import { Doc } from "../../_generated/dataModel";
 import { MutationCtx } from "../../_generated/server";
+import { IssueKeys } from "../issueKeys";
+import { orgChildren } from "../orgRows";
 import { TESTING_SUBTASK_TITLE } from "./testing";
 
 type IssueStatus = Doc<"issues">["status"];
@@ -29,13 +31,8 @@ function lacksProof(parent: Doc<"issues">, child: Doc<"issues">): boolean {
   return isStoryTesting(parent, child) && !child.proofUrl;
 }
 
-function issueLabel(teamKey: string, issue: Doc<"issues">, parentNumber?: number): string {
-  const key = formatIssueKey(teamKey, issue, parentNumber);
-  return key === null ? issue.title : `${key} ${issue.title}`;
-}
-
-function blockerLabel(teamKey: string, parent: Doc<"issues">, child: Doc<"issues">): string {
-  const label = issueLabel(teamKey, child, parent.number);
+async function blockerLabel(keys: IssueKeys, parent: Doc<"issues">, child: Doc<"issues">): Promise<string> {
+  const label = await keys.label(child);
   return lacksProof(parent, child) ? `${label} ${NO_PROOF}` : label;
 }
 
@@ -43,10 +40,9 @@ function missingTestingSubtask(parent: Doc<"issues">, children: Doc<"issues">[])
   return parent.kind === "story" && !children.some((child) => child.testing === true);
 }
 
-function blockers(teamKey: string, parent: Doc<"issues">, children: Doc<"issues">[]): string[] {
-  const listed = children
-    .filter((child) => isOpen(parent, child) || lacksProof(parent, child))
-    .map((child) => blockerLabel(teamKey, parent, child));
+async function blockers(keys: IssueKeys, parent: Doc<"issues">, children: Doc<"issues">[]): Promise<string[]> {
+  const open = children.filter((child) => isOpen(parent, child) || lacksProof(parent, child));
+  const listed = await Promise.all(open.map((child) => blockerLabel(keys, parent, child)));
   if (missingTestingSubtask(parent, children)) {
     listed.push(`${TESTING_SUBTASK_TITLE} ${NO_PROOF}`);
   }
@@ -67,16 +63,11 @@ export async function assertDoneGate(
     return;
   }
   const target = GATED_LABELS[nextStatus];
-  const children = await ctx.db
-    .query("issues")
-    .withIndex("by_parent", (q) => q.eq("parentIssueId", issue._id))
-    .collect();
-  const team = await ctx.db.get(issue.teamId);
-  const teamKey = team?.key ?? "";
-  const open = blockers(teamKey, issue, children);
+  const children = await orgChildren(ctx, issue.orgId, issue._id);
+  const keys = new IssueKeys(ctx, issue.orgId);
+  const open = await blockers(keys, issue, children);
   if (open.length > 0) {
-    const name = formatIssueKey(teamKey, issue) ?? issue.title;
-    throw new Error(`Can't move ${name} to ${target}: open — ${open.join(", ")}`);
+    refuse(`Can't move ${await keys.name(issue)} to ${target}: open — ${open.join(", ")}`);
   }
 }
 

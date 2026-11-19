@@ -24,6 +24,10 @@ import {
   MentionTextarea,
   resolveMentions,
 } from "@/components/issue-detail/mention-textarea";
+import {
+  RevertChange,
+  revertValueLabel,
+} from "@/components/issue-detail/revert-change";
 import { IssueDetailSlotProps } from "@/components/issue-detail/slots";
 import {
   IssuePriority,
@@ -166,6 +170,13 @@ function describeActivity(entry: ActivityEntry): ReactNode {
           removed attachment <Emphasis>{oldValue}</Emphasis>
         </>
       );
+    case "reverted":
+      return (
+        <>
+          reverted {field} to{" "}
+          <Emphasis>{revertValueLabel(field ?? "", newValue)}</Emphasis>
+        </>
+      );
     case "description_changed":
       return <>updated the description</>;
     case "proof_set":
@@ -186,12 +197,6 @@ function describeActivity(entry: ActivityEntry): ReactNode {
       return (
         <>
           removed label <Emphasis>{oldValue}</Emphasis>
-        </>
-      );
-    case "child_deleted":
-      return (
-        <>
-          deleted sub-issue <Emphasis>{oldValue}</Emphasis>
         </>
       );
     default:
@@ -301,6 +306,13 @@ export function ActivitySection({ issue }: IssueDetailSlotProps) {
                 <span className="ml-auto shrink-0">
                   {formatRelativeTime(item.entry._creationTime)}
                 </span>
+                {isAdmin && item.entry.revertible && (
+                  <RevertChange
+                    activityId={item.entry._id}
+                    field={item.entry.field!}
+                    oldValue={item.entry.oldValue}
+                  />
+                )}
               </div>
             )
           )}

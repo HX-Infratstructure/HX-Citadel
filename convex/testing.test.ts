@@ -53,12 +53,13 @@ async function setup() {
   ) => asMember.mutation(api.issues.create, { teamId, title: `A ${kind}`, kind, ...extra });
 
   const children = (parentIssueId: Id<"issues">) =>
-    t.run((ctx) =>
-      ctx.db
+    t.run(async (ctx) => {
+      const { orgId } = (await ctx.db.get(parentIssueId))!;
+      return await ctx.db
         .query("issues")
-        .withIndex("by_parent", (q) => q.eq("parentIssueId", parentIssueId))
-        .collect()
-    );
+        .withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", parentIssueId))
+        .collect();
+    });
 
   const testingSubtaskOf = async (storyId: Id<"issues">) => {
     const testing = (await children(storyId)).filter((child) => child.testing);
@@ -115,14 +116,6 @@ describe("Complete testing sub-task", () => {
     expect(await children(epic)).toHaveLength(1);
     expect(await children(feature)).toHaveLength(1);
     expect(await children(subtask)).toHaveLength(0);
-  });
-
-  test("deleting the testing subtask is refused", async () => {
-    const { asMember, create, testingSubtaskOf } = await setup();
-    const testing = await testingSubtaskOf(await create("story"));
-    await expect(
-      asMember.mutation(api.issues.remove, { issueId: testing._id })
-    ).rejects.toThrow("The Complete testing sub-task can't be deleted");
   });
 
   test("moving the testing subtask is refused", async () => {
@@ -186,20 +179,5 @@ describe("Complete testing sub-task", () => {
     const saved = await t.run((ctx) => ctx.db.get(testing._id));
     expect(saved).not.toBeNull();
     expect(saved?.proofUrl).toBeUndefined();
-  });
-
-  test("deleting the story removes its subtasks, the testing one included", async () => {
-    const { t, asMember, create, children } = await setup();
-    const storyId = await create("story");
-    await create("subtask", { parentIssueId: storyId });
-    const childIds = (await children(storyId)).map((child) => child._id);
-    expect(childIds).toHaveLength(2);
-
-    await asMember.mutation(api.issues.remove, { issueId: storyId });
-
-    expect(await t.run((ctx) => ctx.db.get(storyId))).toBeNull();
-    for (const childId of childIds) {
-      expect(await t.run((ctx) => ctx.db.get(childId))).toBeNull();
-    }
   });
 });

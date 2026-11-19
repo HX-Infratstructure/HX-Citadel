@@ -17,7 +17,7 @@ import { GroupedIssueList } from "@/components/projects/grouped-issue-list";
 import {
   completionPercent,
   DEFAULT_PROJECT_COLOR,
-  progressFromIssues,
+  EMPTY_PROGRESS,
 } from "@/components/projects/project-meta";
 import { ProjectProperties } from "@/components/projects/project-properties";
 import { IssueProgressBar } from "@/components/projects/progress-bar";
@@ -108,7 +108,9 @@ function ProjectDetail({
     );
   };
 
-  const progress = progressFromIssues(issues ?? []);
+  const progress =
+    useQuery(api.projects.progress, { projectId: project._id }) ??
+    EMPTY_PROGRESS;
 
   return (
     <>

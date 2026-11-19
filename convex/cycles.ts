@@ -1,10 +1,14 @@
 import { v } from "convex/values";
+import { cycleName } from "../lib/sprint";
 import { Doc, Id } from "./_generated/dataModel";
 import { QueryCtx } from "./_generated/server";
-import { issueShape } from "./issues";
+import { issueShape, LIST_LIMIT } from "./issues";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
-import { progressShape } from "./projects";
+import { inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
+import { patchIssue } from "./lib/issueVersion";
+import { invalid } from "./lib/refusals";
+import { countByStatus, progressShape } from "./projects";
 
 export const cycleShape = {
   _id: v.id("cycles"),
@@ -17,58 +21,26 @@ export const cycleShape = {
   endDate: v.number(),
 };
 
-/** Verify a cycle belongs to the caller's org before any read/write. */
-async function getOrgCycle(
-  ctx: { db: QueryCtx["db"] },
-  orgId: Id<"organizations">,
-  cycleId: Id<"cycles">
-): Promise<Doc<"cycles">> {
-  const cycle = await ctx.db.get(cycleId);
-  if (!cycle || cycle.orgId !== orgId) {
-    throw new Error("Cycle not found");
-  }
-  return cycle;
+/** Every issue of a cycle in the workspace. */
+function cycleIssueQuery(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">, cycleId: Id<"cycles">) {
+  return inOrg(
+    ctx.db.query("issues").withIndex("by_cycle", (q) => q.eq("cycleId", cycleId)),
+    orgId
+  );
 }
 
-/** Verify a team belongs to the caller's org. */
-async function getOrgTeam(
-  ctx: { db: QueryCtx["db"] },
-  orgId: Id<"organizations">,
-  teamId: Id<"teams">
-): Promise<Doc<"teams">> {
-  const team = await ctx.db.get(teamId);
-  if (!team || team.orgId !== orgId) {
-    throw new Error("Team not found");
-  }
-  return team;
+/** A team's cycles, newest first. Bounded by design: one team's cycles, about 52 a year, and no agent route creates one. */
+async function teamCycles(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">, teamId: Id<"teams">) {
+  return await inOrg(
+    ctx.db.query("cycles").withIndex("by_team_and_number", (q) => q.eq("teamId", teamId)).order("desc"),
+    orgId
+  ).collect();
 }
 
-async function countProgress(
-  ctx: { db: QueryCtx["db"] },
-  orgId: Id<"organizations">,
-  cycleId: Id<"cycles">
-) {
-  const issues = await ctx.db
-    .query("issues")
-    .withIndex("by_cycle", (q) => q.eq("cycleId", cycleId))
-    .collect();
-  const progress = {
-    total: 0,
-    backlog: 0,
-    todo: 0,
-    in_progress: 0,
-    in_review: 0,
-    done: 0,
-    canceled: 0,
-  };
-  for (const issue of issues) {
-    if (issue.orgId !== orgId) {
-      continue;
-    }
-    progress.total += 1;
-    progress[issue.status] += 1;
+function assertDatesInOrder(startDate: number, endDate: number): void {
+  if (endDate <= startDate) {
+    invalid("Cycle end date must be after its start date");
   }
-  return progress;
 }
 
 /** Cycles for one team, newest first (lightweight — for pickers). */
@@ -76,12 +48,8 @@ export const listByTeam = orgQuery({
   args: { teamId: v.id("teams") },
   returns: v.array(v.object(cycleShape)),
   handler: async (ctx, args) => {
-    await getOrgTeam(ctx, ctx.org._id, args.teamId);
-    return await ctx.db
-      .query("cycles")
-      .withIndex("by_team_and_number", (q) => q.eq("teamId", args.teamId))
-      .order("desc")
-      .collect();
+    await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
+    return await teamCycles(ctx, ctx.org._id, args.teamId);
   },
 });
 
@@ -100,23 +68,19 @@ export const listWithProgress = orgQuery({
     })
   ),
   handler: async (ctx) => {
+    // Bounded by design: a workspace's teams, a handful, made by hand.
     const teams = await ctx.db
       .query("teams")
       .withIndex("by_org", (q) => q.eq("orgId", ctx.org._id))
       .collect();
     const result = [];
     for (const team of teams) {
-      const cycles = await ctx.db
-        .query("cycles")
-        .withIndex("by_team_and_number", (q) => q.eq("teamId", team._id))
-        .order("desc")
-        .collect();
-      for (const cycle of cycles) {
+      for (const cycle of await teamCycles(ctx, ctx.org._id, team._id)) {
         result.push({
           ...cycle,
           teamName: team.name,
           teamKey: team.key,
-          progress: await countProgress(ctx, ctx.org._id, cycle._id),
+          progress: await countByStatus(cycleIssueQuery(ctx, ctx.org._id, cycle._id)),
         });
       }
     }
@@ -127,13 +91,7 @@ export const listWithProgress = orgQuery({
 export const get = orgQuery({
   args: { cycleId: v.id("cycles") },
   returns: v.union(v.object(cycleShape), v.null()),
-  handler: async (ctx, args) => {
-    const cycle = await ctx.db.get(args.cycleId);
-    if (!cycle || cycle.orgId !== ctx.org._id) {
-      return null;
-    }
-    return cycle;
-  },
+  handler: async (ctx, args) => await orgRow(ctx, ctx.org._id, args.cycleId),
 });
 
 /**
@@ -144,11 +102,8 @@ export const currentForTeam = orgQuery({
   args: { teamId: v.id("teams") },
   returns: v.union(v.object(cycleShape), v.null()),
   handler: async (ctx, args) => {
-    await getOrgTeam(ctx, ctx.org._id, args.teamId);
-    const cycles = await ctx.db
-      .query("cycles")
-      .withIndex("by_team", (q) => q.eq("teamId", args.teamId))
-      .collect();
+    await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
+    const cycles = await teamCycles(ctx, ctx.org._id, args.teamId);
     const now = Date.now();
     const active = cycles
       .filter((cycle) => cycle.startDate <= now && now <= cycle.endDate)
@@ -157,17 +112,23 @@ export const currentForTeam = orgQuery({
   },
 });
 
-/** All issues scheduled into a cycle (detail page computes progress from this). */
+/** A cycle's issues for the detail page list, at most `LIST_LIMIT`; `progress` counts them all. */
 export const listIssues = orgQuery({
   args: { cycleId: v.id("cycles") },
   returns: v.array(v.object(issueShape)),
   handler: async (ctx, args) => {
-    await getOrgCycle(ctx, ctx.org._id, args.cycleId);
-    const issues = await ctx.db
-      .query("issues")
-      .withIndex("by_cycle", (q) => q.eq("cycleId", args.cycleId))
-      .collect();
-    return issues.filter((issue) => issue.orgId === ctx.org._id);
+    await requireOrgRow(ctx, ctx.org._id, args.cycleId, "Cycle");
+    return await cycleIssueQuery(ctx, ctx.org._id, args.cycleId).take(LIST_LIMIT);
+  },
+});
+
+/** A cycle's issue counts by status, over every issue, for the detail page. */
+export const progress = orgQuery({
+  args: { cycleId: v.id("cycles") },
+  returns: progressShape,
+  handler: async (ctx, args) => {
+    await requireOrgRow(ctx, ctx.org._id, args.cycleId, "Cycle");
+    return await countByStatus(cycleIssueQuery(ctx, ctx.org._id, args.cycleId));
   },
 });
 
@@ -180,17 +141,12 @@ export const candidateIssues = orgQuery({
   args: { cycleId: v.id("cycles") },
   returns: v.array(v.object(issueShape)),
   handler: async (ctx, args) => {
-    const cycle = await getOrgCycle(ctx, ctx.org._id, args.cycleId);
-    const issues = await ctx.db
-      .query("issues")
-      .withIndex("by_team", (q) => q.eq("teamId", cycle.teamId))
-      .order("desc")
-      .take(500);
-    return issues
-      .filter(
-        (issue) => issue.orgId === ctx.org._id && issue.cycleId !== args.cycleId
-      )
-      .slice(0, 200);
+    const cycle = await requireOrgRow(ctx, ctx.org._id, args.cycleId, "Cycle");
+    const issues = await inOrg(
+      ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", cycle.teamId)).order("desc"),
+      ctx.org._id
+    ).take(LIST_LIMIT);
+    return issues.filter((issue) => issue.cycleId !== args.cycleId).slice(0, 200);
   },
 });
 
@@ -204,17 +160,14 @@ export const create = orgMutation({
   },
   returns: v.id("cycles"),
   handler: async (ctx, args) => {
-    await getOrgTeam(ctx, ctx.org._id, args.teamId);
-    if (args.endDate <= args.startDate) {
-      throw new Error("Cycle end date must be after its start date");
-    }
+    await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
+    assertDatesInOrder(args.startDate, args.endDate);
 
     // Claim the next per-team cycle number.
-    const latest = await ctx.db
-      .query("cycles")
-      .withIndex("by_team_and_number", (q) => q.eq("teamId", args.teamId))
-      .order("desc")
-      .first();
+    const latest = await inOrg(
+      ctx.db.query("cycles").withIndex("by_team_and_number", (q) => q.eq("teamId", args.teamId)).order("desc"),
+      ctx.org._id
+    ).first();
     const number = (latest?.number ?? 0) + 1;
 
     const name = args.name?.trim();
@@ -238,13 +191,9 @@ export const update = orgMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const cycle = await getOrgCycle(ctx, ctx.org._id, args.cycleId);
+    const cycle = await requireOrgRow(ctx, ctx.org._id, args.cycleId, "Cycle");
 
-    const startDate = args.startDate ?? cycle.startDate;
-    const endDate = args.endDate ?? cycle.endDate;
-    if (endDate <= startDate) {
-      throw new Error("Cycle end date must be after its start date");
-    }
+    assertDatesInOrder(args.startDate ?? cycle.startDate, args.endDate ?? cycle.endDate);
 
     const updates: Partial<Doc<"cycles">> = {};
     if (args.name !== undefined) {
@@ -268,24 +217,19 @@ export const remove = orgMutation({
   args: { cycleId: v.id("cycles") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const cycle = await getOrgCycle(ctx, ctx.org._id, args.cycleId);
+    const cycle = await requireOrgRow(ctx, ctx.org._id, args.cycleId, "Cycle");
 
-    const issues = await ctx.db
-      .query("issues")
-      .withIndex("by_cycle", (q) => q.eq("cycleId", cycle._id))
-      .collect();
+    // Bounded by design: one sprint's issues, and the mutation is atomic, so a cycle too big to read fails whole and unschedules nothing.
+    const issues = await cycleIssueQuery(ctx, ctx.org._id, cycle._id).collect();
     for (const issue of issues) {
-      if (issue.orgId !== ctx.org._id) {
-        continue;
-      }
-      await ctx.db.patch(issue._id, { cycleId: undefined });
+      await patchIssue(ctx, issue, { cycleId: undefined });
       await logActivity(ctx, {
         orgId: ctx.org._id,
         issueId: issue._id,
         actorId: ctx.user._id,
         type: "cycle_changed",
         field: "cycle",
-        oldValue: cycle.name ?? `Cycle ${cycle.number}`,
+        oldValue: cycleName(cycle),
         newValue: undefined,
       });
     }

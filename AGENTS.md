@@ -5,6 +5,7 @@ HX-Citadel is the HX team's work tracker for agentic and agile development, with
 ## Architecture rules
 
 - **Clerk is the source of truth** for users, organizations and memberships. Convex mirrors them in the `users`, `organizations` and `members` tables. Clerk webhooks do not arrive, so `mirror:syncCurrent` and a cron that runs `mirror:reconcileAll` keep the mirror current. The README's [Clerk sync](README.md#clerk-sync) section says when each one runs. Feature code never writes to those tables.
+  - The one exception: `convex/lib/agents.ts` writes agent users and their HX workspace membership. `ensureAgent` creates them (owner and DSH approved, phase 3), and `removeAgentMembership` deletes a membership for the operator command `agentAdmin:removeAgent`.
 - **Every Convex function uses a wrapper** from `convex/lib/customFunctions.ts`:
   - `orgQuery` and `orgMutation` resolve `ctx.user`, `ctx.org` and `ctx.membership` through `getAuthContext` in `convex/lib/auth.ts`. The JWT `subject` selects the user by `clerkId`, the `org_id` claim selects the organization, and the caller must have a `members` row in it.
   - `orgAdminMutation` does the same and also requires `ctx.membership.role === "admin"`.
@@ -50,6 +51,18 @@ The owner set these rules on 2026-11-17.
 - Never start Next on the literal `127.0.0.1`. Use `localhost` or the LAN address.
 - pnpm is pinned by `packageManager` in `package.json`. Add no pnpm release-age exclusions.
 - Demo data is dev-only. Seed an empty development workspace with `pnpm seed:demo '{"clerkOrgId":"…","clerkUserId":"…"}'` (`convex/seed.ts`). Never seed from the UI or from a build or deploy.
+
+### Clear test data
+
+- After a live gate, clear test data one team at a time with `admin:clearTeamContent` (`convex/admin.ts`), with `convex-admin.env` loaded: `npx convex run admin:clearTeamContent '{"clerkOrgId":"…","teamKey":"…"}'`. It deletes the whole team: every issue with the rows it owns, such as comments and decisions (`deleteIssuesWithOwnedRows` in `convex/lib/issueCleanup.ts`), every cycle, every saved view that opens the team, and then the team itself.
+- Run `admin:clearTeamContent` only on a team that holds nothing but test data. If a team holds both test and real work, cancel the test stories one by one instead, in the app or through the Agent API. The live check's tidy-up cancels each of its stories, and the story's testing sub-task first, through the Agent API (`scripts/live-check/steps.ts`).
+- A clear runs in pages (`PAGE_SIZE` in `convex/admin.ts`). Each run deletes one page, and every run except the last schedules the next one. The command prints only what its first run deleted, and the scheduled runs finish the clear. The runs delete in the order above and scan the saved views one page per run.
+- Each scheduled run carries the team's id, not its key, and stops quietly if that team is gone. So a queued run never touches a new team that reuses the key. If a scheduled run fails, run the command again: it starts from the rows that are left, and its view scan starts again from the first view (`convex/admin.test.ts`, "a rerun after a scheduled run failed finishes the clear" and "a rerun after a scheduled run failed in the saved-view scan finishes the clear").
+- A page limits the issues, the cycles and the saved views that one run reads. The rows those issues own have their own limit. A run stays within `CLEANUP_BUDGET`, sized to stay inside Convex's per-transaction limits (`convex/lib/issueCleanup.ts`). An issue that owns more than one budget loses a share of its rows in each run, and its own row goes only after the last of them, so a heavy issue clears over several runs. Relations are read and charged like the other owned rows.
+- If you create the team again with the same key, its issue numbers start at 1 again (`nextIssueNumber: 1` in `convex/teams.ts`), so an old key can name a new issue. Don't reuse an issue key or an [`If-Match`](docs/AGENT-API.md#send-the-three-headers) version you held from before the clear. Read the issue again.
+- Never run `admin:clearOrgContent` once real work exists. It deletes the content of the whole workspace.
+- Keep the `LCK` team. `pnpm live-check -- --team LCK` uses it (`docs/AGENT-API.md`). Clearing `LCK` deletes it, so create it again before the next check.
+- Remove a mistyped or retired agent from the workspace with `npx convex run agentAdmin:removeAgent '{"clerkOrgId":"…","agentName":"…"}'`. It refuses while the agent is still an issue's assignee or a project's lead and names them, keeps the agent's user row so its comments and activity still show its name, and the agent's next successful write makes it a member again (`removeAgentMembership` and `ensureAgent` in `convex/lib/agents.ts`). A read, or a write that is refused, leaves it out.
 
 ## Verifying your work
 

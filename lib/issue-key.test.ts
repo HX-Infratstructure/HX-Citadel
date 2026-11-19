@@ -1,5 +1,13 @@
 import { describe, expect, test } from "vitest";
-import { formatIssueKey, hasDisplayKey, parentChoices } from "./issue-key";
+import {
+  formatIssueKey,
+  formatParsedKey,
+  hasDisplayKey,
+  isValidTeamKey,
+  parentChoices,
+  parseIssueKey,
+  suggestTeamKey,
+} from "./issue-key";
 
 describe("formatIssueKey", () => {
   test("a story is KEY-number", () => {
@@ -76,5 +84,74 @@ describe("parentChoices", () => {
 
   test("an epic has no parent to choose", () => {
     expect(parentChoices([...issues], "epic")).toBeNull();
+  });
+});
+
+describe("parseIssueKey", () => {
+  test("a story key gives the team key and number", () => {
+    expect(parseIssueKey("HXT-12")).toEqual({ teamKey: "HXT", number: 12 });
+  });
+
+  test("a subtask key adds the sub-number", () => {
+    expect(parseIssueKey("HXT-12.3")).toEqual({ teamKey: "HXT", number: 12, subNumber: 3 });
+  });
+
+  test("anything else is null", () => {
+    expect(parseIssueKey("HXT")).toBeNull();
+    expect(parseIssueKey("HXT-x")).toBeNull();
+    expect(parseIssueKey("HXT-1.2.3")).toBeNull();
+  });
+
+  test("a team key starts with a letter, so a date is not a key", () => {
+    expect(parseIssueKey("2026-11")).toBeNull();
+    expect(parseIssueKey("1AB-3")).toBeNull();
+    expect(parseIssueKey("HX-1")).toEqual({ teamKey: "HX", number: 1 });
+    expect(parseIssueKey("HX-1.2")).toEqual({ teamKey: "HX", number: 1, subNumber: 2 });
+    expect(parseIssueKey("A1-3")).toEqual({ teamKey: "A1", number: 3 });
+  });
+});
+
+describe("formatParsedKey", () => {
+  test.each(["CIT-12", "CIT-12.3"])("writes %s back as it was parsed", (key) => {
+    expect(formatParsedKey(parseIssueKey(key)!)).toBe(key);
+  });
+
+  test.each([
+    ["cit-012", "CIT-12"],
+    [" CIT-12 ", "CIT-12"],
+    ["CIT-12.03", "CIT-12.3"],
+  ])("writes the look-alike %j as the canonical %s", (key, canonical) => {
+    expect(formatParsedKey(parseIssueKey(key)!)).toBe(canonical);
+  });
+});
+
+describe("isValidTeamKey", () => {
+  test("accepts 1-5 upper-case letters and digits that start with a letter", () => {
+    for (const key of ["A", "HX", "A1", "ENG2", "ABCDE"]) {
+      expect(isValidTeamKey(key)).toBe(true);
+    }
+  });
+
+  test("rejects a leading digit, a wrong length, lower case or other characters", () => {
+    for (const key of ["", "1AB", "2026", "ABCDEF", "hx", "H-X", " HX"]) {
+      expect(isValidTeamKey(key)).toBe(false);
+    }
+  });
+});
+
+describe("suggestTeamKey", () => {
+  test("takes each word's initial, as before", () => {
+    expect(suggestTeamKey("Engineering")).toBe("E");
+    expect(suggestTeamKey("Platform Engineering Team")).toBe("PET");
+  });
+
+  test("skips leading digits, so the suggestion starts with a letter", () => {
+    expect(suggestTeamKey("2026 Ops")).toBe("O");
+    expect(isValidTeamKey(suggestTeamKey("2026 Ops"))).toBe(true);
+  });
+
+  test("suggests nothing when no letter is left", () => {
+    expect(suggestTeamKey("!!! ---")).toBe("");
+    expect(suggestTeamKey("2026")).toBe("");
   });
 });

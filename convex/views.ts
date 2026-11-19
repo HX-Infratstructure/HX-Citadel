@@ -1,5 +1,8 @@
 import { v } from "convex/values";
+import { LIST_LIMIT } from "./issues";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
+import { invalid, refuse } from "./lib/refusals";
 
 const viewShape = {
   _id: v.id("views"),
@@ -17,13 +20,21 @@ const MAX_FILTERS_LENGTH = 4096;
 /** Reject payloads that aren't valid JSON before they hit the table. */
 function assertValidFilters(filters: string): void {
   if (filters.length > MAX_FILTERS_LENGTH) {
-    throw new Error("View filters are too large");
+    invalid("View filters are too large");
   }
   try {
     JSON.parse(filters);
   } catch {
-    throw new Error("View filters must be valid JSON");
+    invalid("View filters must be valid JSON");
   }
+}
+
+function viewName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    invalid("View name is required");
+  }
+  return trimmed;
 }
 
 /**
@@ -34,6 +45,7 @@ export const list = orgQuery({
   args: {},
   returns: v.array(v.object(viewShape)),
   handler: async (ctx) => {
+    // Bounded by design: people save views by hand, a few dozen per workspace; no agent route creates one.
     const views = await ctx.db
       .query("views")
       .withIndex("by_org", (q) => q.eq("orgId", ctx.org._id))
@@ -52,10 +64,7 @@ export const create = orgMutation({
   },
   returns: v.id("views"),
   handler: async (ctx, args) => {
-    const name = args.name.trim();
-    if (!name) {
-      throw new Error("View name is required");
-    }
+    const name = viewName(args.name);
     assertValidFilters(args.filters);
     return await ctx.db.insert("views", {
       orgId: ctx.org._id,
@@ -76,21 +85,14 @@ export const update = orgMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const view = await ctx.db.get(args.viewId);
-    if (!view || view.orgId !== ctx.org._id) {
-      throw new Error("View not found");
-    }
+    const view = await requireOrgRow(ctx, ctx.org._id, args.viewId, "View");
     if (view.creatorId !== ctx.user._id && ctx.membership.role !== "admin") {
-      throw new Error("Only the view's creator or an admin can edit it");
+      refuse("Only the view's creator or an admin can edit it");
     }
 
     const updates: { name?: string; filters?: string; shared?: boolean } = {};
     if (args.name !== undefined) {
-      const name = args.name.trim();
-      if (!name) {
-        throw new Error("View name is required");
-      }
-      updates.name = name;
+      updates.name = viewName(args.name);
     }
     if (args.filters !== undefined) {
       assertValidFilters(args.filters);
@@ -108,12 +110,9 @@ export const remove = orgMutation({
   args: { viewId: v.id("views") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const view = await ctx.db.get(args.viewId);
-    if (!view || view.orgId !== ctx.org._id) {
-      throw new Error("View not found");
-    }
+    const view = await requireOrgRow(ctx, ctx.org._id, args.viewId, "View");
     if (view.creatorId !== ctx.user._id && ctx.membership.role !== "admin") {
-      throw new Error("Only the view's creator or an admin can delete it");
+      refuse("Only the view's creator or an admin can delete it");
     }
     await ctx.db.delete(view._id);
     return null;
@@ -135,15 +134,11 @@ export const teamIssueLabels = orgQuery({
     })
   ),
   handler: async (ctx, args) => {
-    const team = await ctx.db.get(args.teamId);
-    if (!team || team.orgId !== ctx.org._id) {
-      throw new Error("Team not found");
-    }
-    const issues = await ctx.db
-      .query("issues")
-      .withIndex("by_team", (q) => q.eq("teamId", args.teamId))
-      .order("desc")
-      .take(500);
+    await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
+    const issues = await inOrg(
+      ctx.db.query("issues").withIndex("by_team", (q) => q.eq("teamId", args.teamId)).order("desc"),
+      ctx.org._id
+    ).take(LIST_LIMIT);
 
     const labelCache = new Map<
       string,
@@ -151,6 +146,7 @@ export const teamIssueLabels = orgQuery({
     >();
     const result = [];
     for (const issue of issues) {
+      // Bounded by design: one issue's labels, a few; the loop runs at most LIST_LIMIT times.
       const links = await ctx.db
         .query("issueLabels")
         .withIndex("by_issue", (q) => q.eq("issueId", issue._id))
@@ -158,11 +154,8 @@ export const teamIssueLabels = orgQuery({
       for (const link of links) {
         let label = labelCache.get(link.labelId);
         if (label === undefined) {
-          const doc = await ctx.db.get(link.labelId);
-          label =
-            doc && doc.orgId === ctx.org._id
-              ? { _id: doc._id, name: doc.name, color: doc.color }
-              : null;
+          const doc = await orgRow(ctx, ctx.org._id, link.labelId);
+          label = doc ? { _id: doc._id, name: doc.name, color: doc.color } : null;
           labelCache.set(link.labelId, label);
         }
         if (label) {

@@ -1,5 +1,6 @@
 import { Infer, v } from "convex/values";
 import { internal } from "./_generated/api";
+import { Doc } from "./_generated/dataModel";
 import { action, ActionCtx, internalAction, internalQuery } from "./_generated/server";
 import type { ClerkMembershipData, ClerkOrgData, ClerkUserData } from "./webhooks";
 
@@ -119,9 +120,13 @@ export const mirrorSnapshot = internalQuery({
   args: {},
   returns: snapshotValidator,
   handler: async (ctx) => {
-    const users = await ctx.db.query("users").collect();
+    const allUsers = await ctx.db.query("users").collect();
+    const agentIds = new Set(allUsers.filter(isAgent).map((u) => u._id));
+    const users = allUsers.filter((u) => !agentIds.has(u._id));
     const organizations = await ctx.db.query("organizations").collect();
-    const members = await ctx.db.query("members").collect();
+    const members = (await ctx.db.query("members").collect()).filter(
+      (m) => !agentIds.has(m.userId)
+    );
     const memberUserIds = new Set(members.map((m) => m.userId));
     return {
       users: users.map((u) => ({
@@ -140,6 +145,14 @@ export const mirrorSnapshot = internalQuery({
     };
   },
 });
+
+/**
+ * Agents are not in Clerk, so the snapshot leaves agent users and memberships out of reconciliation.
+ * Removing a gone organization (`admin.deleteOrgMirror`) still deletes every membership in it, agents' included.
+ */
+function isAgent(user: Doc<"users">): boolean {
+  return user.kind === "agent";
+}
 
 function requireClerkKey() {
   const key = process.env.CLERK_SECRET_KEY;

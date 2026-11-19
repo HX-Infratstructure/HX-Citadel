@@ -1,10 +1,14 @@
 import { v } from "convex/values";
-import { formatIssueKey } from "../lib/issue-key";
+import { notFound, refuse } from "./lib/refusals";
 import { Doc, Id } from "./_generated/dataModel";
-import { QueryCtx } from "./_generated/server";
+import { MutationCtx } from "./_generated/server";
 import { getOrgIssue } from "./issues";
 import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
+import { IssueKeys } from "./lib/issueKeys";
+import { RELATION_LIMIT, relationsOf } from "./lib/issueRelations";
+import { patchIssue } from "./lib/issueVersion";
+import { orgChildren, orgRow } from "./lib/orgRows";
 import {
   assertParentOpen,
   assertValidParent,
@@ -60,41 +64,15 @@ type IssueSummary = {
   assigneeId?: Id<"users">;
 };
 
-type TeamCache = Map<Id<"teams">, Doc<"teams"> | null>;
-
-async function parentStoryNumber(
-  ctx: { db: QueryCtx["db"] },
-  issue: Doc<"issues">
-): Promise<number | undefined> {
-  if (issue.kind !== "subtask" || !issue.parentIssueId) {
-    return undefined;
-  }
-  const parent = await ctx.db.get(issue.parentIssueId);
-  return parent?.number;
-}
-
 /** Order siblings by their own sequence: story number or subtask number. */
 function siblingOrder(issue: Doc<"issues">): number {
   return issue.number ?? issue.subNumber ?? 0;
 }
 
-async function summarizeIssue(
-  ctx: { db: QueryCtx["db"] },
-  issue: Doc<"issues">,
-  teamCache: TeamCache
-): Promise<IssueSummary> {
-  if (!teamCache.has(issue.teamId)) {
-    teamCache.set(issue.teamId, await ctx.db.get(issue.teamId));
-  }
-  const team = teamCache.get(issue.teamId) ?? null;
-  const key = formatIssueKey(
-    team?.key ?? "?",
-    issue,
-    await parentStoryNumber(ctx, issue)
-  );
+async function summarizeIssue(keys: IssueKeys, issue: Doc<"issues">): Promise<IssueSummary> {
   return {
     _id: issue._id,
-    identifier: key ?? issue.title,
+    identifier: await keys.name(issue),
     kind: issue.kind,
     type: issue.type,
     title: issue.title,
@@ -102,14 +80,6 @@ async function summarizeIssue(
     priority: issue.priority,
     assigneeId: issue.assigneeId,
   };
-}
-
-async function issueIdentifier(
-  ctx: { db: QueryCtx["db"] },
-  issue: Doc<"issues">,
-  teamCache: TeamCache
-): Promise<string> {
-  return (await summarizeIssue(ctx, issue, teamCache)).identifier;
 }
 
 type StoredRelationType = Doc<"issueRelations">["type"];
@@ -123,6 +93,24 @@ const INVERSE: Record<StoredRelationType, DisplayRelationType> = {
   duplicate_of: "duplicated_by",
 };
 
+/** A relation as one of its ends sees it: the issue at the other end, and the direction. */
+function seenFrom(
+  relation: Doc<"issueRelations">,
+  issueId: Id<"issues">
+): { otherId: Id<"issues">; type: DisplayRelationType } {
+  if (relation.issueId === issueId) {
+    return { otherId: relation.relatedIssueId, type: relation.type };
+  }
+  return { otherId: relation.issueId, type: INVERSE[relation.type] };
+}
+
+/** Refuses a new relation on an issue that already holds `RELATION_LIMIT`. */
+async function assertRoomForRelation(keys: IssueKeys, issue: Doc<"issues">, relations: Doc<"issueRelations">[]) {
+  if (relations.length >= RELATION_LIMIT) {
+    refuse(`${await keys.name(issue)} already has ${RELATION_LIMIT} relations`);
+  }
+}
+
 export const listForIssue = orgQuery({
   args: { issueId: v.id("issues") },
   returns: v.array(
@@ -134,39 +122,16 @@ export const listForIssue = orgQuery({
   ),
   handler: async (ctx, args) => {
     await getOrgIssue(ctx, ctx.org._id, args.issueId);
-    const teamCache: TeamCache = new Map();
-
-    const outgoing = await ctx.db
-      .query("issueRelations")
-      .withIndex("by_issue", (q) => q.eq("issueId", args.issueId))
-      .collect();
-    const incoming = await ctx.db
-      .query("issueRelations")
-      .withIndex("by_related", (q) => q.eq("relatedIssueId", args.issueId))
-      .collect();
+    const keys = new IssueKeys(ctx, ctx.org._id);
 
     const result = [];
-    for (const relation of outgoing) {
-      const other = await ctx.db.get(relation.relatedIssueId);
-      if (!other || other.orgId !== ctx.org._id) {
+    for (const relation of await relationsOf(ctx, args.issueId)) {
+      const { otherId, type } = seenFrom(relation, args.issueId);
+      const other = await orgRow(ctx, ctx.org._id, otherId);
+      if (other === null) {
         continue;
       }
-      result.push({
-        relationId: relation._id,
-        type: relation.type as DisplayRelationType,
-        issue: await summarizeIssue(ctx, other, teamCache),
-      });
-    }
-    for (const relation of incoming) {
-      const other = await ctx.db.get(relation.issueId);
-      if (!other || other.orgId !== ctx.org._id) {
-        continue;
-      }
-      result.push({
-        relationId: relation._id,
-        type: INVERSE[relation.type],
-        issue: await summarizeIssue(ctx, other, teamCache),
-      });
+      result.push({ relationId: relation._id, type, issue: await summarizeIssue(keys, other) });
     }
     return result;
   },
@@ -181,7 +146,7 @@ export const create = orgMutation({
   returns: v.id("issueRelations"),
   handler: async (ctx, args) => {
     if (args.issueId === args.relatedIssueId) {
-      throw new Error("An issue cannot be related to itself");
+      refuse("An issue cannot be related to itself");
     }
     const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
     const related = await getOrgIssue(ctx, ctx.org._id, args.relatedIssueId);
@@ -197,20 +162,13 @@ export const create = orgMutation({
     }
 
     // One relation per pair, in either direction.
-    const existingOutgoing = await ctx.db
-      .query("issueRelations")
-      .withIndex("by_issue", (q) => q.eq("issueId", issue._id))
-      .collect();
-    const existingIncoming = await ctx.db
-      .query("issueRelations")
-      .withIndex("by_related", (q) => q.eq("relatedIssueId", issue._id))
-      .collect();
-    const alreadyLinked =
-      existingOutgoing.some((r) => r.relatedIssueId === related._id) ||
-      existingIncoming.some((r) => r.issueId === related._id);
-    if (alreadyLinked) {
-      throw new Error("These issues are already linked");
+    const existing = await relationsOf(ctx, issue._id);
+    if (existing.some((relation) => seenFrom(relation, issue._id).otherId === related._id)) {
+      refuse("These issues are already linked");
     }
+    const keys = new IssueKeys(ctx, ctx.org._id);
+    await assertRoomForRelation(keys, issue, existing);
+    await assertRoomForRelation(keys, related, await relationsOf(ctx, related._id));
 
     const relationId = await ctx.db.insert("issueRelations", {
       issueId: fromIssue._id,
@@ -218,9 +176,8 @@ export const create = orgMutation({
       type,
     });
 
-    const teamCache: TeamCache = new Map();
-    const fromIdentifier = await issueIdentifier(ctx, fromIssue, teamCache);
-    const toIdentifier = await issueIdentifier(ctx, toIssue, teamCache);
+    const fromIdentifier = await keys.name(fromIssue);
+    const toIdentifier = await keys.name(toIssue);
     await logActivity(ctx, {
       orgId: ctx.org._id,
       issueId: fromIssue._id,
@@ -248,7 +205,7 @@ export const remove = orgMutation({
   handler: async (ctx, args) => {
     const relation = await ctx.db.get(args.relationId);
     if (!relation) {
-      throw new Error("Relation not found");
+      notFound("Relation not found");
     }
     // Both ends must belong to the caller's org.
     const fromIssue = await getOrgIssue(ctx, ctx.org._id, relation.issueId);
@@ -260,9 +217,9 @@ export const remove = orgMutation({
 
     await ctx.db.delete(relation._id);
 
-    const teamCache: TeamCache = new Map();
-    const fromIdentifier = await issueIdentifier(ctx, fromIssue, teamCache);
-    const toIdentifier = await issueIdentifier(ctx, toIssue, teamCache);
+    const keys = new IssueKeys(ctx, ctx.org._id);
+    const fromIdentifier = await keys.name(fromIssue);
+    const toIdentifier = await keys.name(toIssue);
     await logActivity(ctx, {
       orgId: ctx.org._id,
       issueId: fromIssue._id,
@@ -292,28 +249,17 @@ export const hierarchy = orgQuery({
   }),
   handler: async (ctx, args) => {
     const issue = await getOrgIssue(ctx, ctx.org._id, args.issueId);
-    const teamCache: TeamCache = new Map();
+    const keys = new IssueKeys(ctx, ctx.org._id);
 
-    let parent: IssueSummary | null = null;
-    if (issue.parentIssueId) {
-      const parentIssue = await ctx.db.get(issue.parentIssueId);
-      if (parentIssue && parentIssue.orgId === ctx.org._id) {
-        parent = await summarizeIssue(ctx, parentIssue, teamCache);
-      }
-    }
+    const parentIssue = issue.parentIssueId ? await orgRow(ctx, ctx.org._id, issue.parentIssueId) : null;
+    const parent = parentIssue ? await summarizeIssue(keys, parentIssue) : null;
 
-    const children = await ctx.db
-      .query("issues")
-      .withIndex("by_parent", (q) => q.eq("parentIssueId", issue._id))
-      .collect();
+    const children = await orgChildren(ctx, ctx.org._id, issue._id);
     children.sort((a, b) => siblingOrder(a) - siblingOrder(b));
 
     const subIssues = [];
     for (const child of children) {
-      if (child.orgId !== ctx.org._id) {
-        continue;
-      }
-      subIssues.push(await summarizeIssue(ctx, child, teamCache));
+      subIssues.push(await summarizeIssue(keys, child));
     }
     return { parent, subIssues };
   },
@@ -321,14 +267,14 @@ export const hierarchy = orgQuery({
 
 /** A subtask moved to another story takes the next number there, so keys stay unique. */
 async function renumberedSubtask(
-  ctx: { db: QueryCtx["db"] },
-  kind: Doc<"issues">["kind"],
+  ctx: { db: MutationCtx["db"] },
+  issue: Doc<"issues">,
   parentIssueId: Id<"issues"> | null
 ): Promise<Pick<Doc<"issues">, "subNumber">> {
-  if (kind !== "subtask" || parentIssueId === null) {
+  if (issue.kind !== "subtask" || parentIssueId === null) {
     return {};
   }
-  return { subNumber: await nextSubNumber(ctx, parentIssueId) };
+  return { subNumber: await nextSubNumber(ctx, issue.orgId, parentIssueId) };
 }
 
 export const setParent = orgMutation({
@@ -342,15 +288,15 @@ export const setParent = orgMutation({
     if ((issue.parentIssueId ?? null) === args.parentIssueId) {
       return null;
     }
-    assertNotTestingSubtask(issue, "moved");
-    const teamCache: TeamCache = new Map();
+    assertNotTestingSubtask(issue);
+    const keys = new IssueKeys(ctx, ctx.org._id);
 
     let newParent: Doc<"issues"> | null = null;
     let newParentIdentifier: string | undefined;
     let projectId = issue.projectId;
     if (args.parentIssueId !== null) {
       if (args.parentIssueId === issue._id) {
-        throw new Error("An issue cannot be its own parent");
+        refuse("An issue cannot be its own parent");
       }
       const parent = await getOrgIssue(ctx, ctx.org._id, args.parentIssueId);
       newParent = parent;
@@ -359,20 +305,17 @@ export const setParent = orgMutation({
       let ancestorId: Id<"issues"> | undefined = parent.parentIssueId;
       for (let depth = 0; ancestorId && depth < 100; depth++) {
         if (ancestorId === issue._id) {
-          throw new Error(
+          refuse(
             "Cannot set a sub-issue of this issue as its parent"
           );
         }
-        const ancestor: Doc<"issues"> | null = await ctx.db.get(ancestorId);
-        ancestorId =
-          ancestor && ancestor.orgId === ctx.org._id
-            ? ancestor.parentIssueId
-            : undefined;
+        const ancestor: Doc<"issues"> | null = await orgRow(ctx, ctx.org._id, ancestorId);
+        ancestorId = ancestor?.parentIssueId;
       }
-      newParentIdentifier = await issueIdentifier(ctx, parent, teamCache);
+      newParentIdentifier = await keys.name(parent);
       projectId = parent.projectId;
     }
-    const placement = await assertValidParent(ctx, issue.kind, {
+    const placement = await assertValidParent(ctx, ctx.org._id, issue.kind, {
       teamId: issue.teamId,
       parentIssueId: args.parentIssueId ?? undefined,
       projectId,
@@ -381,21 +324,16 @@ export const setParent = orgMutation({
       await assertParentOpen(ctx, newParent, issue.kind);
     }
 
-    let oldParentIdentifier: string | undefined;
-    if (issue.parentIssueId) {
-      const oldParent = await ctx.db.get(issue.parentIssueId);
-      if (oldParent && oldParent.orgId === ctx.org._id) {
-        oldParentIdentifier = await issueIdentifier(ctx, oldParent, teamCache);
-      }
-    }
+    const oldParent = issue.parentIssueId ? await orgRow(ctx, ctx.org._id, issue.parentIssueId) : null;
+    const oldParentIdentifier = oldParent ? await keys.name(oldParent) : undefined;
 
     const moved = {
       parentIssueId: args.parentIssueId ?? undefined,
       projectId: placement.projectId,
-      ...(await renumberedSubtask(ctx, issue.kind, args.parentIssueId)),
+      ...(await renumberedSubtask(ctx, issue, args.parentIssueId)),
     };
     const actor = { orgId: ctx.org._id, actorId: ctx.user._id };
-    await ctx.db.patch(issue._id, moved);
+    await patchIssue(ctx, issue._id, moved);
     await logFieldChanges(ctx, actor, issue._id, changedFields(issue, moved));
     await cascadeProject(ctx, issue._id, placement.projectId, actor);
 
@@ -437,13 +375,13 @@ export const searchIssues = orgQuery({
           .order("desc")
           .take(15);
 
-    const teamCache: TeamCache = new Map();
+    const keys = new IssueKeys(ctx, ctx.org._id);
     const result = [];
     for (const issue of matches) {
       if (issue._id === args.excludeIssueId) {
         continue;
       }
-      result.push(await summarizeIssue(ctx, issue, teamCache));
+      result.push(await summarizeIssue(keys, issue));
     }
     return result;
   },

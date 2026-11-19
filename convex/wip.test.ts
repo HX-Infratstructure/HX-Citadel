@@ -35,6 +35,7 @@ async function setup() {
       role: "member",
       clerkMembershipId: "mem_member",
     });
+    await ctx.db.insert("members", { orgId, userId: otherId, role: "member", clerkMembershipId: "mem_other" });
     const teamId = await ctx.db.insert("teams", {
       orgId,
       name: "Engineering",
@@ -55,14 +56,15 @@ type Setup = Awaited<ReturnType<typeof setup>>;
 
 /** In Review and Done need the Complete testing sub-task done with its proof (P2.4). */
 async function passDoneGate(t: Setup["t"], asMember: Setup["asMember"], storyId: Id<"issues">) {
-  const testing = await t.run(async (ctx) =>
-    (
+  const testing = await t.run(async (ctx) => {
+    const { orgId } = (await ctx.db.get(storyId))!;
+    return (
       await ctx.db
         .query("issues")
-        .withIndex("by_parent", (q) => q.eq("parentIssueId", storyId))
+        .withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", storyId))
         .collect()
-    ).find((child) => child.testing)
-  );
+    ).find((child) => child.testing);
+  });
   await asMember.mutation(api.issues.setProof, {
     issueId: testing!._id,
     proofUrl: "https://ci.example.com/run/1",
@@ -77,7 +79,7 @@ describe("one story In Progress per person", () => {
     const second = await story("Second", memberId);
     await move(first, "in_progress");
 
-    await expect(move(second, "in_progress")).rejects.toThrow(REFUSED);
+    await expect(move(second, "in_progress")).rejects.toMatchObject({ data: { code: "rule_refused", message: expect.stringMatching(REFUSED) } });
   });
 
   test("assigning an In Progress story to someone who holds one is refused", async () => {
@@ -89,7 +91,7 @@ describe("one story In Progress per person", () => {
 
     await expect(
       asMember.mutation(api.issues.update, { issueId: second, assigneeId: memberId })
-    ).rejects.toThrow(REFUSED);
+    ).rejects.toMatchObject({ data: { code: "rule_refused", message: expect.stringMatching(REFUSED) } });
   });
 
   test("creating a story In Progress for someone who holds one is refused", async () => {
@@ -103,7 +105,7 @@ describe("one story In Progress per person", () => {
         status: "in_progress",
         assigneeId: memberId,
       })
-    ).rejects.toThrow(REFUSED);
+    ).rejects.toMatchObject({ data: { code: "rule_refused", message: expect.stringMatching(REFUSED) } });
   });
 
   test.each([

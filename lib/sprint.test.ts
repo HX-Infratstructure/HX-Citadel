@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { sprintEnd, sprintEndDate } from "./sprint";
+import { cycleName, sprintEnd, sprintEndDate } from "./sprint";
 
 describe("sprintEnd", () => {
   test("ends six days after the start, a seven-day sprint counting both days", () => {
@@ -23,5 +23,12 @@ describe("sprintEndDate", () => {
 
   test("rolls over the month and the year", () => {
     expect(sprintEndDate("2026-12-28")).toBe("2027-01-03");
+  });
+});
+
+describe("cycleName", () => {
+  test("a named cycle keeps its name and an unnamed one is numbered", () => {
+    expect(cycleName({ name: "Sprint A", number: 3 })).toBe("Sprint A");
+    expect(cycleName({ number: 3 })).toBe("Cycle 3");
   });
 });

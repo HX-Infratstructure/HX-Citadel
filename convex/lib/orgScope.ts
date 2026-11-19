@@ -1,0 +1,64 @@
+import { SERVER_ERROR } from "../../lib/api-contract";
+import { Doc, Id } from "../_generated/dataModel";
+import { MutationCtx, QueryCtx } from "../_generated/server";
+import { agentClerkId, ensureAgent, normalizeAgentName } from "./agents";
+import { findMembership, findOrgByClerkId, findUserByClerkId } from "./mirror";
+import { notFound, refusal } from "./refusals";
+
+/** Who acts and in which workspace; the Clerk session and agent calls both resolve to it. */
+export type OrgScope = { org: Doc<"organizations">; actorId: Id<"users"> };
+
+/** The pinned HX workspace, from the server-side `HX_WORKSPACE_ORG_ID` (the Clerk org id); a bad setting is a 500 that names it. */
+export async function resolveWorkspace(ctx: QueryCtx | MutationCtx): Promise<Doc<"organizations">> {
+  const clerkOrgId = process.env.HX_WORKSPACE_ORG_ID;
+  if (!clerkOrgId) {
+    refusal(SERVER_ERROR, "HX_WORKSPACE_ORG_ID is not configured");
+  }
+  const org = await findOrgByClerkId(ctx, clerkOrgId);
+  if (org === null) {
+    refusal(SERVER_ERROR, "HX_WORKSPACE_ORG_ID matches no workspace");
+  }
+  return org;
+}
+
+/** A read names its agent too; the name is checked, but no row is written. */
+export async function resolveAgentReadScope(
+  ctx: QueryCtx,
+  agentName: string
+): Promise<Doc<"organizations">> {
+  normalizeAgentName(agentName);
+  return await resolveWorkspace(ctx);
+}
+
+/** A write creates the agent on its first call and reuses it after, inside the same mutation. */
+export async function resolveAgentScope(ctx: MutationCtx, agentName: string): Promise<OrgScope> {
+  const org = await resolveWorkspace(ctx);
+  const actorId = await ensureAgent(ctx, org._id, agentName);
+  return { org, actorId };
+}
+
+/** The agent's user id when it is already a workspace member, otherwise null; never creates one. */
+export async function findAgentMember(
+  ctx: QueryCtx | MutationCtx,
+  orgId: Id<"organizations">,
+  name: string
+): Promise<Id<"users"> | null> {
+  const user = await findUserByClerkId(ctx, agentClerkId(name));
+  if (!user || !(await findMembership(ctx, orgId, user._id))) {
+    return null;
+  }
+  return user._id;
+}
+
+/** An assignee named in an agent call must already be an agent in the workspace; it is never created here. */
+export async function resolveAgentAssignee(
+  ctx: QueryCtx | MutationCtx,
+  orgId: Id<"organizations">,
+  name: string
+): Promise<Id<"users">> {
+  const userId = await findAgentMember(ctx, orgId, name);
+  if (userId === null) {
+    notFound(`Assignee ${name} not found`);
+  }
+  return userId;
+}

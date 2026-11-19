@@ -1,6 +1,7 @@
 "use client";
 
 import { errorMessage } from "@/lib/error-message";
+import { isValidTeamKey, normalizeTeamKey, suggestTeamKey, TEAM_KEY_RULE } from "@/lib/issue-key";
 import { useMutation } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -16,17 +17,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-function suggestKey(name: string): string {
-  return name
-    .replace(/[^a-zA-Z0-9 ]/g, "")
-    .split(" ")
-    .filter(Boolean)
-    .map((word) => word[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 5);
-}
-
 export function CreateTeamDialog({
   open,
   onOpenChange,
@@ -39,21 +29,23 @@ export function CreateTeamDialog({
   const [key, setKey] = useState("");
   const [keyTouched, setKeyTouched] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const normalizedKey = normalizeTeamKey(key);
+  const keyValid = isValidTeamKey(normalizedKey);
 
   const handleNameChange = (value: string) => {
     setName(value);
     if (!keyTouched) {
-      setKey(suggestKey(value));
+      setKey(suggestTeamKey(value));
     }
   };
 
   const handleSubmit = async () => {
-    if (!name.trim() || !key.trim()) {
+    if (!name.trim() || !keyValid) {
       return;
     }
     setSubmitting(true);
     try {
-      await createTeam({ name, key });
+      await createTeam({ name, key: normalizedKey });
       toast.success(`Team ${name} created`);
       onOpenChange(false);
       setName("");
@@ -101,8 +93,9 @@ export function CreateTeamDialog({
               }}
             />
             <p className="text-xs text-muted-foreground">
-              Issues will be numbered {key || "ENG"}-1, {key || "ENG"}-2, …
+              Issues will be numbered {normalizedKey || "ENG"}-1, {normalizedKey || "ENG"}-2, …
             </p>
+            {key && !keyValid && <p className="text-xs text-destructive">{TEAM_KEY_RULE}</p>}
           </div>
         </div>
         <div className="flex justify-end gap-2">
@@ -111,7 +104,7 @@ export function CreateTeamDialog({
           </Button>
           <Button
             size="sm"
-            disabled={!name.trim() || !key.trim() || submitting}
+            disabled={!name.trim() || !keyValid || submitting}
             onClick={() => void handleSubmit()}
           >
             Create team

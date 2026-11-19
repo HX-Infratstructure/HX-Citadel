@@ -1,7 +1,8 @@
 "use client";
 
+import { ATTACHMENT_TOO_LARGE, MAX_ATTACHMENT_BYTES } from "@/lib/api-contract";
 import { errorMessage } from "@/lib/error-message";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, usePaginatedQuery } from "convex/react";
 import {
   FileText,
   Image as ImageIcon,
@@ -18,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { formatFileSize } from "@/components/issue-detail/format";
 import { IssueDetailSlotProps } from "@/components/issue-detail/slots";
 
-const MAX_FILE_BYTES = 25 * 1024 * 1024;
+const PAGE_SIZE = 50;
 
 function fileIcon(fileType: string) {
   if (fileType.startsWith("image/")) {
@@ -35,9 +36,11 @@ function fileIcon(fileType: string) {
 }
 
 export function AttachmentsPanel({ issue }: IssueDetailSlotProps) {
-  const attachments = useQuery(api.attachments.listByIssue, {
-    issueId: issue._id,
-  });
+  const { results: attachments, status, loadMore } = usePaginatedQuery(
+    api.attachments.listByIssue,
+    { issueId: issue._id },
+    { initialNumItems: PAGE_SIZE }
+  );
   const generateUploadUrl = useMutation(api.attachments.generateUploadUrl);
   const createAttachment = useMutation(api.attachments.create);
   const removeAttachment = useMutation(api.attachments.remove);
@@ -49,8 +52,8 @@ export function AttachmentsPanel({ issue }: IssueDetailSlotProps) {
     setUploading(true);
     try {
       for (const file of Array.from(files)) {
-        if (file.size > MAX_FILE_BYTES) {
-          toast.error(`${file.name} is larger than 25 MB`);
+        if (file.size > MAX_ATTACHMENT_BYTES) {
+          toast.error(`${file.name}: ${ATTACHMENT_TOO_LARGE}`);
           continue;
         }
         const fileType = file.type || "application/octet-stream";
@@ -127,7 +130,7 @@ export function AttachmentsPanel({ issue }: IssueDetailSlotProps) {
         />
       </div>
 
-      {attachments && attachments.length > 0 ? (
+      {attachments.length > 0 ? (
         <div className="flex flex-col pt-1">
           {attachments.map((attachment) => {
             const Icon = fileIcon(attachment.fileType);
@@ -170,6 +173,17 @@ export function AttachmentsPanel({ issue }: IssueDetailSlotProps) {
         </div>
       ) : (
         <p className="pt-1 text-xs text-muted-foreground/60">No attachments</p>
+      )}
+      {(status === "CanLoadMore" || status === "LoadingMore") && (
+        <Button
+          variant="ghost"
+          size="xs"
+          disabled={status === "LoadingMore"}
+          onClick={() => loadMore(PAGE_SIZE)}
+          className="-mx-1 mt-1 text-muted-foreground"
+        >
+          Load more
+        </Button>
       )}
     </section>
   );

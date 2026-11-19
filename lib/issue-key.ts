@@ -60,24 +60,6 @@ export type KeyedIssue = {
   subNumber?: number;
 };
 
-function storyKey(teamKey: string, number: number | undefined): string | null {
-  if (number === undefined) {
-    return null;
-  }
-  return `${teamKey}-${number}`;
-}
-
-function subtaskKey(
-  teamKey: string,
-  parentNumber: number | undefined,
-  subNumber: number | undefined
-): string | null {
-  if (parentNumber === undefined || subNumber === undefined) {
-    return null;
-  }
-  return `${teamKey}-${parentNumber}.${subNumber}`;
-}
-
 const HAS_DISPLAY_KEY: Record<IssueKind, boolean> = {
   epic: false,
   feature: false,
@@ -98,10 +80,63 @@ export function formatIssueKey(
 ): string | null {
   switch (issue.kind) {
     case "story":
-      return storyKey(teamKey, issue.number);
+      return issue.number === undefined ? null : formatParsedKey({ teamKey, number: issue.number });
     case "subtask":
-      return subtaskKey(teamKey, parentNumber, issue.subNumber);
+      return parentNumber === undefined || issue.subNumber === undefined
+        ? null
+        : formatParsedKey({ teamKey, number: parentNumber, subNumber: issue.subNumber });
     default:
       return null;
   }
+}
+
+/** A team key: 1-5 upper-case letters and digits, starting with a letter. */
+const TEAM_KEY_PATTERN = "[A-Z][A-Z0-9]{0,4}";
+
+const TEAM_KEY = new RegExp(`^${TEAM_KEY_PATTERN}$`);
+
+export const TEAM_KEY_RULE = "Team key must be 1-5 characters, letters and digits, starting with a letter";
+
+export function isValidTeamKey(key: string): boolean {
+  return TEAM_KEY.test(key);
+}
+
+/** The stored form of a typed team key: trimmed and upper-case, so "eng" names ENG. */
+export function normalizeTeamKey(key: string): string {
+  return key.trim().toUpperCase();
+}
+
+/** A valid team key from a team name's word initials, or "" when the name has no letter to start one. */
+export function suggestTeamKey(name: string): string {
+  return name
+    .replace(/[^a-zA-Z0-9 ]/g, "")
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word[0])
+    .join("")
+    .toUpperCase()
+    .replace(/^[0-9]+/, "")
+    .slice(0, 5);
+}
+
+export type ParsedIssueKey = { teamKey: string; number: number; subNumber?: number };
+
+const ISSUE_KEY = new RegExp(`^(${TEAM_KEY_PATTERN})-(\\d+)(?:\\.(\\d+))?$`, "i");
+
+/** Reads KEY-12 or KEY-12.3, in any case, with leading zeros, and with whitespace around it; else null. */
+export function parseIssueKey(key: string): ParsedIssueKey | null {
+  const match = ISSUE_KEY.exec(key.trim());
+  if (match === null) {
+    return null;
+  }
+  const parsed: ParsedIssueKey = { teamKey: match[1].toUpperCase(), number: Number(match[2]) };
+  if (match[3] !== undefined) {
+    parsed.subNumber = Number(match[3]);
+  }
+  return parsed;
+}
+
+/** KEY-12, or KEY-12.3 with a sub-number: the one place an issue key is written. */
+export function formatParsedKey({ teamKey, number, subNumber }: ParsedIssueKey): string {
+  return subNumber === undefined ? `${teamKey}-${number}` : `${teamKey}-${number}.${subNumber}`;
 }
