@@ -2,7 +2,7 @@ import { CollisionDetection } from "@dnd-kit/core";
 import { describe, expect, it } from "vitest";
 import type { Id } from "@/convex/_generated/dataModel";
 import { fakeLocalStore } from "@/components/fake-local-store";
-import { SORT_GAP } from "@/lib/sort-order";
+import { NO_ROOM_TO_PLACE, SORT_GAP } from "@/lib/sort-order";
 import { moveRank, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
 
 const stories = [
@@ -56,25 +56,50 @@ describe("rankAnnouncements", () => {
       "Login page stays at position 1 of 3. Load more to place it here."
     );
   });
+
+  it("says the story stays put when it is dropped into a gap with no room, with every story loaded", () => {
+    const crowded = [{ ...stories[0], sortOrder: 2000 }, { ...stories[1], sortOrder: 900 }, { ...stories[2], sortOrder: 899.9999999999999 }];
+    expect(rankAnnouncements(crowded, false).onDragEnd({ active: { id: "id-a" }, over: { id: "id-b" } })).toBe(
+      `Login page stays at position 1 of 3. ${NO_ROOM_TO_PLACE}`
+    );
+  });
 });
 
 describe("moveRank", () => {
   it("refuses a move to the bottom while more of the backlog is to load", () => {
-    expect(moveRank(stories, 0, 2, true)).toEqual({ refused: true });
+    expect(moveRank({ stories, from: 0, to: 2, moreToLoad: true })).toEqual({ refused: "loadMore" });
   });
 
   it("ranks a move between loaded stories while more is to load", () => {
-    expect(moveRank(stories, 2, 0, true)).toEqual({ sortOrder: 30 + SORT_GAP });
-    expect(moveRank(stories, 2, 1, true)).toEqual({ sortOrder: 25 });
+    expect(moveRank({ stories, from: 2, to: 0, moreToLoad: true })).toEqual({ sortOrder: 30 + SORT_GAP });
+    expect(moveRank({ stories, from: 2, to: 1, moreToLoad: true })).toEqual({ sortOrder: 25 });
   });
 
   it("refuses a move between two stories tied at the lowest loaded rank while more is to load", () => {
     const tied = [stories[0], { ...stories[1], sortOrder: 10, _creationTime: 1 }, stories[2]];
-    expect(moveRank(tied, 0, 1, true)).toEqual({ refused: true });
+    expect(moveRank({ stories: tied, from: 0, to: 1, moreToLoad: true })).toEqual({ refused: "loadMore" });
   });
 
   it("ranks a move to the bottom below the last story once the whole backlog is loaded", () => {
-    expect(moveRank(stories, 0, 2, false)).toEqual({ sortOrder: 10 - SORT_GAP });
+    expect(moveRank({ stories, from: 0, to: 2, moreToLoad: false })).toEqual({ sortOrder: 10 - SORT_GAP });
+  });
+
+  const lowest = { _id: "id-d", title: "Search", sortOrder: 5, _creationTime: 0 };
+
+  it("ranks a move between two stories tied above the floor at their shared rank while more is to load", () => {
+    const tied = [stories[0], { ...stories[1], _creationTime: 1 }, { ...stories[2], sortOrder: 20 }, lowest];
+    expect(moveRank({ stories: tied, from: 0, to: 1, moreToLoad: true })).toEqual({ sortOrder: 20 });
+  });
+
+  it.each([
+    ["the midpoint rounds to the upper story", 900, 899.9999999999999],
+    ["the midpoint rounds to the lower story", 900.0000000000001, 900],
+    ["CodeRabbit 4623425278", 1000, 999.9999999999999],
+  ])("refuses a move into a gap with no room, whether or not more is to load: %s", (_, upper, lower) => {
+    const crowded = [{ ...stories[0], sortOrder: 2000 }, { ...stories[1], sortOrder: upper }, { ...stories[2], sortOrder: lower }, lowest];
+    for (const moreToLoad of [true, false]) {
+      expect(moveRank({ stories: crowded, from: 0, to: 1, moreToLoad })).toEqual({ refused: "noRoom" });
+    }
   });
 });
 

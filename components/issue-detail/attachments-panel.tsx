@@ -2,7 +2,7 @@
 
 import { ATTACHMENT_TOO_LARGE, MAX_ATTACHMENT_BYTES } from "@/lib/api-contract";
 import { errorMessage } from "@/lib/error-message";
-import { useMutation } from "convex/react";
+import { useMutation, usePaginatedQuery } from "convex/react";
 import {
   FileText,
   Image as ImageIcon,
@@ -18,8 +18,6 @@ import { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { formatFileSize } from "@/components/issue-detail/format";
 import { IssueDetailSlotProps } from "@/components/issue-detail/slots";
-import { LoadMoreButton } from "@/components/shared/load-more-button";
-import { usePagedList } from "@/components/shared/use-paged-list";
 
 const PAGE_SIZE = 50;
 
@@ -38,10 +36,10 @@ function fileIcon(fileType: string) {
 }
 
 export function AttachmentsPanel({ issue }: IssueDetailSlotProps) {
-  const { results: attachments, paging } = usePagedList(
+  const { results: attachments, status, loadMore } = usePaginatedQuery(
     api.attachments.listByIssue,
     { issueId: issue._id },
-    PAGE_SIZE
+    { initialNumItems: PAGE_SIZE }
   );
   const generateUploadUrl = useMutation(api.attachments.generateUploadUrl);
   const createAttachment = useMutation(api.attachments.create);
@@ -176,7 +174,17 @@ export function AttachmentsPanel({ issue }: IssueDetailSlotProps) {
       ) : (
         <p className="pt-1 text-xs text-muted-foreground/60">No attachments</p>
       )}
-      <LoadMoreButton paging={paging} className="-mx-1 mt-1" />
+      {(status === "CanLoadMore" || status === "LoadingMore") && (
+        <Button
+          variant="ghost"
+          size="xs"
+          disabled={status === "LoadingMore"}
+          onClick={() => loadMore(PAGE_SIZE)}
+          className="-mx-1 mt-1 text-muted-foreground"
+        >
+          Load more
+        </Button>
+      )}
     </section>
   );
 }

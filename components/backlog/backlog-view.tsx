@@ -18,7 +18,7 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import { Doc, Id } from "@/convex/_generated/dataModel";
 import { errorMessage } from "@/lib/error-message";
-import { LOAD_MORE_TO_PLACE } from "@/lib/sort-order";
+import { REFUSAL_MESSAGE } from "@/lib/sort-order";
 import { moveRank, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
 import { BacklogRow } from "./backlog-row";
 
@@ -58,9 +58,9 @@ export function BacklogView({
     if (from === -1 || to === -1) {
       return;
     }
-    const drop = moveRank(issues, from, to, moreToLoad);
+    const drop = moveRank({ stories: issues, from, to, moreToLoad });
     if ("refused" in drop) {
-      toast(LOAD_MORE_TO_PLACE);
+      toast(REFUSAL_MESSAGE[drop.refused]);
       return;
     }
     if (drop.sortOrder !== issues[from].sortOrder) {

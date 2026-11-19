@@ -1,7 +1,7 @@
 "use client";
 
 import { errorMessage } from "@/lib/error-message";
-import { LOAD_MORE_TO_PLACE } from "@/lib/sort-order";
+import { REFUSAL_MESSAGE } from "@/lib/sort-order";
 import {
   closestCorners,
   DndContext,
@@ -26,7 +26,7 @@ import { Id } from "@/convex/_generated/dataModel";
 import { IssueStatus, STATUSES, TeamIssue } from "@/components/shared/issue-meta";
 import { BoardCardContent, CardAssignee, CardLabel } from "./board-card";
 import { BoardColumn, cardLabels, COLUMN_ID_PREFIX } from "./board-column";
-import { boardColumns, Columns, dropRank, updateBoard } from "./board-dnd";
+import { boardColumns, Columns, dropRank, LoadedOrder, updateBoard } from "./board-dnd";
 
 const STATUS_SET = new Set<string>(STATUSES.map((s) => s.value));
 
@@ -55,14 +55,11 @@ function findContainer(
  * persist through `issues.update` with a fractional sortOrder between the
  * new neighbors, applied optimistically so the realtime query never
  * flickers. `issues` are the filtered loaded pages of the team's list, and
- * `floorRank` is the lowest rank of every loaded issue, unfiltered, and
- * `loadedRanks` holds each one's rank by id.
+ * `loaded` is the order of every loaded issue, unfiltered.
  */
 export function BoardView({
   issues,
-  moreToLoad,
-  floorRank,
-  loadedRanks,
+  loaded,
   teamId,
   teamKey,
   orgSlug,
@@ -70,9 +67,7 @@ export function BoardView({
   assigneesById,
 }: {
   issues: TeamIssue[];
-  moreToLoad: boolean;
-  floorRank: number | undefined;
-  loadedRanks: ReadonlyMap<Id<"issues">, number>;
+  loaded: LoadedOrder;
   teamId: Id<"teams">;
   teamKey: string;
   orgSlug: string;
@@ -225,9 +220,9 @@ export function BoardView({
     if (!statusChanged && serverColumns[activeContainer][index] === activeId) {
       return;
     }
-    const drop = dropRank(column, index, moreToLoad, floorRank, loadedRanks, statusChanged);
+    const drop = dropRank({ column, index, loaded, fromOtherColumn: statusChanged });
     if ("refused" in drop) {
-      toast(LOAD_MORE_TO_PLACE);
+      toast(REFUSAL_MESSAGE[drop.refused]);
       return;
     }
     const { sortOrder } = drop;
@@ -271,7 +266,7 @@ export function BoardView({
             issues={columns[value]
               .map((id) => issueById.get(id))
               .filter((issue): issue is TeamIssue => issue !== undefined)}
-            moreToLoad={moreToLoad}
+            moreToLoad={loaded.moreToLoad}
             teamId={teamId}
             teamKey={teamKey}
             labelsById={labelsById}

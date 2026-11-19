@@ -29,27 +29,26 @@ export function boardColumns(issues: Card[]): Columns {
   return columns;
 }
 
+/** The loaded part of the team's rank order, whatever the filter. Every issue not loaded yet ranks at or below `floor`. */
+export type LoadedOrder = { floor: number | undefined; moreToLoad: boolean };
+
 /**
  * The rank for the card at `index` of `column`, the target column's loaded cards in order with the card in place.
- * `floor` is the lowest rank of all the team's loaded issues, whatever the filter, and `loadedRanks` holds each one's
- * rank by id. A card alone in its column keeps its rank.
+ * A card alone in its column keeps its rank.
  * A card moved in from another column keeps its rank where its spot can't be ranked: its status still changes, and an
  * unchanged rank never makes the server re-space a tie.
  */
-export function dropRank(
-  column: Card[],
-  index: number,
-  moreToLoad: boolean,
-  floor: number | undefined,
-  loadedRanks: ReadonlyMap<Id<"issues">, number>,
-  fromOtherColumn: boolean
-) {
+export function dropRank({ column, index, loaded, fromOtherColumn }: {
+  column: Card[];
+  index: number;
+  loaded: LoadedOrder;
+  fromOtherColumn: boolean;
+}) {
   const card = column[index];
   if (column.length === 1) {
     return { sortOrder: card.sortOrder };
   }
-  const taken = new Set([...loadedRanks].flatMap(([id, rank]) => (id === card._id ? [] : [rank])));
-  const drop = rankInLoaded({ above: column[index - 1]?.sortOrder, below: column[index + 1]?.sortOrder, floor, taken, moreToLoad });
+  const drop = rankInLoaded({ above: column[index - 1]?.sortOrder, below: column[index + 1]?.sortOrder, ...loaded });
   return "refused" in drop && fromOtherColumn ? { sortOrder: card.sortOrder } : drop;
 }
 

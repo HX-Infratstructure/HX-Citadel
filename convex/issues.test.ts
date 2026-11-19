@@ -4,7 +4,7 @@ import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
-import { LIST_LIMIT, PAGE_READ_ROWS } from "./issues";
+import { LIST_LIMIT, PAGE_READ_ROWS, PINNED_PAGE_MAX_ROWS } from "./issues";
 import schema from "./schema";
 import { writeHeaders } from "./workspace.fixture";
 
@@ -530,6 +530,22 @@ describe("issues.update with an unchanged project", () => {
   });
 });
 
+/** Stories in To Do at the given ranks, inserted in order, so each is newer than the one before. */
+async function storiesAt(t: Setup["t"], teamId: Id<"teams">, memberId: Id<"users">, ranks: Record<string, number>) {
+  return await t.run(async (ctx) => {
+    const { orgId } = (await ctx.db.get(teamId))!;
+    const story = { orgId, teamId, kind: "story", status: "todo", priority: "none", creatorId: memberId } as const;
+    const ids: Record<string, Id<"issues">> = {};
+    for (const [title, sortOrder] of Object.entries(ranks)) {
+      ids[title] = await ctx.db.insert("issues", { ...story, title, sortOrder });
+    }
+    return ids;
+  });
+}
+
+const ranksOf = (t: Setup["t"], ids: Id<"issues">[]) =>
+  t.run(async (ctx) => Promise.all(ids.map(async (id) => (await ctx.db.get(id))!.sortOrder)));
+
 describe("issue ranking", () => {
   test("ranks each new issue above the highest rank, even one re-ranked after it was created", async () => {
     const { t, teamId } = await setup();
@@ -548,62 +564,94 @@ describe("issue ranking", () => {
     expect(await rank(second)).toBeGreaterThan(await rank(first));
   });
 
-  test("moving a story between two tied neighbours lands strictly between them", async () => {
+  test("moving a story between two tied neighbours lands strictly between them, the pair in the order the list shows", async () => {
     const { t, teamId, memberId } = await setup();
     const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
-    const { above, below, moved } = await t.run(async (ctx) => {
-      const team = await ctx.db.get(teamId);
-      const story = {
-        orgId: team!.orgId,
-        teamId,
-        kind: "story",
-        status: "todo",
-        priority: "none",
-        creatorId: memberId,
-      } as const;
-      return {
-        above: await ctx.db.insert("issues", { ...story, title: "Above", sortOrder: 5000 }),
-        below: await ctx.db.insert("issues", { ...story, title: "Below", sortOrder: 5000 }),
-        moved: await ctx.db.insert("issues", { ...story, title: "Moved", sortOrder: 1000 }),
-      };
-    });
+    const { older, newer, moved } = await storiesAt(t, teamId, memberId, { older: 5000, newer: 5000, moved: 1000 });
+    const { page: before } = await asMember.query(api.issues.listBacklog, { teamId, paginationOpts: FIRST_PAGE });
+    expect(before.map((issue) => issue._id)).toEqual([newer, older, moved]);
 
     await asMember.mutation(api.issues.update, { issueId: moved, sortOrder: 5000 });
 
     const { page: backlog } = await asMember.query(api.issues.listBacklog, { teamId, paginationOpts: FIRST_PAGE });
-    const ranks = backlog.map((issue) => issue.sortOrder);
-    expect(new Set(ranks).size).toBe(3);
-    expect(backlog.map((issue) => issue._id)).toEqual([above, moved, below]);
+    expect(new Set(backlog.map((issue) => issue.sortOrder)).size).toBe(3);
+    expect(backlog.map((issue) => issue._id)).toEqual([newer, moved, older]);
   });
 
-  test("moving a story into a tie whose gap to the next rank holds no new number re-spaces the rows below", async () => {
+  test("moving a story into a tie whose gap to the next higher rank holds no new number widens the run upward", async () => {
     const { t, teamId, memberId } = await setup();
     const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
-    const { above, lower, bottom, moved } = await t.run(async (ctx) => {
-      const team = await ctx.db.get(teamId);
-      const story = {
-        orgId: team!.orgId,
-        teamId,
-        kind: "story",
-        status: "todo",
-        priority: "none",
-        creatorId: memberId,
-      } as const;
-      return {
-        above: await ctx.db.insert("issues", { ...story, title: "Above", sortOrder: 1000 }),
-        lower: await ctx.db.insert("issues", { ...story, title: "Lower", sortOrder: 999.9999999999999 }),
-        bottom: await ctx.db.insert("issues", { ...story, title: "Bottom", sortOrder: 0 }),
-        moved: await ctx.db.insert("issues", { ...story, title: "Moved", sortOrder: -5000 }),
-      };
+    const rows = await storiesAt(t, teamId, memberId, {
+      top: 2000,
+      up2: 1000.0000000000002,
+      up1: 1000.0000000000001,
+      tie: 1000,
+      bottom: 0,
+      moved: -5000,
     });
 
-    await asMember.mutation(api.issues.update, { issueId: moved, sortOrder: 1000 });
+    await asMember.mutation(api.issues.update, { issueId: rows.moved, sortOrder: 1000 });
 
     const { page: backlog } = await asMember.query(api.issues.listBacklog, { teamId, paginationOpts: FIRST_PAGE });
     const ranks = backlog.map((issue) => issue.sortOrder);
-    expect(new Set(ranks).size).toBe(4);
-    expect(backlog.map((issue) => issue._id)).toEqual([above, moved, lower, bottom]);
-    expect(ranks.at(-1)).toBe(0);
+    expect(new Set(ranks).size).toBe(6);
+    expect(backlog.map((issue) => issue._id)).toEqual([rows.top, rows.up2, rows.up1, rows.tie, rows.moved, rows.bottom]);
+    expect(await ranksOf(t, [rows.top, rows.moved, rows.bottom])).toEqual([2000, 1000, 0]);
+  });
+
+});
+
+describe("a tie repair goes upward and keeps the order the list shows", () => {
+  test("a story dropped between a story and its testing sub-task, tied at one rank, lands between them with the pair in order", async () => {
+    const { t, teamId } = await setup();
+    const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+    const story = await asMember.mutation(api.issues.create, { teamId, title: "S", kind: "story" });
+    const dropped = await asMember.mutation(api.issues.create, { teamId, title: "X", kind: "story" });
+    const { page: before } = await asMember.query(api.issues.listByTeam, { teamId, paginationOpts: FIRST_PAGE });
+    const testing = before.find((issue) => issue.parentIssueId === story)!._id;
+    const tie = before.find((issue) => issue._id === story)!.sortOrder;
+
+    await asMember.mutation(api.issues.update, { issueId: dropped, sortOrder: tie });
+
+    const { page } = await asMember.query(api.issues.listByTeam, { teamId, paginationOpts: FIRST_PAGE });
+    const order = page.map((issue) => issue._id).filter((id) => [story, testing, dropped].includes(id));
+    expect(order).toEqual([testing, dropped, story]);
+    expect(Math.min(...page.map((issue) => issue.sortOrder))).toBeGreaterThanOrEqual(tie);
+  });
+
+  test("a story moved into a tie of three lands inside the tied run, which keeps its order above the tie", async () => {
+    const { t, teamId, memberId } = await setup();
+    const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+    const { first, second, third, moved } = await storiesAt(t, teamId, memberId, { first: 5000, second: 5000, third: 5000, moved: 1000 });
+
+    await asMember.mutation(api.issues.update, { issueId: moved, sortOrder: 5000 });
+
+    const { page: backlog } = await asMember.query(api.issues.listBacklog, { teamId, paginationOpts: FIRST_PAGE });
+    expect(backlog.map((issue) => issue._id)).toEqual([third, second, moved, first]);
+    expect(Math.min(...(await ranksOf(t, [first, second, third, moved])))).toBe(5000);
+  });
+
+  test("a tie repair leaves a row of another workspace that names the team untouched, and spaces within the team's own gap", async () => {
+    const { t, teamId, memberId } = await setup();
+    const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+    const rows = await storiesAt(t, teamId, memberId, { top: 7000, older: 5000, newer: 5000, moved: 1000 });
+    const foreign = await t.run(async (ctx) => {
+      const orgId = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
+      const fields = { orgId, teamId, kind: "story", status: "todo", priority: "none", creatorId: memberId } as const;
+      return await ctx.db.insert("issues", { ...fields, title: "Foreign", sortOrder: 5500 });
+    });
+    const foreignBefore = await t.run((ctx) => ctx.db.get(foreign));
+
+    await asMember.mutation(api.issues.update, { issueId: rows.moved, sortOrder: 5000 });
+
+    expect(await t.run((ctx) => ctx.db.get(foreign))).toEqual(foreignBefore);
+    const [newer, moved, older] = await ranksOf(t, [rows.newer, rows.moved, rows.older]);
+    expect(newer).toBeGreaterThan(5500);
+    expect([newer > moved, moved > older, older === 5000]).toEqual([true, true, true]);
+  });
+
+  test("a pinned listByTeam page of twice LIST_LIMIT issues, each at the label cap, reads inside Convex's document limit", () => {
+    expect(PINNED_PAGE_MAX_ROWS).toBeGreaterThanOrEqual(2 * LIST_LIMIT);
   });
 });
 

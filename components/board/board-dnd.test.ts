@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { IssueStatus } from "@/components/shared/issue-meta";
 import { fakeLocalStore } from "@/components/fake-local-store";
-import { byRank, SORT_GAP } from "@/lib/sort-order";
+import { byRank, LOAD_MORE_TO_PLACE, NO_ROOM_TO_PLACE, REFUSAL_MESSAGE, SORT_GAP } from "@/lib/sort-order";
 import { boardColumns, dropRank, updateBoard } from "./board-dnd";
 
 const card = (id: string, status: IssueStatus, sortOrder: number, _creationTime = 0) => ({
@@ -17,70 +17,92 @@ const B = card("B", "todo", 20);
 const C = card("C", "todo", 10);
 const X = card("X", "in_progress", 5);
 
-const ranksOf = (cards: ReturnType<typeof card>[]) => new Map(cards.map((issue) => [issue._id, issue.sortOrder]));
+const more = (floor: number) => ({ floor, moreToLoad: true });
+const allLoaded = (floor: number) => ({ floor, moreToLoad: false });
 
 describe("dropRank", () => {
   it("ranks a drop between two cards at the mean of their ranks", () => {
-    expect(dropRank([A, X, B], 1, true, 5, ranksOf([A, X, B]), true)).toEqual({ sortOrder: 25 });
+    expect(dropRank({ column: [A, X, B], index: 1, loaded: more(5), fromOtherColumn: true })).toEqual({ sortOrder: 25 });
   });
 
   it("ranks a drop at the top above the top card", () => {
-    expect(dropRank([X, A, B], 0, true, 5, ranksOf([X, A, B]), true)).toEqual({ sortOrder: 30 + SORT_GAP });
+    expect(dropRank({ column: [X, A, B], index: 0, loaded: more(5), fromOtherColumn: true })).toEqual({ sortOrder: 30 + SORT_GAP });
   });
 
   it("ranks a drop at the bottom below the bottom card once every page is loaded", () => {
-    expect(dropRank([A, B, X], 2, false, 5, ranksOf([A, B, X]), true)).toEqual({ sortOrder: 20 - SORT_GAP });
+    expect(dropRank({ column: [A, B, X], index: 2, loaded: allLoaded(5), fromOtherColumn: true })).toEqual({ sortOrder: 20 - SORT_GAP });
   });
 
   it("keeps the card's rank in an empty column", () => {
-    expect(dropRank([X], 0, false, 5, ranksOf([X]), true)).toEqual({ sortOrder: 5 });
-    expect(dropRank([X], 0, true, 5, ranksOf([X]), true)).toEqual({ sortOrder: 5 });
+    expect(dropRank({ column: [X], index: 0, loaded: allLoaded(5), fromOtherColumn: true })).toEqual({ sortOrder: 5 });
+    expect(dropRank({ column: [X], index: 0, loaded: more(5), fromOtherColumn: true })).toEqual({ sortOrder: 5 });
   });
 
   it("lands a drop at the bottom of a column between the bottom card and the floor while more is to load", () => {
-    expect(dropRank([A, B, X], 2, true, 5, ranksOf([A, B, X]), true)).toEqual({ sortOrder: 12.5 });
-    expect(dropRank([B, C, A], 2, true, 5, ranksOf([A, B, C, X]), false)).toEqual({ sortOrder: 7.5 });
+    expect(dropRank({ column: [A, B, X], index: 2, loaded: more(5), fromOtherColumn: true })).toEqual({ sortOrder: 12.5 });
+    expect(dropRank({ column: [B, C, A], index: 2, loaded: more(5), fromOtherColumn: false })).toEqual({ sortOrder: 7.5 });
   });
 
   it("refuses a drop at the bottom of a column whose bottom card is the floor while more is to load", () => {
-    expect(dropRank([B, C, A], 2, true, 10, ranksOf([A, B, C]), false)).toEqual({ refused: true });
+    expect(dropRank({ column: [B, C, A], index: 2, loaded: more(10), fromOtherColumn: false })).toEqual({ refused: "loadMore" });
   });
 
   it("refuses a move within a column between two cards tied at the floor while more is to load", () => {
-    const subtask = card("T2", "todo", 10, 2);
-    const story = card("T1", "todo", 10, 1);
-    const moved = card("M", "todo", 50);
-    expect(dropRank([A, subtask, moved, story], 2, true, 10, ranksOf([A, subtask, moved, story]), false)).toEqual({ refused: true });
+    const column = [A, card("T2", "todo", 10, 2), card("M", "todo", 50), card("T1", "todo", 10, 1)];
+    expect(dropRank({ column, index: 2, loaded: more(10), fromOtherColumn: false })).toEqual({ refused: "loadMore" });
   });
 
   it("keeps the rank of a card moved in from another column onto a spot that can't be ranked, so its status still changes", () => {
-    const subtask = card("T2", "todo", 10, 2);
-    const story = card("T1", "todo", 10, 1);
     const moved = card("M", "in_progress", 50);
-    expect(dropRank([A, subtask, moved, story], 2, true, 10, ranksOf([A, subtask, moved, story]), true)).toEqual({ sortOrder: 50 });
-    expect(dropRank([B, C, moved], 2, true, 10, ranksOf([B, C, moved]), true)).toEqual({ sortOrder: 50 });
+    const column = [A, card("T2", "todo", 10, 2), moved, card("T1", "todo", 10, 1)];
+    expect(dropRank({ column, index: 2, loaded: more(10), fromOtherColumn: true })).toEqual({ sortOrder: 50 });
+    expect(dropRank({ column: [B, C, moved], index: 2, loaded: more(10), fromOtherColumn: true })).toEqual({ sortOrder: 50 });
   });
 
-  it("refuses a move within a column whose midpoint ties a loaded card in another column while more is to load (CodeRabbit 4623501051)", () => {
+  it("places a move at a midpoint that a card in another column holds (CodeRabbit 4623501051)", () => {
     const x = card("X", "todo", 1000.0000000000001);
-    const b = card("B", "in_progress", 1000);
-    const d = card("D", "backlog", 999.9999999999999);
-    const moved = card("M", "todo", 2000);
-    const loaded = ranksOf([moved, x, b, d]);
-    expect(dropRank([x, moved], 1, true, d.sortOrder, loaded, false)).toEqual({ refused: true });
-    const fromOther = card("M", "done", 2000);
-    expect(dropRank([x, fromOther], 1, true, d.sortOrder, loaded, true)).toEqual({ sortOrder: 2000 });
-  });
-
-  it("counts a loaded card that shares the moved card's rank as taken", () => {
-    const moved = card("M", "todo", 20);
-    const subtask = card("S", "in_progress", 20);
-    expect(dropRank([A, moved, C], 1, true, 10, ranksOf([A, moved, C, subtask]), false)).toEqual({ refused: true });
-    expect(dropRank([A, moved, C], 1, true, 10, ranksOf([A, moved, C]), false)).toEqual({ sortOrder: 20 });
+    const floor = 999.9999999999999;
+    expect(dropRank({ column: [x, card("M", "todo", 2000)], index: 1, loaded: more(floor), fromOtherColumn: false })).toEqual({ sortOrder: 1000 });
+    expect(dropRank({ column: [x, card("M", "done", 2000)], index: 1, loaded: more(floor), fromOtherColumn: true })).toEqual({ sortOrder: 1000 });
   });
 
   it("reorders within the card's own column between loaded cards while more is to load", () => {
-    expect(dropRank([B, A, C], 1, true, 10, ranksOf([A, B, C]), false)).toEqual({ sortOrder: 15 });
+    expect(dropRank({ column: [B, A, C], index: 1, loaded: more(10), fromOtherColumn: false })).toEqual({ sortOrder: 15 });
+  });
+});
+
+describe("dropRank at a tie or a gap with no room", () => {
+  it("places the grid drop at 299000 between S300 and S298, the rank of S299 and its testing sub-task in other columns", () => {
+    const top = card("S300", "in_progress", 300000);
+    const bottom = card("S298", "in_progress", 298000);
+    const loaded = more(51000);
+    expect(dropRank({ column: [top, card("S290", "in_progress", 290000), bottom], index: 1, loaded, fromOtherColumn: false })).toEqual({ sortOrder: 299000 });
+    expect(dropRank({ column: [top, card("S297", "done", 297000), bottom], index: 1, loaded, fromOtherColumn: true })).toEqual({ sortOrder: 299000 });
+  });
+
+  it("places a drop between two cards tied above the floor at their shared rank", () => {
+    const column = [card("T", "todo", 20, 2), card("M", "todo", 50), card("S", "todo", 20, 1), C];
+    expect(dropRank({ column, index: 1, loaded: more(10), fromOtherColumn: false })).toEqual({ sortOrder: 20 });
+  });
+
+  it.each([
+    ["the midpoint rounds to the upper card", 900, 899.9999999999999],
+    ["the midpoint rounds to the lower card", 900.0000000000001, 900],
+    ["CodeRabbit 4623425278", 1000, 999.9999999999999],
+  ])("refuses a drop into a gap with no room, loaded or not, and keeps a card from another column at its rank: %s", (_, upper, lower) => {
+    const column = [card("U", "todo", upper), card("M", "todo", 2000), card("L", "todo", lower)];
+    for (const loaded of [more(10), allLoaded(10)]) {
+      expect(dropRank({ column, index: 1, loaded, fromOtherColumn: false })).toEqual({ refused: "noRoom" });
+      expect(dropRank({ column, index: 1, loaded, fromOtherColumn: true })).toEqual({ sortOrder: 2000 });
+    }
+  });
+
+  it("tells the user to load more, or that the gap has no room, by the refusal's reason", () => {
+    const message = (drop: ReturnType<typeof dropRank>) => ("refused" in drop ? REFUSAL_MESSAGE[drop.refused] : undefined);
+    const noRoom = [card("U", "todo", 900), card("M", "todo", 2000), card("L", "todo", 899.9999999999999)];
+    expect(message(dropRank({ column: [B, C, A], index: 2, loaded: more(10), fromOtherColumn: false }))).toBe("Load more to place it here.");
+    expect(message(dropRank({ column: noRoom, index: 1, loaded: allLoaded(10), fromOtherColumn: false }))).toBe(NO_ROOM_TO_PLACE);
+    expect(NO_ROOM_TO_PLACE).not.toBe(LOAD_MORE_TO_PLACE);
   });
 });
 
@@ -96,7 +118,7 @@ function random(seed: number) {
 const STATUSES: IssueStatus[] = ["backlog", "todo", "in_progress", "done"];
 
 describe("dropRank over a partly loaded board", () => {
-  it("never asks the server to re-space a tie and keeps a moved card on the loaded pages, over 200 random drops", () => {
+  it("places every accepted drop above the floor and between its neighbours, over 200 random drops", () => {
     const next = random(42);
     const pick = <T,>(items: T[]) => items[Math.floor(next() * items.length)];
     const outcomes = { refused: 0, kept: 0, placed: 0 };
@@ -111,7 +133,7 @@ describe("dropRank over a partly loaded board", () => {
       const index = Math.floor(next() * (column.length + 1));
       column.splice(index, 0, moved);
 
-      const drop = dropRank(column, index, true, end.sortOrder, ranksOf(loaded), moved.status !== status);
+      const drop = dropRank({ column, index, loaded: more(end.sortOrder), fromOtherColumn: moved.status !== status });
       if ("refused" in drop) {
         outcomes.refused++;
         continue;
@@ -121,9 +143,11 @@ describe("dropRank over a partly loaded board", () => {
         continue;
       }
       outcomes.placed++;
-      const tied = team.filter((issue) => issue._id !== moved._id && issue.sortOrder === drop.sortOrder);
-      expect(tied, `trial ${trial}: rank ${drop.sortOrder} ties no other issue, so placeRank re-spaces nothing`).toEqual([]);
+      const upper = column[index - 1]?.sortOrder ?? Infinity;
+      const lower = column[index + 1]?.sortOrder ?? end.sortOrder;
+      const between = upper === lower ? drop.sortOrder === upper : lower < drop.sortOrder && drop.sortOrder < upper;
       expect(drop.sortOrder, `trial ${trial}: ${moved._id} ranks above the floor`).toBeGreaterThan(end.sortOrder);
+      expect(between, `trial ${trial}: ${moved._id} ranks between its neighbours ${upper} and ${lower}`).toBe(true);
     }
     expect(outcomes.refused).toBeGreaterThan(0);
     expect(outcomes.kept).toBeGreaterThan(0);
@@ -165,7 +189,7 @@ describe("updateBoard", () => {
     todo.splice(1, 0, "Y" as Id<"issues">);
     const column = todo.map((id) => teamRows().find((issue) => issue._id === id)!);
 
-    const drop = dropRank(column, 1, false, 5, ranksOf(teamRows()), true);
+    const drop = dropRank({ column, index: 1, loaded: allLoaded(5), fromOtherColumn: true });
     expect(drop).toEqual({ sortOrder: 25 });
     updateBoard(localStore, TEAM, { issueId: "Y" as Id<"issues">, status: "todo", sortOrder: 25 });
 

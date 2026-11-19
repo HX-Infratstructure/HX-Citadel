@@ -1,8 +1,10 @@
 import { v } from "convex/values";
+import { MAX_LABELS_PER_ISSUE, TOO_MANY_LABELS } from "../lib/api-contract";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
-import { getOrgIssue, orgIssueLabels } from "./issues";
+import { getOrgIssue } from "./issues";
 import { logActivity } from "./lib/activity";
-import { requireOrgRow } from "./lib/orgRows";
+import { orgRow, requireOrgRow } from "./lib/orgRows";
+import { refuse } from "./lib/refusals";
 
 const labelShape = {
   _id: v.id("labels"),
@@ -40,7 +42,18 @@ export const listForIssue = orgQuery({
   returns: v.array(v.object(labelShape)),
   handler: async (ctx, args) => {
     await getOrgIssue(ctx, ctx.org._id, args.issueId);
-    return await orgIssueLabels(ctx, ctx.org._id)(args.issueId);
+    const links = await ctx.db
+      .query("issueLabels")
+      .withIndex("by_issue", (q) => q.eq("issueId", args.issueId))
+      .collect();
+    const labels = [];
+    for (const link of links) {
+      const label = await orgRow(ctx, ctx.org._id, link.labelId);
+      if (label) {
+        labels.push(label);
+      }
+    }
+    return labels;
   },
 });
 
@@ -67,6 +80,9 @@ export const toggleOnIssue = orgMutation({
       await ctx.db.delete(existing._id);
       await logActivity(ctx, { ...entry, type: "label_removed", oldValue: label.name });
       return false;
+    }
+    if (links.length >= MAX_LABELS_PER_ISSUE) {
+      refuse(TOO_MANY_LABELS);
     }
     await ctx.db.insert("issueLabels", {
       issueId: args.issueId,

@@ -1,6 +1,7 @@
 import { PaginationOptions, paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { ObjectType, v } from "convex/values";
 import { invalid, notFound, refuse } from "./lib/refusals";
+import { MAX_LABELS_PER_ISSUE } from "../lib/api-contract";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
 import { PARENT_KIND } from "../lib/issue-key";
@@ -82,7 +83,10 @@ const OPEN_STATUSES = issueStatusValidator.members
   .map((member) => member.value)
   .filter((status) => !CLOSED_STATUSES.has(status));
 
-/** Rows and bytes one page may read, rows its filter drops included: well inside Convex's 32,000 documents and 16 MiB. */
+/** Convex fails a query or mutation past this many documents read. */
+const CONVEX_DOCUMENT_READS = 32_000;
+
+/** Rows and bytes one page may read, rows its filter drops included: well inside `CONVEX_DOCUMENT_READS` and 16 MiB. */
 export const PAGE_READ_ROWS = 8_000;
 const PAGE_READ_BYTES = 8 * 1024 * 1024;
 
@@ -118,7 +122,7 @@ async function teamIssuesByRank(ctx: { db: QueryCtx["db"] }, orgId: Id<"organiza
  * Reads issues' labels inside the workspace, in link order. A link to a label that is missing or in another
  * workspace is skipped. Each distinct label is read once per reader, so one reader serves a whole page.
  */
-export function orgIssueLabels(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">) {
+function orgIssueLabels(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">) {
   const labels = new Map<Id<"labels">, Promise<Doc<"labels"> | null>>();
   function label(labelId: Id<"labels">) {
     let row = labels.get(labelId);
@@ -161,18 +165,17 @@ export const listBacklog = orgQuery({
 const PAGE_FIXED_READS = 8;
 
 /**
- * The average labels per issue a `listByTeam` page is sized for; nothing caps labels at write time. A page pinned by
- * an end cursor reads its whole interval, ignoring `numItems` and `maximumRowsRead` (convex-backend
+ * The most rows a `listByTeam` page pinned by an end cursor can hold and still read inside `CONVEX_DOCUMENT_READS`.
+ * Such a page reads its whole interval, ignoring `numItems` and `maximumRowsRead` (convex-backend
  * `crates/database/src/query/index_range.rs:168-170`), and `usePaginatedQuery` splits it only above 2 ×
- * `initialNumItems` rows, after a read that returned them. While the browser's page size is at most LIST_LIMIT, a page
- * holds R ≈ 2 × LIST_LIMIT rows over at most PAGE_READ_ROWS + R rows read. `orgIssueLabels` reads one link range per
- * row and each of the page's D distinct labels once. Index ranges: 1 + R + D ≤ 4,096 holds for up to 3,000 distinct
- * labels; a workspace has a few dozen. Documents: PAGE_FIXED_READS + PAGE_READ_ROWS + R + R × L + D ≤ 32,000, with
- * D ≤ R = 2 × LIST_LIMIT, gives L = 21; at L = 21 a page still reads in limits up to R = 1,043, so up to 43 issues can
- * land in a pinned page's range at once before the hook splits it.
+ * `initialNumItems` rows, after a read that returned them, so it grows past 2 × LIST_LIMIT rows before a split; a test
+ * in `issues.test.ts` holds this bound at 2 × LIST_LIMIT or more. It reads
+ * PAGE_FIXED_READS, at most PAGE_READ_ROWS rows its filter drops, and for each row the row itself, its label links
+ * (at most `MAX_LABELS_PER_ISSUE`, enforced when a label is added) and at most one distinct label (`orgIssueLabels`).
+ * Index ranges, 1 + rows + distinct labels, stay inside Convex's 4,096 while a workspace has a few dozen labels.
  */
-export const MAX_AVERAGE_LABELS_PER_ISSUE = Math.floor(
-  (32_000 - PAGE_FIXED_READS - PAGE_READ_ROWS - 4 * LIST_LIMIT) / (2 * LIST_LIMIT)
+export const PINNED_PAGE_MAX_ROWS = Math.floor(
+  (CONVEX_DOCUMENT_READS - PAGE_FIXED_READS - PAGE_READ_ROWS) / (MAX_LABELS_PER_ISSUE + 2)
 );
 
 /**
@@ -403,54 +406,50 @@ async function othersAtRank(
   return atRank.filter((other) => other._id !== issue._id);
 }
 
-/** The team's closest rank below `rank`, if any. */
-async function nextLowerRank(
+/** The team's closest rank above `rank`, if any. */
+async function nextHigherRank(
   ctx: MutationCtx,
   issue: Doc<"issues">,
   rank: number
 ): Promise<number | undefined> {
-  const nextLower = await inOrg(
+  const nextHigher = await inOrg(
     ctx.db
       .query("issues")
-      .withIndex("by_team_and_sort_order", (q) => q.eq("teamId", issue.teamId).lt("sortOrder", rank))
-      .order("desc"),
+      .withIndex("by_team_and_sort_order", (q) => q.eq("teamId", issue.teamId).gt("sortOrder", rank))
+      .order("asc"),
     issue.orgId
   ).first();
-  return nextLower?.sortOrder;
+  return nextHigher?.sortOrder;
 }
 
 /**
- * The rank to store for an issue moved to `rank`. Other issues in the team that
- * already hold `rank` are re-spaced first, in creation order, and the moved
- * issue takes a rank inside their run, so it never ties a neighbour. When the
- * gap to the next lower rank can't hold distinct numbers, the issues at that
- * rank join the run and the gap widens to the rank below them.
+ * The rank to store for an issue moved to `rank`. Other issues in the team that already hold `rank` are re-spaced
+ * upward first (`respaceTie`), and the moved issue takes the middle of their run, so it never ties a neighbour and no
+ * issue ends below `rank`. When the gap to the next higher rank can't hold distinct numbers, the issues at that rank
+ * join the run and the gap widens to the rank above them.
  */
 async function placeRank(
   ctx: MutationCtx,
   issue: Doc<"issues">,
   rank: number
 ): Promise<number> {
-  const tied = await othersAtRank(ctx, issue, rank);
-  if (tied.length === 0) {
+  const run = await othersAtRank(ctx, issue, rank);
+  if (run.length === 0) {
     return rank;
   }
-  const below: Doc<"issues">[] = [];
-  let floor = await nextLowerRank(ctx, issue, rank);
-  let ranks = respaceTie(rank, tied.length, floor, below.length);
-  while (ranks === undefined && floor !== undefined) {
-    below.push(...(await othersAtRank(ctx, issue, floor)));
-    floor = await nextLowerRank(ctx, issue, floor);
-    ranks = respaceTie(rank, tied.length, floor, below.length);
+  let ceiling = await nextHigherRank(ctx, issue, rank);
+  let ranks = respaceTie(rank, run, ceiling);
+  while (ranks === undefined && ceiling !== undefined) {
+    run.push(...(await othersAtRank(ctx, issue, ceiling)));
+    ceiling = await nextHigherRank(ctx, issue, ceiling);
+    ranks = respaceTie(rank, run, ceiling);
   }
   if (ranks === undefined) {
+    // UNVERIFIED: unreachable below 2^62, where a run with no ceiling steps by SORT_GAP, wider than a float's spacing.
     refuse("There is no room to rank this issue here");
   }
-  for (const [index, other] of tied.entries()) {
-    await patchIssue(ctx, other, { sortOrder: ranks.tied[index] });
-  }
-  for (const [index, other] of below.entries()) {
-    await patchIssue(ctx, other, { sortOrder: ranks.below[index] });
+  for (const { row, sortOrder } of ranks.others) {
+    await patchIssue(ctx, row, { sortOrder });
   }
   return ranks.moved;
 }

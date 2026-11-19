@@ -99,13 +99,15 @@ function TeamBoardContent() {
     return map;
   }, [members]);
 
-  // The lowest rank loaded and each loaded rank, over every status and before filtering: each issue not yet loaded
-  // ranks below the floor.
-  const floorRank = issues.reduce<number | undefined>(
-    (floor, issue) => (floor === undefined || issue.sortOrder < floor ? issue.sortOrder : floor),
-    undefined
-  );
-  const loadedRanks = new Map(issues.map((issue) => [issue._id, issue.sortOrder]));
+  // The floor is the lowest rank loaded, over every status and before filtering: each issue not yet loaded ranks at
+  // or below it.
+  const loaded = {
+    floor: issues.reduce<number | undefined>(
+      (floor, issue) => (floor === undefined || issue.sortOrder < floor ? issue.sortOrder : floor),
+      undefined
+    ),
+    moreToLoad: paging.moreToLoad,
+  };
 
   const filteredIssues = useMemo(
     () => issues.filter((issue) => issueMatchesFilters(issue, filters)),
@@ -186,9 +188,7 @@ function TeamBoardContent() {
       {display === "board" ? (
         <BoardView
           issues={filteredIssues}
-          moreToLoad={paging.moreToLoad}
-          floorRank={floorRank}
-          loadedRanks={loadedRanks}
+          loaded={loaded}
           teamId={teamId}
           teamKey={team.key}
           orgSlug={params.orgSlug}

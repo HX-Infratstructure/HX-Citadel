@@ -1,10 +1,11 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { MAX_LABELS_PER_ISSUE } from "../lib/api-contract";
 import { byRank } from "../lib/sort-order";
 import { api } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
-import { LIST_LIMIT, MAX_AVERAGE_LABELS_PER_ISSUE, PAGE_READ_ROWS } from "./issues";
+import { LIST_LIMIT, PAGE_READ_ROWS } from "./issues";
 import schema, { issueStatusValidator } from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -126,14 +127,14 @@ async function seedTeamPastLimit(s: Setup) {
   });
 }
 
-/** `count` issues ranked above every earlier one, each linked to `MAX_AVERAGE_LABELS_PER_ISSUE` of the shared labels. */
+/** `count` issues ranked above every earlier one, each linked to `MAX_LABELS_PER_ISSUE` of the shared labels. */
 async function seedLabelled(s: Setup, labelIds: Id<"labels">[], count: number, firstRank: number) {
   for (let batch = 0; batch < count / 100; batch++) {
     await s.t.run(async (ctx) => {
       for (let i = 0; i < 100; i++) {
         const n = firstRank + batch * 100 + i;
         const issueId = await ctx.db.insert("issues", { ...s.story, orgId: s.orgId, title: `Labelled ${n}`, sortOrder: n });
-        for (let l = 0; l < MAX_AVERAGE_LABELS_PER_ISSUE; l++) {
+        for (let l = 0; l < MAX_LABELS_PER_ISSUE; l++) {
           await ctx.db.insert("issueLabels", { issueId, labelId: labelIds[(n + l) % labelIds.length] });
         }
       }
@@ -169,7 +170,7 @@ describe("issues.listByTeam pages", () => {
     expect(listed[oldestId]).toEqual(labelIds);
   });
 
-  test("a page pinned by its end cursor that grew to twice LIST_LIMIT, MAX_AVERAGE_LABELS_PER_ISSUE links per issue over 50 shared labels, stays inside Convex's transaction limits", async () => {
+  test("a page pinned by its end cursor that grew to twice LIST_LIMIT, MAX_LABELS_PER_ISSUE links per issue over 50 shared labels, stays inside Convex's transaction limits", async () => {
     const s = await setup(true);
     const labelIds = await s.t.run(async (ctx) => {
       const ids = [];
@@ -188,7 +189,7 @@ describe("issues.listByTeam pages", () => {
     });
 
     expect(pinned.page).toHaveLength(2 * LIST_LIMIT);
-    expect(pinned.page.every((issue) => issue.labelIds.length === MAX_AVERAGE_LABELS_PER_ISSUE)).toBe(true);
+    expect(pinned.page.every((issue) => issue.labelIds.length === MAX_LABELS_PER_ISSUE)).toBe(true);
   }, 120_000);
 
   test("the hook's load and split protocol, over byte-heavy rows that make a page SplitRequired, keeps the loaded rows a rank prefix, per status too", async () => {

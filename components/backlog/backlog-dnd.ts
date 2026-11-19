@@ -3,7 +3,7 @@ import { arrayMove } from "@dnd-kit/sortable";
 import type { OptimisticLocalStore } from "convex/browser";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { byRank, LOAD_MORE_TO_PLACE, rankInLoaded } from "@/lib/sort-order";
+import { byRank, rankInLoaded, REFUSAL_MESSAGE } from "@/lib/sort-order";
 
 type RankedIssue = { _id: string; sortOrder: number; _creationTime: number };
 type RankedStory = RankedIssue & { title: string };
@@ -11,17 +11,18 @@ type BacklogUpdate = { issueId: Id<"issues">; sortOrder?: number; cycleId?: Id<"
 type Dragged = { active: { id: UniqueIdentifier } };
 type DraggedOver = Dragged & { over: { id: UniqueIdentifier } | null };
 
-/**
- * The rank for the story moved from index `from` to `to` of the loaded backlog, in rank order; its last story is the floor.
- * The team's issues outside the backlog share its rank order unseen: a tie with one re-spaces only within the gap above the next lower rank, unless that gap has run out of distinct numbers.
- */
-export function moveRank(stories: RankedIssue[], from: number, to: number, moreToLoad: boolean) {
+/** The rank for the story moved from index `from` to `to` of the loaded backlog, in rank order; its last story is the floor. */
+export function moveRank({ stories, from, to, moreToLoad }: {
+  stories: RankedIssue[];
+  from: number;
+  to: number;
+  moreToLoad: boolean;
+}) {
   const moved = arrayMove(stories, from, to);
   return rankInLoaded({
     above: moved[to - 1]?.sortOrder,
     below: moved[to + 1]?.sortOrder,
     floor: stories.at(-1)?.sortOrder,
-    taken: new Set(stories.filter((_, index) => index !== from).map((story) => story.sortOrder)),
     moreToLoad,
   });
 }
@@ -32,10 +33,12 @@ export function rankAnnouncements(stories: RankedStory[], moreToLoad: boolean) {
     stories.find((story) => story._id === id)?.title ?? "Story";
   const index = (id: UniqueIdentifier) => stories.findIndex((story) => story._id === id);
   const position = (id: UniqueIdentifier) => `position ${index(id) + 1} of ${stories.length}`;
-  const dropped = (active: UniqueIdentifier, over: UniqueIdentifier) =>
-    "refused" in moveRank(stories, index(active), index(over), moreToLoad)
-      ? `${title(active)} stays at ${position(active)}. ${LOAD_MORE_TO_PLACE}`
+  const dropped = (active: UniqueIdentifier, over: UniqueIdentifier) => {
+    const drop = moveRank({ stories, from: index(active), to: index(over), moreToLoad });
+    return "refused" in drop
+      ? `${title(active)} stays at ${position(active)}. ${REFUSAL_MESSAGE[drop.refused]}`
       : `${title(active)} dropped at ${position(over)}.`;
+  };
 
   return {
     onDragStart: ({ active }: Dragged) =>
