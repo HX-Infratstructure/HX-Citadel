@@ -91,6 +91,18 @@ describe("moveRank", () => {
     expect(moveRank({ stories: tied, from: 0, to: 1, moreToLoad: true })).toEqual({ sortOrder: 20 });
   });
 
+  it("ranks the grid move of S290 between S300 and S298 at 299000, the rank of S299, which is outside the backlog", () => {
+    const grid = [
+      { _id: "id-300", title: "S300", sortOrder: 300000, _creationTime: 0 },
+      { _id: "id-298", title: "S298", sortOrder: 298000, _creationTime: 0 },
+      { _id: "id-290", title: "S290", sortOrder: 290000, _creationTime: 0 },
+      { _id: "id-051", title: "S051", sortOrder: 51000, _creationTime: 0 },
+    ];
+    for (const moreToLoad of [true, false]) {
+      expect(moveRank({ stories: grid, from: 2, to: 1, moreToLoad })).toEqual({ sortOrder: 299000 });
+    }
+  });
+
   it.each([
     ["the midpoint rounds to the upper story", 900, 899.9999999999999],
     ["the midpoint rounds to the lower story", 900.0000000000001, 900],

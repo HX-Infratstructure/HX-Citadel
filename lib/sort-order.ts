@@ -30,13 +30,13 @@ export const LOAD_MORE_TO_PLACE = "Load more to place it here.";
 export const NO_ROOM_TO_PLACE = "There is no room to place it here.";
 
 /** Why a drop is refused: `loadMore` when loading more could make it placeable, `noRoom` when it can't be placed there. */
-export type Refusal = "loadMore" | "noRoom";
+export type DropRefusal = "loadMore" | "noRoom";
 
 /** What the board and the backlog tell the user when a drop is refused, by reason. */
-export const REFUSAL_MESSAGE: Record<Refusal, string> = { loadMore: LOAD_MORE_TO_PLACE, noRoom: NO_ROOM_TO_PLACE };
+export const REFUSAL_MESSAGE: Record<DropRefusal, string> = { loadMore: LOAD_MORE_TO_PLACE, noRoom: NO_ROOM_TO_PLACE };
 
 /** A drop's rank, or why it is refused. */
-export type DropRank = { sortOrder: number } | { refused: Refusal };
+export type DropRank = { sortOrder: number } | { refused: DropRefusal };
 
 type LoadedDrop = { above?: number; below?: number; floor?: number; moreToLoad: boolean };
 

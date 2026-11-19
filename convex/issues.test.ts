@@ -649,10 +649,10 @@ describe("a tie repair goes upward and keeps the order the list shows", () => {
     expect(newer).toBeGreaterThan(5500);
     expect([newer > moved, moved > older, older === 5000]).toEqual([true, true, true]);
   });
+});
 
-  test("a pinned listByTeam page of twice LIST_LIMIT issues, each at the label cap, reads inside Convex's document limit", () => {
-    expect(PINNED_PAGE_MAX_ROWS).toBeGreaterThanOrEqual(2 * LIST_LIMIT);
-  });
+test("PINNED_PAGE_MAX_ROWS covers a pinned page that grew to twice LIST_LIMIT (an arithmetic guard; the read itself is checked in listByTeam.test.ts)", () => {
+  expect(PINNED_PAGE_MAX_ROWS).toBeGreaterThanOrEqual(2 * LIST_LIMIT);
 });
 
 describe("the assignee is a member of the workspace", () => {

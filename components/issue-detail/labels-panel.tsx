@@ -64,6 +64,7 @@ export function LabelsPanel({ issue }: IssueDetailSlotProps) {
     if (!name) {
       return;
     }
+    // This count is a UX guard only; the server's cap in `convex/labels.ts` is the rule.
     if ((issueLabels?.length ?? 0) >= MAX_LABELS_PER_ISSUE) {
       toast.error(TOO_MANY_LABELS);
       return;

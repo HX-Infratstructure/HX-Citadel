@@ -170,8 +170,12 @@ const PAGE_FIXED_READS = 8;
  * `crates/database/src/query/index_range.rs:168-170`), and `usePaginatedQuery` splits it only above 2 ×
  * `initialNumItems` rows, after a read that returned them, so it grows past 2 × LIST_LIMIT rows before a split; a test
  * in `issues.test.ts` holds this bound at 2 × LIST_LIMIT or more. It reads
- * PAGE_FIXED_READS, at most PAGE_READ_ROWS rows its filter drops, and for each row the row itself, its label links
- * (at most `MAX_LABELS_PER_ISSUE`, enforced when a label is added) and at most one distinct label (`orgIssueLabels`).
+ * PAGE_FIXED_READS, at most PAGE_READ_ROWS rows its filter drops, for each row the row itself and its label links (at
+ * most `MAX_LABELS_PER_ISSUE`, enforced when a label is added), and each distinct label once (`orgIssueLabels`).
+ * The bound assumes a page's distinct labels are no more than its rows (a workspace has a few dozen labels; nothing
+ * caps them). A page of 2 × LIST_LIMIT rows then has `PINNED_PAGE_MAX_ROWS - 2 * LIST_LIMIT` rows of headroom, and
+ * room for `CONVEX_DOCUMENT_READS - PAGE_FIXED_READS - PAGE_READ_ROWS - 2 * LIST_LIMIT * (MAX_LABELS_PER_ISSUE + 1)`
+ * distinct labels.
  * Index ranges, 1 + rows + distinct labels, stay inside Convex's 4,096 while a workspace has a few dozen labels.
  */
 export const PINNED_PAGE_MAX_ROWS = Math.floor(
@@ -445,7 +449,8 @@ async function placeRank(
     ranks = respaceTie(rank, run, ceiling);
   }
   if (ranks === undefined) {
-    // UNVERIFIED: unreachable below 2^62, where a run with no ceiling steps by SORT_GAP, wider than a float's spacing.
+    // Unreachable while ranks stay within ±2^62: with no ceiling the run steps by SORT_GAP, wider than a float's
+    // spacing there.
     refuse("There is no room to rank this issue here");
   }
   for (const { row, sortOrder } of ranks.others) {

@@ -53,9 +53,10 @@ function findContainer(
 /**
  * Kanban board: one column per status, drag-and-drop via @dnd-kit. Drops
  * persist through `issues.update` with a fractional sortOrder between the
- * new neighbors, applied optimistically so the realtime query never
- * flickers. `issues` are the filtered loaded pages of the team's list, and
- * `loaded` is the order of every loaded issue, unfiltered.
+ * new neighbors, applied optimistically. A drop into a tie can show in
+ * creation order until the server answers. `issues` are the filtered
+ * loaded pages of the team's list, and `loaded` is the order of every
+ * loaded issue, unfiltered.
  */
 export function BoardView({
   issues,

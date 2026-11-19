@@ -66,6 +66,13 @@ describe("respaceTie", () => {
     const ranks = respaceTie(5000, [first, second, third], 9000);
     expect([rankOf(ranks, third), rankOf(ranks, second), ranks!.moved, rankOf(ranks, first)]).toEqual([8000, 7000, 6000, 5000]);
   });
+
+  test("fits a two-row tie with nothing ranked higher at 2^62 and at -2^62, and has no ranks to give at 2^63", () => {
+    const tieAt = (tie: number) => respaceTie(tie, [row(tie, 1), row(tie, 2)]);
+    expect(tieAt(2 ** 62)).toBeDefined();
+    expect(tieAt(-(2 ** 62))).toBeDefined();
+    expect(tieAt(2 ** 63)).toBeUndefined();
+  });
 });
 
 const X = 1000.0000000000001;
