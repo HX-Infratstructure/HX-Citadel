@@ -27,7 +27,7 @@ export default function CyclesPage() {
 }
 
 function CyclesPageInner() {
-  const cycles = useQuery(api.cycles.listWithProgress);
+  const cycles = useQuery(api.cycles.list);
   const teams = useQuery(api.teams.list);
   const searchParams = useSearchParams();
   const pathname = usePathname();

@@ -1,22 +1,19 @@
 "use client";
 
+import { useQuery } from "convex/react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { api } from "@/convex/_generated/api";
 import { Doc } from "@/convex/_generated/dataModel";
 import { formatDateRange } from "@/components/projects/dates";
-import { IssueProgress } from "@/components/projects/project-meta";
-import { IssueProgressBar } from "@/components/projects/progress-bar";
+import { RowProgress } from "@/components/projects/row-progress";
 import { cycleDisplayName, cycleStatus } from "./cycle-meta";
 import { CycleStatusBadge } from "./cycle-status-badge";
 
-export function CycleRow({
-  cycle,
-}: {
-  cycle: Doc<"cycles"> & { progress: IssueProgress };
-}) {
+export function CycleRow({ cycle }: { cycle: Doc<"cycles"> }) {
   const params = useParams<{ orgSlug: string }>();
+  const progress = useQuery(api.cycles.progress, { cycleId: cycle._id });
   const status = cycleStatus(cycle);
-  const activeIssues = cycle.progress.total - cycle.progress.canceled;
 
   return (
     <Link
@@ -33,14 +30,7 @@ export function CycleRow({
       <span className="hidden w-32 shrink-0 text-right text-xs text-muted-foreground sm:block">
         {formatDateRange(cycle.startDate, cycle.endDate)}
       </span>
-      <span className="hidden w-16 shrink-0 text-right text-xs text-muted-foreground lg:block">
-        {activeIssues} {activeIssues === 1 ? "issue" : "issues"}
-      </span>
-      <IssueProgressBar
-        progress={cycle.progress}
-        showPercent
-        className="hidden w-44 shrink-0 md:flex"
-      />
+      <RowProgress progress={progress} countClassName="lg:block" />
     </Link>
   );
 }

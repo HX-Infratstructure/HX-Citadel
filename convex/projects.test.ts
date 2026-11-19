@@ -116,8 +116,8 @@ describe("projects.remove", () => {
 });
 
 /** A member, a project, and a user who is not in the workspace. */
-async function setupProject() {
-  const t = convexTest(schema, modules);
+async function setupProject(transactionLimits?: { documentsRead: number }) {
+  const t = convexTest({ schema, modules, transactionLimits });
   const ids = await t.run(async (ctx) => {
     const orgId = await ctx.db.insert("organizations", { clerkOrgId: ORG_CLAIM, name: "Test Org", slug: "test-org" });
     const userId = await ctx.db.insert("users", { clerkId: MEMBER_CLERK_ID, name: "Member", email: "member@example.com" });
@@ -153,7 +153,7 @@ describe("project input is a typed refusal", () => {
 });
 
 describe("a project with more than LIST_LIMIT issues", () => {
-  test("lists LIST_LIMIT of them and counts every one, on the list and the detail", async () => {
+  test("lists LIST_LIMIT of them, and the index row's progress counts every one", async () => {
     const s = await setupProject();
     await s.t.run(async (ctx) => {
       for (let number = 1; number <= LIST_LIMIT + 1; number++) {
@@ -173,12 +173,86 @@ describe("a project with more than LIST_LIMIT issues", () => {
     });
 
     const issues = await s.member.query(api.projects.listIssues, { projectId: s.projectId });
-    const [project] = await s.member.query(api.projects.listWithProgress, {});
-    const detail = await s.member.query(api.projects.progress, { projectId: s.projectId });
+    const [project] = await s.member.query(api.projects.list, {});
+    const row = await s.member.query(api.projects.progress, { projectId: project._id });
 
     const expected = { total: LIST_LIMIT + 1, done: LIST_LIMIT, todo: 1 };
     expect(issues).toHaveLength(LIST_LIMIT);
-    expect(project.progress).toMatchObject(expected);
-    expect(detail).toMatchObject(expected);
+    expect(row).toMatchObject(expected);
+  });
+});
+
+describe("projects.list", () => {
+  test("lists every project within 10 document reads, so it reads no issues", async () => {
+    const s = await setupProject({ documentsRead: 10 });
+    await s.t.run(async (ctx) => {
+      const projectIds = [
+        s.projectId,
+        await ctx.db.insert("projects", { orgId: s.orgId, name: "Phase 3", status: "planned" }),
+        await ctx.db.insert("projects", { orgId: s.orgId, name: "Phase 4", status: "planned" }),
+      ];
+      let number = 0;
+      for (const projectId of projectIds) {
+        for (let i = 0; i < 20; i++) {
+          number++;
+          await ctx.db.insert("issues", {
+            orgId: s.orgId,
+            teamId: s.teamId,
+            kind: "story",
+            number,
+            title: `Story ${number}`,
+            status: "todo",
+            priority: "none",
+            creatorId: s.userId,
+            projectId,
+            sortOrder: number,
+          });
+        }
+      }
+    });
+
+    const projects = await s.member.query(api.projects.list, {});
+
+    expect(projects.map((project) => project.name).sort()).toEqual(["Phase 2", "Phase 3", "Phase 4"]);
+  });
+});
+
+describe("projects.progress for the index rows", () => {
+  test("each row's progress reads within 30 documents", async () => {
+    const s = await setupProject({ documentsRead: 30 });
+    await s.t.run(async (ctx) => {
+      const projectIds = [
+        s.projectId,
+        await ctx.db.insert("projects", { orgId: s.orgId, name: "Phase 3", status: "planned" }),
+        await ctx.db.insert("projects", { orgId: s.orgId, name: "Phase 4", status: "planned" }),
+      ];
+      let number = 0;
+      for (const projectId of projectIds) {
+        for (let i = 0; i < 20; i++) {
+          number++;
+          await ctx.db.insert("issues", {
+            orgId: s.orgId,
+            teamId: s.teamId,
+            kind: "story",
+            number,
+            title: `Story ${number}`,
+            status: "todo",
+            priority: "none",
+            creatorId: s.userId,
+            projectId,
+            sortOrder: number,
+          });
+        }
+      }
+    });
+
+    const projects = await s.member.query(api.projects.list, {});
+
+    for (const project of projects) {
+      expect(await s.member.query(api.projects.progress, { projectId: project._id })).toMatchObject({
+        total: 20,
+        todo: 20,
+      });
+    }
   });
 });

@@ -26,7 +26,7 @@ export default function ProjectsPage() {
 }
 
 function ProjectsPageInner() {
-  const projects = useQuery(api.projects.listWithProgress);
+  const projects = useQuery(api.projects.list);
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const router = useRouter();
