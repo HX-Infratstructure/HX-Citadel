@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { cycleName as formatCycleName } from "../lib/sprint";
 import { Doc, Id } from "./_generated/dataModel";
-import { activityNewestFirst, revertibleRows } from "./issues";
+import { activityNewestFirst, revertibleRows } from "./lib/issues/revert";
 import { getOrgIssue } from "./lib/issues/shape";
 import { LIST_LIMIT } from "./lib/paging";
 import { orgQuery } from "./lib/customFunctions";
