@@ -11,8 +11,8 @@ HX-Citadel is the HX team's work tracker for agentic and agile development, with
   - `orgAdminMutation` does the same and also requires `ctx.membership.role === "admin"`.
   - `authedQuery` and `authedMutation` require a signed-in user but no organization. Use them rarely.
   - A public `query` or `mutation` without a wrapper is forbidden, except the existing `users.current` and `organizations.current`.
-- **Scope everything by `ctx.org._id`.** Filter every query by it, and check that any document you load by ID belongs to it. `getOrgIssue` in `convex/issues.ts` shows the pattern for issues.
-- **Validators on args and returns** of every public function. Import the shared validators (`issueStatusValidator`, `issuePriorityValidator`, `memberRoleValidator` and the others) from `convex/schema.ts`. Reuse a shape that already exists, such as `issueShape` in `convex/issues.ts`.
+- **Scope everything by `ctx.org._id`.** Filter every query by it, and check that any document you load by ID belongs to it. `getOrgIssue` in `convex/lib/issues/shape.ts` shows the pattern for issues.
+- **Validators on args and returns** of every public function. Import the shared validators (`issueStatusValidator`, `issuePriorityValidator`, `memberRoleValidator` and the others) from `convex/schema.ts`. Reuse a shape that already exists, such as `issueShape` in `convex/lib/issues/shape.ts`.
 - **Activity logging.** Every mutation that changes an issue calls `logActivity` from `convex/lib/activity.ts`.
 
 ## UI conventions

@@ -1,25 +1,24 @@
-import { PaginationOptions, paginationOptsValidator, paginationResultValidator } from "convex/server";
+import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { ObjectType, v } from "convex/values";
 import { invalid, notFound, refuse } from "./lib/refusals";
-import { MAX_LABELS_PER_ISSUE } from "../lib/api-contract";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
 import { PARENT_KIND } from "../lib/issue-key";
-import { isGatedStatus } from "../lib/issue-status";
-import { respaceTie, SORT_GAP } from "../lib/sort-order";
+import { SORT_GAP } from "../lib/sort-order";
 import { changedFields, fieldText, FieldLogOptions, logActivity, logFieldChanges } from "./lib/activity";
 import { orgAdminMutation, orgMutation, orgQuery } from "./lib/customFunctions";
 import { IssueKeys } from "./lib/issueKeys";
+import { LIST_LIMIT } from "./lib/issues/paging";
+import { setIssueProof } from "./lib/issues/proof";
+import { backlogPage, parentCandidates, storyByNumber, teamPage } from "./lib/issues/queries";
+import { placeRank } from "./lib/issues/ranking";
+import { getOrgIssue, issueShape } from "./lib/issues/shape";
 import { patchIssue } from "./lib/issueVersion";
 import { findMembership } from "./lib/mirror";
 import { inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
 import { OrgScope } from "./lib/orgScope";
 import { assertCycleInTeam } from "./lib/rules/cycles";
-import {
-  assertDoneGate,
-  assertDoneGateAfterUpdate,
-  CLOSED_STATUSES,
-} from "./lib/rules/doneGate";
+import { assertDoneGate, assertDoneGateAfterUpdate } from "./lib/rules/doneGate";
 import {
   assertParentOpen,
   assertValidParent,
@@ -27,11 +26,7 @@ import {
   FIRST_SUB_NUMBER,
   nextSubNumber,
 } from "./lib/rules/levels";
-import {
-  assertProofUrl,
-  assertTestingSubtask,
-  createTestingSubtask,
-} from "./lib/rules/testing";
+import { createTestingSubtask } from "./lib/rules/testing";
 import { assertWipFree, assertWipFreeAfterUpdate } from "./lib/rules/wip";
 import {
   issueKindValidator,
@@ -40,181 +35,26 @@ import {
   issueTypeValidator,
 } from "./schema";
 
-export const issueShape = {
-  _id: v.id("issues"),
-  _creationTime: v.number(),
-  orgId: v.id("organizations"),
-  teamId: v.id("teams"),
-  kind: issueKindValidator,
-  type: v.optional(issueTypeValidator),
-  number: v.optional(v.number()),
-  subNumber: v.optional(v.number()),
-  nextSubNumber: v.optional(v.number()),
-  title: v.string(),
-  description: v.optional(v.string()),
-  status: issueStatusValidator,
-  priority: issuePriorityValidator,
-  assigneeId: v.optional(v.id("users")),
-  creatorId: v.id("users"),
-  projectId: v.optional(v.id("projects")),
-  cycleId: v.optional(v.id("cycles")),
-  parentIssueId: v.optional(v.id("issues")),
-  estimate: v.optional(v.number()),
-  dueDate: v.optional(v.number()),
-  sortOrder: v.number(),
-  testing: v.optional(v.boolean()),
-  proofUrl: v.optional(v.string()),
-  version: v.optional(v.number()),
-};
+export { capPage, LIST_LIMIT, PAGE_READ_ROWS, PINNED_PAGE_MAX_ROWS } from "./lib/issues/paging";
+export { setIssueProof } from "./lib/issues/proof";
+export { getOrgIssue, issueShape } from "./lib/issues/shape";
 
-/** Verify an issue belongs to the caller's org before any read/write. */
-export async function getOrgIssue(
-  ctx: { db: QueryCtx["db"] },
-  orgId: Id<"organizations">,
-  issueId: Id<"issues">
-): Promise<Doc<"issues">> {
-  return await requireOrgRow(ctx, orgId, issueId, "Issue");
-}
-
-/** The most issues one list or page returns. */
-export const LIST_LIMIT = 500;
-
-const OPEN_STATUSES = issueStatusValidator.members
-  .map((member) => member.value)
-  .filter((status) => !CLOSED_STATUSES.has(status));
-
-/** Convex fails a query or mutation past this many documents read. */
-const CONVEX_DOCUMENT_READS = 32_000;
-
-/** Rows and bytes one page may read, rows its filter drops included: well inside `CONVEX_DOCUMENT_READS` and 16 MiB. */
-export const PAGE_READ_ROWS = 8_000;
-const PAGE_READ_BYTES = 8 * 1024 * 1024;
-
-/**
- * `paginationOpts` with the page held to at most `LIST_LIMIT` items and `PAGE_READ_ROWS` rows or `PAGE_READ_BYTES`
- * read, whatever the client asks for. A page that runs out of reads first comes back `SplitRequired`, holding every
- * match among the rows it read, and its `continueCursor` resumes after the last row read. A caller that follows
- * `continueCursor`, like the REST list, misses nothing; `usePaginatedQuery` replaces the page by its two halves at
- * `splitCursor`.
- */
-export function capPage(paginationOpts: PaginationOptions): PaginationOptions {
-  return {
-    ...paginationOpts,
-    numItems: Math.min(paginationOpts.numItems, LIST_LIMIT),
-    maximumRowsRead: PAGE_READ_ROWS,
-    maximumBytesRead: PAGE_READ_BYTES,
-  };
-}
-
-/**
- * The team's issues inside the workspace, highest `sortOrder` first. Other workspaces' rows are dropped inside the
- * query, so they never use up a page. A team that is missing or in another workspace is not found.
- */
-async function teamIssuesByRank(ctx: { db: QueryCtx["db"] }, orgId: Id<"organizations">, teamId: Id<"teams">) {
-  await requireOrgRow(ctx, orgId, teamId, "Team");
-  return inOrg(
-    ctx.db.query("issues").withIndex("by_team_and_sort_order", (q) => q.eq("teamId", teamId)).order("desc"),
-    orgId
-  );
-}
-
-/**
- * An issue's label ids as stored, in link order. Only `labels.toggleOnIssue` and the dev seed (`seed.demoData`) write
- * links, and both link only a label of the issue's workspace. By owner decision q-f874e530, the workspace is checked
- * when a link is written, not here, so no label is read. A label delete must delete its links first (`by_label`).
- */
-async function issueLabelIds(ctx: { db: QueryCtx["db"] }, issueId: Id<"issues">): Promise<Id<"labels">[]> {
-  const links = await ctx.db.query("issueLabels").withIndex("by_issue", (q) => q.eq("issueId", issueId)).collect();
-  return links.map((link) => link.labelId);
-}
-
-/**
- * The backlog, one page at a time: open stories with no cycle, highest `sortOrder` (owner's rank) first.
- * It reads the team's rank index in order and filters inside the query, so the first page always starts at the
- * top-ranked story, however old it is. Closed rows count toward a page's reads, so a page under many of them
- * can come back short, or empty, with a cursor to the rest.
- */
 export const listBacklog = orgQuery({
   args: { teamId: v.id("teams"), paginationOpts: paginationOptsValidator },
   returns: paginationResultValidator(v.object(issueShape)),
-  handler: async (ctx, args) => {
-    return await (await teamIssuesByRank(ctx, ctx.org._id, args.teamId))
-      .filter((q) =>
-        q.and(
-          q.eq(q.field("kind"), "story"),
-          q.eq(q.field("cycleId"), undefined),
-          q.or(...OPEN_STATUSES.map((status) => q.eq(q.field("status"), status)))
-        )
-      )
-      .paginate(capPage(args.paginationOpts));
-  },
+  handler: async (ctx, args) => await backlogPage(ctx, args),
 });
 
-/** The documents every `listByTeam` call reads before its page: the caller's user, workspace and membership, and the team (4), rounded up. */
-const PAGE_FIXED_READS = 8;
-
-/**
- * The most rows a `listByTeam` page pinned by an end cursor can hold and still read inside `CONVEX_DOCUMENT_READS`.
- * Such a page reads its whole interval, ignoring `numItems` and `maximumRowsRead` (convex-backend
- * `crates/database/src/query/index_range.rs:168-170`), and `usePaginatedQuery` splits it only above 2 ×
- * `initialNumItems` rows, after a read that returned them, so it grows past 2 × LIST_LIMIT rows before a split; a test
- * in `issues.test.ts` holds this bound at 2 × LIST_LIMIT or more. It reads PAGE_FIXED_READS, at most
- * PAGE_READ_ROWS rows its filter drops, and for each row the row itself and its label links (at most
- * `MAX_LABELS_PER_ISSUE`, enforced when a label is added). A page of 2 × LIST_LIMIT rows then has
- * `PINNED_PAGE_MAX_ROWS - 2 * LIST_LIMIT` rows of headroom. Its index ranges, 1 + rows besides the fixed reads, stay
- * inside Convex's 4,096.
- */
-export const PINNED_PAGE_MAX_ROWS = Math.floor(
-  (CONVEX_DOCUMENT_READS - PAGE_FIXED_READS - PAGE_READ_ROWS) / (MAX_LABELS_PER_ISSUE + 1)
-);
-
-/**
- * A team's issues, one page at a time, highest `sortOrder` first, each with the ids of the labels linked to it, in
- * link order. The loaded pages always hold the team's top-ranked issues, so a browser filter over them sees each
- * status's top-ranked issues.
- */
 export const listByTeam = orgQuery({
   args: { teamId: v.id("teams"), paginationOpts: paginationOptsValidator },
   returns: paginationResultValidator(v.object({ ...issueShape, labelIds: v.array(v.id("labels")) })),
-  handler: async (ctx, args) => {
-    const result = await (await teamIssuesByRank(ctx, ctx.org._id, args.teamId)).paginate(capPage(args.paginationOpts));
-    const page = await Promise.all(
-      result.page.map(async (issue) => ({ ...issue, labelIds: await issueLabelIds(ctx, issue._id) }))
-    );
-    return { ...result, page };
-  },
+  handler: async (ctx, args) => await teamPage(ctx, args),
 });
 
-const PARENT_STATUSES = issueStatusValidator.members
-  .map((member) => member.value)
-  .filter((status) => !isGatedStatus(status));
-
-/** The issues a child of `kind` may sit under: the team's newest `LIST_LIMIT` issues one level up that are not In Review or Done. */
 export const listParentCandidates = orgQuery({
   args: { teamId: v.id("teams"), kind: issueKindValidator },
   returns: v.array(v.object(issueShape)),
-  handler: async (ctx, args) => {
-    await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
-    const parentKind = PARENT_KIND[args.kind];
-    if (parentKind === null) {
-      return [];
-    }
-    const byStatus = await Promise.all(
-      PARENT_STATUSES.map((status) =>
-        inOrg(
-          ctx.db
-            .query("issues")
-            .withIndex("by_team_kind_status", (q) => q.eq("teamId", args.teamId).eq("kind", parentKind).eq("status", status))
-            .order("desc"),
-          ctx.org._id
-        ).take(LIST_LIMIT)
-      )
-    );
-    return byStatus
-      .flat()
-      .sort((a, b) => b._creationTime - a._creationTime)
-      .slice(0, LIST_LIMIT);
-  },
+  handler: async (ctx, args) => await parentCandidates(ctx, args),
 });
 
 export const get = orgQuery({
@@ -223,20 +63,10 @@ export const get = orgQuery({
   handler: async (ctx, args) => await orgRow(ctx, ctx.org._id, args.issueId),
 });
 
-/** Look up a story by its display identifier (team key + number, e.g. ENG-42). */
 export const getByNumber = orgQuery({
   args: { teamId: v.id("teams"), number: v.number() },
   returns: v.union(v.object(issueShape), v.null()),
-  handler: async (ctx, args) => {
-    if ((await orgRow(ctx, ctx.org._id, args.teamId)) === null) {
-      return null;
-    }
-    const issue = await inOrg(
-      ctx.db.query("issues").withIndex("by_team_and_number", (q) => q.eq("teamId", args.teamId).eq("number", args.number)),
-      ctx.org._id
-    ).unique();
-    return issue?.kind === "story" ? issue : null;
-  },
+  handler: async (ctx, args) => await storyByNumber(ctx, args),
 });
 
 /** An assignee must be a member of the workspace. A non-member is never loaded, so the refusal can't name them. */
@@ -377,72 +207,6 @@ export const create = orgMutation({
   handler: async (ctx, args) =>
     await createIssue(ctx, { org: ctx.org, actorId: ctx.user._id }, args),
 });
-
-/**
- * The team's issues at `rank`, other than `issue`, in creation order. Bounded by design: create takes the highest +
- * `SORT_GAP`, `placeRank` re-spaces every row it ties and the seed spaces by position, so a rank holds one story,
- * its Complete testing sub-task (which takes the story's rank, `createTestingSubtask`) and rows a legacy write left tied.
- */
-async function othersAtRank(
-  ctx: MutationCtx,
-  issue: Doc<"issues">,
-  rank: number
-): Promise<Doc<"issues">[]> {
-  const atRank = await inOrg(
-    ctx.db.query("issues").withIndex("by_team_and_sort_order", (q) => q.eq("teamId", issue.teamId).eq("sortOrder", rank)),
-    issue.orgId
-  ).collect();
-  return atRank.filter((other) => other._id !== issue._id);
-}
-
-/** The team's closest rank above `rank`, if any. */
-async function nextHigherRank(
-  ctx: MutationCtx,
-  issue: Doc<"issues">,
-  rank: number
-): Promise<number | undefined> {
-  const nextHigher = await inOrg(
-    ctx.db
-      .query("issues")
-      .withIndex("by_team_and_sort_order", (q) => q.eq("teamId", issue.teamId).gt("sortOrder", rank))
-      .order("asc"),
-    issue.orgId
-  ).first();
-  return nextHigher?.sortOrder;
-}
-
-/**
- * The rank to store for an issue moved to `rank`. Other issues in the team that already hold `rank` are re-spaced
- * upward first (`respaceTie`), and the moved issue takes the middle of their run, so it never ties a neighbour and no
- * issue ends below `rank`. When the gap to the next higher rank can't hold distinct numbers, the issues at that rank
- * join the run and the gap widens to the rank above them.
- */
-async function placeRank(
-  ctx: MutationCtx,
-  issue: Doc<"issues">,
-  rank: number
-): Promise<number> {
-  const run = await othersAtRank(ctx, issue, rank);
-  if (run.length === 0) {
-    return rank;
-  }
-  let ceiling = await nextHigherRank(ctx, issue, rank);
-  let ranks = respaceTie(rank, run, ceiling);
-  while (ranks === undefined && ceiling !== undefined) {
-    run.push(...(await othersAtRank(ctx, issue, ceiling)));
-    ceiling = await nextHigherRank(ctx, issue, ceiling);
-    ranks = respaceTie(rank, run, ceiling);
-  }
-  if (ranks === undefined) {
-    // Unreachable while ranks stay within ±2^62: with no ceiling the run steps by SORT_GAP, wider than a float's
-    // spacing there.
-    refuse("There is no room to rank this issue here");
-  }
-  for (const { row, sortOrder } of ranks.others) {
-    await patchIssue(ctx, row, { sortOrder });
-  }
-  return ranks.moved;
-}
 
 const updateArgs = {
   issueId: v.id("issues"),
@@ -640,42 +404,6 @@ export const revertChange = orgAdminMutation({
     return null;
   },
 });
-
-async function logProofChange(
-  ctx: MutationCtx,
-  issue: Doc<"issues">,
-  proofUrl: string,
-  actorId: Id<"users">
-): Promise<void> {
-  if (proofUrl === (issue.proofUrl ?? "")) {
-    return;
-  }
-  await logActivity(ctx, {
-    orgId: issue.orgId,
-    issueId: issue._id,
-    actorId,
-    type: proofUrl === "" ? "proof_cleared" : "proof_set",
-    field: "proof",
-    oldValue: issue.proofUrl,
-    newValue: proofUrl || undefined,
-  });
-}
-
-/** Sets or clears (empty string) the proof URL on a Complete testing sub-task. */
-export async function setIssueProof(
-  ctx: MutationCtx,
-  scope: OrgScope,
-  args: { issueId: Id<"issues">; proofUrl: string }
-): Promise<void> {
-  const issue = await getOrgIssue(ctx, scope.org._id, args.issueId);
-  assertTestingSubtask(issue);
-  const proofUrl = args.proofUrl.trim();
-  if (proofUrl !== "") {
-    assertProofUrl(proofUrl);
-  }
-  await patchIssue(ctx, issue._id, { proofUrl: proofUrl || undefined });
-  await logProofChange(ctx, issue, proofUrl, scope.actorId);
-}
 
 export const setProof = orgMutation({
   args: { issueId: v.id("issues"), proofUrl: v.string() },
