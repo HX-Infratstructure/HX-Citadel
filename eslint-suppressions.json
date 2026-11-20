@@ -299,17 +299,6 @@
       "count": 1
     }
   },
-  "convex/issues.ts": {
-    "complexity": {
-      "count": 2
-    },
-    "max-lines": {
-      "count": 1
-    },
-    "max-lines-per-function": {
-      "count": 2
-    }
-  },
   "convex/lib/activity.ts": {
     "max-params": {
       "count": 1

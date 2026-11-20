@@ -7,7 +7,7 @@ import { Doc, Id } from "./_generated/dataModel";
 import { logActivity } from "./lib/activity";
 import { patchIssue } from "./lib/issueVersion";
 import { internalMutation } from "./_generated/server";
-import { storyType } from "./issues";
+import { storyType } from "./lib/issues/create";
 import { getMembershipOrThrow, getOrgByClerkIdOrThrow, getUserByClerkIdOrThrow } from "./lib/mirror";
 import { FIRST_SUB_NUMBER, nextSubNumber } from "./lib/rules/levels";
 import { createTestingSubtask } from "./lib/rules/testing";
