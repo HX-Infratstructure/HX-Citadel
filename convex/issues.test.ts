@@ -21,7 +21,7 @@ type Setup = Awaited<ReturnType<typeof setup>>;
 
 async function setup(transactionLimits?: { documentsRead: number }) {
   const t = convexTest({ schema, modules, transactionLimits });
-  const { teamId, memberId } = await t.run(async (ctx) => {
+  const { orgId, teamId, memberId } = await t.run(async (ctx) => {
     const memberId = await ctx.db.insert("users", {
       clerkId: MEMBER_CLERK_ID,
       name: "Member",
@@ -49,9 +49,28 @@ async function setup(transactionLimits?: { documentsRead: number }) {
       key: "ENG",
       nextIssueNumber: FIRST_NUMBER,
     });
-    return { teamId, memberId };
+    return { orgId, teamId, memberId };
   });
-  return { t, teamId, memberId };
+  const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+  const issue = (issueId: Id<"issues">) => t.run(async (ctx) => (await ctx.db.get(issueId))!);
+  const issueCount = () => t.run(async (ctx) => (await ctx.db.query("issues").collect()).length);
+  const feed = (issueId: Id<"issues">) =>
+    t.run(async (ctx) =>
+      ctx.db
+        .query("activity")
+        .withIndex("by_issue", (q) => q.eq("issueId", issueId))
+        .collect()
+    );
+  const project = (name: string) =>
+    t.run(async (ctx) => await ctx.db.insert("projects", { orgId, name, status: "planned" }));
+  return { t, teamId, memberId, asMember, issue, issueCount, feed, project };
+}
+
+const refusalOf = (error: unknown) => (error instanceof ConvexError ? error.data : error);
+
+/** The issue's version and activity row count, which a write that changes nothing must leave as they are. */
+async function footprint(s: Setup, issueId: Id<"issues">) {
+  return { version: (await s.issue(issueId)).version, rows: (await s.feed(issueId)).length };
 }
 
 describe("issues.create", () => {
@@ -684,8 +703,6 @@ describe("the assignee is a member of the workspace", () => {
     return { ...s, outsiderId, asMember: s.t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM }) };
   }
 
-  const refusalOf = (error: unknown) => (error instanceof ConvexError ? error.data : error);
-
   test("create refuses another workspace's user without naming them and writes nothing", async () => {
     const { t, teamId, outsiderId, asMember } = await setupWithOutsider();
     const error = await asMember
@@ -717,7 +734,6 @@ describe("the assignee is a member of the workspace", () => {
 
 describe("a title is never blank", () => {
   const blank = { code: "validation", message: "Title cannot be empty" };
-  const refusalOf = (error: unknown) => (error instanceof ConvexError ? error.data : error);
 
   const rest = (t: Awaited<ReturnType<typeof setup>>["t"], method: string, path: string, body: unknown) =>
     t.fetch(`/api/v1/issues${path}`, {
@@ -785,5 +801,153 @@ describe("a title is never blank", () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual(blank);
     expect(await written(t)).toEqual(before);
+  });
+});
+
+describe("issue write branches", () => {
+  // Catches a create that still reads the parent with its own lookup, which says "Issue not found", instead of only
+  // through `assertValidParent`, which says "Parent issue not found"; or one that writes an issue anyway.
+  test("create with a missing parent refuses with Parent issue not found", async () => {
+    const s = await setup();
+    const goneId = await s.asMember.mutation(api.issues.create, { teamId: s.teamId, title: "Gone" });
+    await s.t.run((ctx) => ctx.db.delete(goneId));
+    const issuesBefore = await s.issueCount();
+
+    const error = await s.asMember
+      .mutation(api.issues.create, { teamId: s.teamId, kind: "subtask", parentIssueId: goneId, title: "Orphan" })
+      .catch(refusalOf);
+
+    expect(error).toEqual({ code: "not_found", message: "Parent issue not found" });
+    expect(await s.issueCount()).toBe(issuesBefore);
+  });
+
+  // Catches a create that reads the parent before `assertValidParent`'s project check, so an epic with no project
+  // and a missing parent hears "Issue not found" instead of "An epic needs a project"; or one that writes an issue.
+  test("create with no project and a missing parent refuses for the project first", async () => {
+    const s = await setup();
+    const goneId = await s.asMember.mutation(api.issues.create, { teamId: s.teamId, title: "Gone" });
+    await s.t.run((ctx) => ctx.db.delete(goneId));
+    const issuesBefore = await s.issueCount();
+
+    const error = await s.asMember
+      .mutation(api.issues.create, { teamId: s.teamId, kind: "epic", parentIssueId: goneId, title: "Unplaced" })
+      .catch(refusalOf);
+
+    expect(error).toEqual({ code: "rule_refused", message: "An epic needs a project" });
+    expect(await s.issueCount()).toBe(issuesBefore);
+  });
+
+  // Catches an update that stores the title untrimmed, or logs and bumps a padded copy of the same title.
+  test("update trims the title", async () => {
+    const s = await setup();
+    const storyId = await s.asMember.mutation(api.issues.create, { teamId: s.teamId, title: "Story" });
+
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, title: "  Renamed  " });
+
+    expect((await s.issue(storyId)).title).toBe("Renamed");
+    expect((await s.feed(storyId)).at(-1)).toMatchObject({
+      type: "title_changed",
+      field: "title",
+      oldValue: "Story",
+      newValue: "Renamed",
+    });
+    const before = await footprint(s, storyId);
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, title: " Renamed\t" });
+    expect(await footprint(s, storyId)).toEqual(before);
+  });
+
+  // Catches a description step that writes, logs or bumps the version when the text is unchanged.
+  test("update with the same description writes no activity and no version bump", async () => {
+    const s = await setup();
+    const storyId = await s.asMember.mutation(api.issues.create, {
+      teamId: s.teamId,
+      title: "Story",
+      description: "Notes",
+    });
+    const before = await footprint(s, storyId);
+
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, description: "Notes" });
+
+    expect(await footprint(s, storyId)).toEqual(before);
+    expect((await s.issue(storyId)).description).toBe("Notes");
+  });
+
+  // Catches a priority step that writes, logs or bumps the version when the priority is unchanged.
+  test("update with the same priority writes no activity and no version bump", async () => {
+    const s = await setup();
+    const storyId = await s.asMember.mutation(api.issues.create, { teamId: s.teamId, title: "Story", priority: "high" });
+    const before = await footprint(s, storyId);
+
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, priority: "high" });
+
+    expect(await footprint(s, storyId)).toEqual(before);
+    expect((await s.issue(storyId)).priority).toBe("high");
+  });
+
+  // Catches a rank step that re-ranks, logs or bumps the version when the sort order is unchanged.
+  test("update with the same sortOrder writes no activity and no version bump", async () => {
+    const s = await setup();
+    const storyId = await s.asMember.mutation(api.issues.create, { teamId: s.teamId, title: "Story" });
+    const { sortOrder } = await s.issue(storyId);
+    const before = await footprint(s, storyId);
+
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, sortOrder });
+
+    expect(await footprint(s, storyId)).toEqual(before);
+    expect((await s.issue(storyId)).sortOrder).toBe(sortOrder);
+  });
+
+  // Catches a project step that lets a child take a project other than the one its parent passes down.
+  test("update to a project other than the parent's refuses", async () => {
+    const s = await setup();
+    const inherited = await s.project("Phase 1");
+    const other = await s.project("Phase 2");
+    const storyId = await s.asMember.mutation(api.issues.create, { teamId: s.teamId, title: "Story", projectId: inherited });
+    const subtaskId = await s.asMember.mutation(api.issues.create, {
+      teamId: s.teamId,
+      kind: "subtask",
+      parentIssueId: storyId,
+      title: "Write API",
+    });
+    const before = await footprint(s, subtaskId);
+
+    const error = await s.asMember
+      .mutation(api.issues.update, { issueId: subtaskId, projectId: other })
+      .catch(refusalOf);
+
+    expect(error).toEqual({ code: "rule_refused", message: "A subtask's project must match its story's project" });
+    expect((await s.issue(subtaskId)).projectId).toBe(inherited);
+    expect(await footprint(s, subtaskId)).toEqual(before);
+  });
+
+  // Catches an estimate step that drops the cleared key, so the estimate stays and no row is logged.
+  test("update estimate null clears it and logs the clear", async () => {
+    const s = await setup();
+    const storyId = await s.asMember.mutation(api.issues.create, { teamId: s.teamId, title: "Story", estimate: 3 });
+    const rowsBefore = (await s.feed(storyId)).length;
+
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, estimate: null });
+
+    expect(await s.issue(storyId)).not.toHaveProperty("estimate");
+    const rows = await s.feed(storyId);
+    expect(rows).toHaveLength(rowsBefore + 1);
+    expect(rows.at(-1)).toMatchObject({ type: "estimate_changed", field: "estimate", oldValue: "3" });
+    expect(rows.at(-1)!.newValue).toBeUndefined();
+  });
+
+  // Catches a due-date step that drops the cleared key, so the due date stays and no row is logged.
+  test("update dueDate null clears it and logs the clear", async () => {
+    const s = await setup();
+    const dueDate = 1700000000000;
+    const storyId = await s.asMember.mutation(api.issues.create, { teamId: s.teamId, title: "Story", dueDate });
+    const rowsBefore = (await s.feed(storyId)).length;
+
+    await s.asMember.mutation(api.issues.update, { issueId: storyId, dueDate: null });
+
+    expect(await s.issue(storyId)).not.toHaveProperty("dueDate");
+    const rows = await s.feed(storyId);
+    expect(rows).toHaveLength(rowsBefore + 1);
+    expect(rows.at(-1)).toMatchObject({ type: "dueDate_changed", field: "dueDate", oldValue: String(dueDate) });
+    expect(rows.at(-1)!.newValue).toBeUndefined();
   });
 });

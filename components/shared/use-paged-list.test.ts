@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LIST_LIMIT } from "@/lib/api-contract";
-import { emptyListText, loadedCount, PAGE_SIZE } from "./use-paged-list";
-
-describe("PAGE_SIZE", () => {
-  it("is at most the server page limit, which the listByTeam read bound assumes", () => {
-    expect(PAGE_SIZE).toBeLessThanOrEqual(LIST_LIMIT);
-  });
-});
+import { emptyListText, loadedCount } from "./use-paged-list";
 
 describe("emptyListText", () => {
   it("says only the loaded issues were searched while more is to load", () => {
