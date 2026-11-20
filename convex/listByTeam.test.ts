@@ -5,7 +5,7 @@ import { MAX_LABELS_PER_ISSUE } from "../lib/api-contract";
 import { byRank } from "../lib/sort-order";
 import { api } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
-import { LIST_LIMIT, PAGE_READ_ROWS } from "./issues";
+import { LIST_LIMIT, PAGE_READ_ROWS } from "./lib/paging";
 import schema, { issueStatusValidator } from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");

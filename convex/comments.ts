@@ -1,7 +1,8 @@
 import { ObjectType, v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx } from "./_generated/server";
-import { getOrgIssue, LIST_LIMIT } from "./issues";
+import { getOrgIssue } from "./lib/issues/shape";
+import { LIST_LIMIT } from "./lib/paging";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { findMembership } from "./lib/mirror";

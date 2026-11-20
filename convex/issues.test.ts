@@ -4,7 +4,8 @@ import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
-import { LIST_LIMIT, PAGE_READ_ROWS, PINNED_PAGE_MAX_ROWS } from "./issues";
+import { PINNED_PAGE_MAX_ROWS } from "./lib/issues/queries";
+import { LIST_LIMIT, PAGE_READ_ROWS } from "./lib/paging";
 import schema from "./schema";
 import { writeHeaders } from "./workspace.fixture";
 

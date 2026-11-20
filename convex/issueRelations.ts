@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { notFound, refuse } from "./lib/refusals";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx } from "./_generated/server";
-import { getOrgIssue } from "./issues";
+import { getOrgIssue } from "./lib/issues/shape";
 import { changedFields, logActivity, logFieldChanges } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { IssueKeys } from "./lib/issueKeys";

@@ -8,7 +8,6 @@ import { SORT_GAP } from "../lib/sort-order";
 import { changedFields, fieldText, FieldLogOptions, logActivity, logFieldChanges } from "./lib/activity";
 import { orgAdminMutation, orgMutation, orgQuery } from "./lib/customFunctions";
 import { IssueKeys } from "./lib/issueKeys";
-import { LIST_LIMIT } from "./lib/issues/paging";
 import { setIssueProof } from "./lib/issues/proof";
 import { backlogPage, parentCandidates, storyByNumber, teamPage } from "./lib/issues/queries";
 import { placeRank } from "./lib/issues/ranking";
@@ -17,6 +16,7 @@ import { patchIssue } from "./lib/issueVersion";
 import { findMembership } from "./lib/mirror";
 import { inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
 import { OrgScope } from "./lib/orgScope";
+import { LIST_LIMIT } from "./lib/paging";
 import { assertCycleInTeam } from "./lib/rules/cycles";
 import { assertDoneGate, assertDoneGateAfterUpdate } from "./lib/rules/doneGate";
 import {
@@ -35,22 +35,21 @@ import {
   issueTypeValidator,
 } from "./schema";
 
-export { capPage, LIST_LIMIT, PAGE_READ_ROWS, PINNED_PAGE_MAX_ROWS } from "./lib/issues/paging";
-export { setIssueProof } from "./lib/issues/proof";
-export { getOrgIssue, issueShape } from "./lib/issues/shape";
-
+/** Documented by `backlogPage` in `convex/lib/issues/queries.ts`. */
 export const listBacklog = orgQuery({
   args: { teamId: v.id("teams"), paginationOpts: paginationOptsValidator },
   returns: paginationResultValidator(v.object(issueShape)),
   handler: async (ctx, args) => await backlogPage(ctx, args),
 });
 
+/** Documented by `teamPage` in `convex/lib/issues/queries.ts`. */
 export const listByTeam = orgQuery({
   args: { teamId: v.id("teams"), paginationOpts: paginationOptsValidator },
   returns: paginationResultValidator(v.object({ ...issueShape, labelIds: v.array(v.id("labels")) })),
   handler: async (ctx, args) => await teamPage(ctx, args),
 });
 
+/** Documented by `parentCandidates` in `convex/lib/issues/queries.ts`. */
 export const listParentCandidates = orgQuery({
   args: { teamId: v.id("teams"), kind: issueKindValidator },
   returns: v.array(v.object(issueShape)),
@@ -63,6 +62,7 @@ export const get = orgQuery({
   handler: async (ctx, args) => await orgRow(ctx, ctx.org._id, args.issueId),
 });
 
+/** Documented by `storyByNumber` in `convex/lib/issues/queries.ts`. */
 export const getByNumber = orgQuery({
   args: { teamId: v.id("teams"), number: v.number() },
   returns: v.union(v.object(issueShape), v.null()),

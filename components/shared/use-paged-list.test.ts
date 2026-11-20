@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LIST_LIMIT } from "@/convex/issues";
+import { LIST_LIMIT } from "@/convex/lib/paging";
 import { emptyListText, loadedCount, PAGE_SIZE } from "./use-paged-list";
 
 describe("PAGE_SIZE", () => {

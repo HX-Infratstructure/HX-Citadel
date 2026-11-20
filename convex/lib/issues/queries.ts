@@ -1,12 +1,13 @@
 import { PaginationOptions } from "convex/server";
 import { Doc, Id } from "../../_generated/dataModel";
 import { QueryCtx } from "../../_generated/server";
+import { MAX_LABELS_PER_ISSUE } from "../../../lib/api-contract";
 import { PARENT_KIND } from "../../../lib/issue-key";
 import { isGatedStatus } from "../../../lib/issue-status";
 import { inOrg, orgRow, requireOrgRow } from "../orgRows";
 import { CLOSED_STATUSES } from "../rules/doneGate";
 import { issueStatusValidator } from "../../schema";
-import { capPage, LIST_LIMIT } from "./paging";
+import { capPage, CONVEX_DOCUMENT_READS, LIST_LIMIT, PAGE_READ_ROWS } from "../paging";
 
 type OrgReadCtx = { db: QueryCtx["db"]; org: Doc<"organizations"> };
 type TeamPageArgs = { teamId: Id<"teams">; paginationOpts: PaginationOptions };
@@ -54,6 +55,24 @@ export async function backlogPage(ctx: OrgReadCtx, args: TeamPageArgs) {
     )
     .paginate(capPage(args.paginationOpts));
 }
+
+/** The documents every `listByTeam` call reads before its page: the caller's user, workspace and membership, and the team (4), rounded up. */
+const PAGE_FIXED_READS = 8;
+
+/**
+ * The most rows a `listByTeam` page pinned by an end cursor can hold and still read inside `CONVEX_DOCUMENT_READS`.
+ * Such a page reads its whole interval, ignoring `numItems` and `maximumRowsRead` (convex-backend
+ * `crates/database/src/query/index_range.rs:168-170`), and `usePaginatedQuery` splits it only above 2 ×
+ * `initialNumItems` rows, after a read that returned them, so it grows past 2 × LIST_LIMIT rows before a split; a test
+ * in `issues.test.ts` holds this bound at 2 × LIST_LIMIT or more. It reads PAGE_FIXED_READS, at most
+ * PAGE_READ_ROWS rows its filter drops, and for each row the row itself and its label links (at most
+ * `MAX_LABELS_PER_ISSUE`, enforced when a label is added). A page of 2 × LIST_LIMIT rows then has
+ * `PINNED_PAGE_MAX_ROWS - 2 * LIST_LIMIT` rows of headroom. Its index ranges, 1 + rows besides the fixed reads, stay
+ * inside Convex's 4,096.
+ */
+export const PINNED_PAGE_MAX_ROWS = Math.floor(
+  (CONVEX_DOCUMENT_READS - PAGE_FIXED_READS - PAGE_READ_ROWS) / (MAX_LABELS_PER_ISSUE + 1)
+);
 
 /**
  * A team's issues, one page at a time, highest `sortOrder` first, each with the ids of the labels linked to it, in

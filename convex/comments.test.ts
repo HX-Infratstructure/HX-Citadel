@@ -3,7 +3,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import { MAX_MENTIONS } from "./comments";
-import { LIST_LIMIT } from "./issues";
+import { LIST_LIMIT } from "./lib/paging";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");

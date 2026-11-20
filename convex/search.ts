@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
-import { issueShape } from "./issues";
+import { issueShape } from "./lib/issues/shape";
 import { orgQuery } from "./lib/customFunctions";
 import { orgRow, requireOrgRow } from "./lib/orgRows";
 
