@@ -33,30 +33,23 @@ export type UpdateIssueArgs = ObjectType<typeof updateArgs>;
 
 type Updates = Partial<Doc<"issues">>;
 
-/** Title, description, status and priority: a change only when the value differs, except description. */
-function textUpdates(issue: Doc<"issues">, args: UpdateIssueArgs): Updates {
+function titleUpdate(args: UpdateIssueArgs): Updates {
+  return args.title === undefined ? {} : { title: issueTitle(args.title) };
+}
+
+/** Fields with no rule of their own; null clears. `patchIssue` and `changedFields` drop an unchanged value. */
+function plainUpdates(issue: Doc<"issues">, args: UpdateIssueArgs): Updates {
   const updates: Updates = {};
-  if (args.title !== undefined) {
-    const title = issueTitle(args.title);
-    if (title !== issue.title) {
-      updates.title = title;
-    }
-  }
   if (args.description !== undefined) {
     updates.description = args.description;
   }
+  // An unchanged status stays out, or it would re-run the Done gate and the WIP check.
   if (args.status !== undefined && args.status !== issue.status) {
     updates.status = args.status;
   }
-  if (args.priority !== undefined && args.priority !== issue.priority) {
+  if (args.priority !== undefined) {
     updates.priority = args.priority;
   }
-  return updates;
-}
-
-/** Estimate and due date: null clears, and a cleared field stays in the patch as undefined. */
-function scheduleUpdates(args: UpdateIssueArgs): Updates {
-  const updates: Updates = {};
   if (args.estimate !== undefined) {
     updates.estimate = args.estimate ?? undefined;
   }
@@ -66,12 +59,12 @@ function scheduleUpdates(args: UpdateIssueArgs): Updates {
   return updates;
 }
 
-async function assigneeUpdate(ctx: MutationCtx, scope: OrgScope, args: UpdateIssueArgs): Promise<Updates> {
+async function assigneeUpdate(ctx: MutationCtx, actor: ActivityActor, args: UpdateIssueArgs): Promise<Updates> {
   if (args.assigneeId === undefined) {
     return {};
   }
   if (args.assigneeId !== null) {
-    await assertAssignee(ctx, scope.org._id, args.assigneeId);
+    await assertAssignee(ctx, actor.orgId, args.assigneeId);
   }
   return { assigneeId: args.assigneeId ?? undefined };
 }
@@ -103,7 +96,7 @@ async function projectUpdate(
 
 async function cycleUpdate(
   ctx: MutationCtx,
-  scope: OrgScope,
+  actor: ActivityActor,
   issue: Doc<"issues">,
   args: UpdateIssueArgs
 ): Promise<Updates> {
@@ -111,12 +104,13 @@ async function cycleUpdate(
     return {};
   }
   if (args.cycleId !== null) {
-    await assertCycleInTeam(ctx, scope.org._id, args.cycleId, issue.teamId);
+    await assertCycleInTeam(ctx, actor.orgId, args.cycleId, issue.teamId);
   }
   return { cycleId: args.cycleId ?? undefined };
 }
 
 async function rankUpdate(ctx: MutationCtx, issue: Doc<"issues">, args: UpdateIssueArgs): Promise<Updates> {
+  // An unchanged rank stays out, or `placeRank` would re-space the story's testing sub-task, which shares it.
   if (args.sortOrder === undefined || args.sortOrder === issue.sortOrder) {
     return {};
   }
@@ -131,16 +125,16 @@ export async function updateIssue(
   log: FieldLogOptions = {}
 ): Promise<void> {
   const issue = await getOrgIssue(ctx, scope.org._id, args.issueId);
-  const actor = { orgId: scope.org._id, actorId: scope.actorId };
-  // Spread in this order: each helper's refusal and write lands where the single function had it.
-  const updates: Updates = {
-    ...textUpdates(issue, args),
-    ...(await assigneeUpdate(ctx, scope, args)),
-    ...(await projectUpdate(ctx, actor, issue, args)),
-    ...(await cycleUpdate(ctx, scope, issue, args)),
-    ...scheduleUpdates(args),
-    ...(await rankUpdate(ctx, issue, args)),
-  };
+  const actor: ActivityActor = { orgId: scope.org._id, actorId: scope.actorId };
+  // Refusals come in this order: title, assignee, project, cycle, rank, then the WIP check and the Done gate.
+  // projectUpdate moves descendants and rankUpdate re-spaces ties as they run; a later refusal rolls both back.
+  const title = titleUpdate(args);
+  const plain = plainUpdates(issue, args);
+  const assignee = await assigneeUpdate(ctx, actor, args);
+  const project = await projectUpdate(ctx, actor, issue, args);
+  const cycle = await cycleUpdate(ctx, actor, issue, args);
+  const rank = await rankUpdate(ctx, issue, args);
+  const updates: Updates = { ...title, ...plain, ...assignee, ...project, ...cycle, ...rank };
   await assertWipFreeAfterUpdate(ctx, issue, updates);
   await assertDoneGateAfterUpdate(ctx, issue, updates);
   await patchIssue(ctx, issue._id, updates);
