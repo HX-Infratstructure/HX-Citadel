@@ -1,4 +1,5 @@
 import { ObjectType, v } from "convex/values";
+import { WithoutSystemFields } from "convex/server";
 import { Doc, Id } from "../../_generated/dataModel";
 import { MutationCtx } from "../../_generated/server";
 import { SORT_GAP } from "../../../lib/sort-order";
@@ -12,7 +13,6 @@ import {
   assertValidParent,
   FIRST_SUB_NUMBER,
   nextSubNumber,
-  ResolvedPlacement,
 } from "../rules/levels";
 import { createTestingSubtask } from "../rules/testing";
 import { assertWipFree } from "../rules/wip";
@@ -38,14 +38,8 @@ export const createArgs = {
 
 export type CreateIssueArgs = ObjectType<typeof createArgs>;
 
-/** What every check before the first write settled. */
-type CreatePlan = {
-  title: string;
-  team: Doc<"teams">;
-  kind: Doc<"issues">["kind"];
-  status: Doc<"issues">["status"];
-  placement: ResolvedPlacement;
-};
+/** The row every check before the first write settled; only the counters and the rank are claimed after. */
+type NewIssue = Omit<WithoutSystemFields<Doc<"issues">>, "number" | "subNumber" | "nextSubNumber" | "sortOrder">;
 
 /** Stories carry a type (default story); other levels carry none. */
 export function storyType(
@@ -77,7 +71,12 @@ async function claimNumbering(
 }
 
 /** Every create rule that runs before the first write, in the order the refusals have always come. */
-async function planCreate(ctx: MutationCtx, orgId: Id<"organizations">, args: CreateIssueArgs): Promise<CreatePlan> {
+async function planCreate(
+  ctx: MutationCtx,
+  scope: OrgScope,
+  args: CreateIssueArgs
+): Promise<{ team: Doc<"teams">; row: NewIssue }> {
+  const orgId = scope.org._id;
   const title = issueTitle(args.title);
   const team = await requireOrgRow(ctx, orgId, args.teamId, "Team");
   const kind = args.kind ?? "story";
@@ -98,7 +97,26 @@ async function planCreate(ctx: MutationCtx, orgId: Id<"organizations">, args: Cr
   }
   const status = args.status ?? "todo";
   await assertWipFree(ctx, { orgId, assigneeId: args.assigneeId, kind, status });
-  return { title, team, kind, status, placement };
+  return {
+    team,
+    row: {
+      orgId,
+      teamId: placement.teamId,
+      kind,
+      type: storyType(kind, args.type),
+      title,
+      description: args.description,
+      status,
+      priority: args.priority ?? "none",
+      assigneeId: args.assigneeId,
+      creatorId: scope.actorId,
+      projectId: placement.projectId,
+      cycleId: args.cycleId,
+      parentIssueId: args.parentIssueId,
+      estimate: args.estimate,
+      dueDate: args.dueDate,
+    },
+  };
 }
 
 /** New issues sort to the top of their column. */
@@ -110,39 +128,19 @@ async function topSortOrder(ctx: MutationCtx, orgId: Id<"organizations">, teamId
   return (highest?.sortOrder ?? 0) + SORT_GAP;
 }
 
-async function insertIssue(ctx: MutationCtx, scope: OrgScope, args: CreateIssueArgs, plan: CreatePlan) {
-  const numbering = await claimNumbering(ctx, plan.team, plan.kind, args.parentIssueId);
-  const sortOrder = await topSortOrder(ctx, scope.org._id, plan.placement.teamId);
-  return await ctx.db.insert("issues", {
-    orgId: scope.org._id,
-    teamId: plan.placement.teamId,
-    kind: plan.kind,
-    type: storyType(plan.kind, args.type),
-    ...numbering,
-    title: plan.title,
-    description: args.description,
-    status: plan.status,
-    priority: args.priority ?? "none",
-    assigneeId: args.assigneeId,
-    creatorId: scope.actorId,
-    projectId: plan.placement.projectId,
-    cycleId: args.cycleId,
-    parentIssueId: args.parentIssueId,
-    estimate: args.estimate,
-    dueDate: args.dueDate,
-    sortOrder,
-  });
+async function insertIssue(ctx: MutationCtx, team: Doc<"teams">, row: NewIssue): Promise<Doc<"issues">> {
+  const numbering = await claimNumbering(ctx, team, row.kind, row.parentIssueId);
+  const sortOrder = await topSortOrder(ctx, row.orgId, row.teamId);
+  const issueId = await ctx.db.insert("issues", { ...row, ...numbering, sortOrder });
+  return await getOrgIssue(ctx, row.orgId, issueId);
 }
 
 /** After the insert: a story's Complete testing sub-task, then the Done gate, which counts it as a child. */
-async function finishCreate(ctx: MutationCtx, issueId: Id<"issues">, status: Doc<"issues">["status"]) {
-  const created = await ctx.db.get(issueId);
-  if (created?.kind === "story") {
+async function finishCreate(ctx: MutationCtx, created: Doc<"issues">): Promise<void> {
+  if (created.kind === "story") {
     await createTestingSubtask(ctx, created);
   }
-  if (created !== null) {
-    await assertDoneGate(ctx, created, status);
-  }
+  await assertDoneGate(ctx, created, created.status);
 }
 
 /** Every create rule in one place; the Clerk session and agent calls both come through here. */
@@ -151,9 +149,9 @@ export async function createIssue(
   scope: OrgScope,
   args: CreateIssueArgs
 ): Promise<Id<"issues">> {
-  const plan = await planCreate(ctx, scope.org._id, args);
-  const issueId = await insertIssue(ctx, scope, args, plan);
-  await finishCreate(ctx, issueId, plan.status);
-  await logActivity(ctx, { orgId: scope.org._id, issueId, actorId: scope.actorId, type: "created" });
-  return issueId;
+  const { team, row } = await planCreate(ctx, scope, args);
+  const created = await insertIssue(ctx, team, row);
+  await finishCreate(ctx, created);
+  await logActivity(ctx, { orgId: scope.org._id, issueId: created._id, actorId: scope.actorId, type: "created" });
+  return created._id;
 }
