@@ -11,6 +11,12 @@ type BacklogUpdate = { issueId: Id<"issues">; sortOrder?: number; cycleId?: Id<"
 type Dragged = { active: { id: UniqueIdentifier } };
 type DraggedOver = Dragged & { over: { id: UniqueIdentifier } | null };
 
+/** Where the story `id` sits in the loaded backlog, or undefined when it is not loaded. */
+function loadedIndex(stories: RankedIssue[], id: UniqueIdentifier) {
+  const index = stories.findIndex((story) => story._id === id);
+  return index === -1 ? undefined : index;
+}
+
 /**
  * What a drop does to the story `activeId` dropped on the story `overId` of the loaded backlog, in rank order; its last
  * story is the floor. `gone` when either story is not loaded, `inPlace` when it is dropped on its own place.
@@ -21,9 +27,9 @@ export function backlogDrop({ stories, activeId, overId, moreToLoad }: {
   overId: UniqueIdentifier;
   moreToLoad: boolean;
 }): DropOutcome {
-  const from = stories.findIndex((story) => story._id === activeId);
-  const to = stories.findIndex((story) => story._id === overId);
-  if (from === -1 || to === -1) {
+  const from = loadedIndex(stories, activeId);
+  const to = loadedIndex(stories, overId);
+  if (from === undefined || to === undefined) {
     return { kind: "gone" };
   }
   if (from === to) {
@@ -43,13 +49,13 @@ export function backlogDrop({ stories, activeId, overId, moreToLoad }: {
 export function rankAnnouncements(stories: RankedStory[], moreToLoad: boolean) {
   const title = (id: UniqueIdentifier) =>
     stories.find((story) => story._id === id)?.title ?? "Story";
-  const position = (id: UniqueIdentifier) =>
-    `position ${stories.findIndex((story) => story._id === id) + 1} of ${stories.length}`;
-  const drop = (activeId: UniqueIdentifier, overId: UniqueIdentifier) =>
-    backlogDrop({ stories, activeId, overId, moreToLoad });
-  const loaded = (id: UniqueIdentifier) => drop(id, id).kind !== "gone";
+  /** "position K of N" for a loaded story, or undefined once it has left the backlog. */
+  const position = (id: UniqueIdentifier) => {
+    const index = loadedIndex(stories, id);
+    return index === undefined ? undefined : `position ${index + 1} of ${stories.length}`;
+  };
   const dropped = (active: UniqueIdentifier, over: UniqueIdentifier) => {
-    const outcome = drop(active, over);
+    const outcome = backlogDrop({ stories, activeId: active, overId: over, moreToLoad });
     if (outcome.kind === "gone") {
       return `${title(active)} was not moved: the backlog changed during the drag.`;
     }
@@ -57,24 +63,28 @@ export function rankAnnouncements(stories: RankedStory[], moreToLoad: boolean) {
       ? `${title(active)} stays at ${position(active)}. ${REFUSAL_MESSAGE[outcome.reason]}`
       : `${title(active)} dropped at ${position(over)}.`;
   };
-  const over = (active: UniqueIdentifier, target: UniqueIdentifier) =>
-    loaded(target)
-      ? `${title(active)} is over ${position(target)}.`
-      : `${title(active)} is over a story that left the backlog.`;
+  const overText = (active: UniqueIdentifier, target: UniqueIdentifier) => {
+    const at = position(target);
+    return at ? `${title(active)} is over ${at}.` : `${title(active)} is over a story that left the backlog.`;
+  };
 
   return {
-    onDragStart: ({ active }: Dragged) =>
-      loaded(active.id) ? `Picked up ${title(active.id)} at ${position(active.id)}.` : `Picked up ${title(active.id)}.`,
-    onDragOver: ({ active, over: target }: DraggedOver) =>
-      target ? over(active.id, target.id) : `${title(active.id)} is outside the backlog.`,
+    onDragStart: ({ active }: Dragged) => {
+      const at = position(active.id);
+      return at ? `Picked up ${title(active.id)} at ${at}.` : `Picked up ${title(active.id)}.`;
+    },
+    onDragOver: ({ active, over }: DraggedOver) =>
+      over ? overText(active.id, over.id) : `${title(active.id)} is outside the backlog.`,
     onDragEnd: ({ active, over }: DraggedOver) =>
       over
         ? dropped(active.id, over.id)
         : `${title(active.id)} dropped outside the backlog. Its rank is unchanged.`,
-    onDragCancel: ({ active }: Dragged) =>
-      loaded(active.id)
-        ? `Ranking cancelled. ${title(active.id)} stays at ${position(active.id)}.`
-        : `Ranking cancelled. ${title(active.id)} is no longer in the backlog.`,
+    onDragCancel: ({ active }: Dragged) => {
+      const at = position(active.id);
+      return at
+        ? `Ranking cancelled. ${title(active.id)} stays at ${at}.`
+        : `Ranking cancelled. ${title(active.id)} is no longer in the backlog.`;
+    },
   };
 }
 

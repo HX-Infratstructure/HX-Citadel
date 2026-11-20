@@ -1,7 +1,7 @@
 "use client";
 
 import { errorMessage } from "@/lib/error-message";
-import { type DropOutcome, type LoadedOrder, REFUSAL_MESSAGE } from "@/lib/sort-order";
+import { type LoadedOrder, REFUSAL_MESSAGE } from "@/lib/sort-order";
 import {
   closestCorners,
   DndContext,
@@ -48,11 +48,6 @@ function findContainer(
     }
   }
   return null;
-}
-
-/** The card's rank after a drop: its new rank, or its own when the drop leaves it in place. */
-function rankAfter(drop: DropOutcome, own: number) {
-  return drop.kind === "ranked" ? drop.sortOrder : own;
 }
 
 /**
@@ -231,8 +226,7 @@ export function BoardView({
       toast(REFUSAL_MESSAGE[drop.reason]);
       return;
     }
-    const sortOrder = rankAfter(drop, issue.sortOrder);
-    const orderChanged = sortOrder !== issue.sortOrder;
+    const orderChanged = drop.kind === "ranked";
     if (!statusChanged && !orderChanged) {
       return;
     }
@@ -240,7 +234,7 @@ export function BoardView({
     updateIssue({
       issueId: activeId,
       ...(statusChanged ? { status: activeContainer } : {}),
-      ...(orderChanged ? { sortOrder } : {}),
+      ...(orderChanged ? { sortOrder: drop.sortOrder } : {}),
     }).catch((error: unknown) => {
       toast.error(
         errorMessage(error, "Failed to move issue")

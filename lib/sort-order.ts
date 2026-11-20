@@ -71,20 +71,20 @@ function aboveFloor({ above, below, floor }: LoadedDrop, rank: number) {
  * below it. While more is to load, the floor stands in for a missing lower neighbour, and a rank must lie above it:
  * `placeRank` re-spaces a tie upward, so every loaded row stays loaded. A drop between two loaded neighbours whose
  * midpoint equals one of them is refused, loaded or not, because the server can't tell which side was meant. A drop
- * between two neighbours that both hold `own` is refused as no room: no rank there differs from `own`, so the server
- * would not move the row. A rank equal to `own` leaves the row in place.
+ * between two loaded neighbours that both hold `own` is refused as no room: no rank between them differs from `own`,
+ * so the server would not move the row. A rank equal to `own` leaves the row in place.
  */
 export function rankInLoaded(drop: LoadedDrop): DropOutcome {
-  const { above, own, moreToLoad } = drop;
-  const below = lowerBound(drop);
+  const { above, below, own, moreToLoad } = drop;
   if (above === own && below === own) {
     return { kind: "refused", reason: "noRoom" };
   }
-  const sortOrder = sortOrderBetween(above, below);
+  const lower = lowerBound(drop);
+  const sortOrder = sortOrderBetween(above, lower);
   if (sortOrder === undefined) {
     return { kind: "refused", reason: moreToLoad ? "loadMore" : "noRoom" };
   }
-  if (noRoomBetween(above, drop.below, sortOrder)) {
+  if (noRoomBetween(above, below, sortOrder)) {
     return { kind: "refused", reason: "noRoom" };
   }
   if (moreToLoad && !aboveFloor(drop, sortOrder)) {

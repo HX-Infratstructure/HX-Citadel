@@ -140,7 +140,7 @@ describe("a drop whose midpoint ties a loaded row in another column (CodeRabbit 
     const team = await teamWith(rows);
     const { first, held, pinned } = await pageOne(board(team), 4);
     const card = (title: string) => first.page.find((issue) => issue.title === title)!;
-    expect(dropRank({ column: [card("D"), card("M")], index: 1, loaded, fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 2000 });
+    expect(dropRank({ column: [card("D"), card("M")], index: 1, loaded, fromOtherColumn: true })).toEqual({ kind: "inPlace" });
     await team.asMember.mutation(api.issues.update, { issueId: team.ids.M, status: "backlog" });
     expect(await pinned()).toEqual(held);
   });

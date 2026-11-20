@@ -34,8 +34,8 @@ describe("dropRank", () => {
   });
 
   it("keeps the card's rank in an empty column", () => {
-    expect(dropRank({ column: [X], index: 0, loaded: allLoaded(5), fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 5 });
-    expect(dropRank({ column: [X], index: 0, loaded: more(5), fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 5 });
+    expect(dropRank({ column: [X], index: 0, loaded: allLoaded(5), fromOtherColumn: true })).toEqual({ kind: "inPlace" });
+    expect(dropRank({ column: [X], index: 0, loaded: more(5), fromOtherColumn: true })).toEqual({ kind: "inPlace" });
   });
 
   it("lands a drop at the bottom of a column between the bottom card and the floor while more is to load", () => {
@@ -55,8 +55,8 @@ describe("dropRank", () => {
   it("keeps the rank of a card moved in from another column onto a spot that can't be ranked, so its status still changes", () => {
     const moved = card("M", "in_progress", 50);
     const column = [A, card("T2", "todo", 10, 2), moved, card("T1", "todo", 10, 1)];
-    expect(dropRank({ column, index: 2, loaded: more(10), fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 50 });
-    expect(dropRank({ column: [B, C, moved], index: 2, loaded: more(10), fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 50 });
+    expect(dropRank({ column, index: 2, loaded: more(10), fromOtherColumn: true })).toEqual({ kind: "inPlace" });
+    expect(dropRank({ column: [B, C, moved], index: 2, loaded: more(10), fromOtherColumn: true })).toEqual({ kind: "inPlace" });
   });
 
   it("places a move at a midpoint that a card in another column holds (CodeRabbit 4623501051)", () => {
@@ -77,10 +77,10 @@ describe("dropRank", () => {
     }
   });
 
-  it("refuses a move inside a tie at the floor as no room while more is to load (thermos P3-3)", () => {
+  it("refuses a move between two loaded cards tied at the floor as no room, and asks to load more for a drop to the very bottom (thermos P3-3)", () => {
     const column = [A, card("T3", "todo", 10, 3), card("T1", "todo", 10, 1), card("T2", "todo", 10, 2)];
     expect(dropRank({ column, index: 2, loaded: more(10), fromOtherColumn: false })).toEqual({ kind: "refused", reason: "noRoom" });
-    expect(dropRank({ column, index: 3, loaded: more(10), fromOtherColumn: false })).toEqual({ kind: "refused", reason: "noRoom" });
+    expect(dropRank({ column, index: 3, loaded: more(10), fromOtherColumn: false })).toEqual({ kind: "refused", reason: "loadMore" });
   });
 });
 
@@ -106,7 +106,7 @@ describe("dropRank at a tie or a gap with no room", () => {
     const column = [card("U", "todo", upper), card("M", "todo", 2000), card("L", "todo", lower)];
     for (const loaded of [more(10), allLoaded(10)]) {
       expect(dropRank({ column, index: 1, loaded, fromOtherColumn: false })).toEqual({ kind: "refused", reason: "noRoom" });
-      expect(dropRank({ column, index: 1, loaded, fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 2000 });
+      expect(dropRank({ column, index: 1, loaded, fromOtherColumn: true })).toEqual({ kind: "inPlace" });
     }
   });
 
@@ -116,7 +116,7 @@ describe("dropRank at a tie or a gap with no room", () => {
       const drop = dropRank({ column: [card("T2", "todo", 20, 2), top, bottom], index: 1, loaded, fromOtherColumn: false });
       expect(drop).toEqual({ kind: "refused", reason: "noRoom" });
       expect(drop.kind === "refused" && REFUSAL_MESSAGE[drop.reason]).toBe(NO_ROOM_TO_PLACE);
-      expect(dropRank({ column: [top, card("T2", "done", 20, 2), bottom], index: 1, loaded, fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 20 });
+      expect(dropRank({ column: [top, card("T2", "done", 20, 2), bottom], index: 1, loaded, fromOtherColumn: true })).toEqual({ kind: "inPlace" });
     }
   });
 
@@ -161,7 +161,7 @@ describe("dropRank over a partly loaded board", () => {
         outcomes.refused++;
         continue;
       }
-      if (drop.kind !== "ranked" || drop.sortOrder === moved.sortOrder) {
+      if (drop.kind !== "ranked") {
         outcomes.kept++;
         continue;
       }

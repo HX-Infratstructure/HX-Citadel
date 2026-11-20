@@ -166,10 +166,10 @@ describe("backlogDrop", () => {
     }
   });
 
-  it("refuses a move inside a tie at the lowest loaded rank as no room while more is to load (thermos P3-3)", () => {
+  it("refuses a move between two loaded stories tied at the lowest loaded rank as no room, and asks to load more for a move to the very bottom (thermos P3-3)", () => {
     const tie = [stories[0], { ...stories[1], sortOrder: 10, _creationTime: 2 }, { ...stories[2], _creationTime: 1 }, { ...lowest, sortOrder: 10 }];
     expect(backlogDrop({ stories: tie, activeId: tie[1]._id, overId: tie[2]._id, moreToLoad: true })).toEqual({ kind: "refused", reason: "noRoom" });
-    expect(backlogDrop({ stories: tie, activeId: tie[1]._id, overId: tie[3]._id, moreToLoad: true })).toEqual({ kind: "refused", reason: "noRoom" });
+    expect(backlogDrop({ stories: tie, activeId: tie[1]._id, overId: tie[3]._id, moreToLoad: true })).toEqual({ kind: "refused", reason: "loadMore" });
   });
 });
 

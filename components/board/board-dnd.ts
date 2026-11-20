@@ -42,14 +42,12 @@ export function dropRank({ column, index, loaded, fromOtherColumn }: {
   loaded: LoadedOrder;
   fromOtherColumn: boolean;
 }): DropOutcome {
-  const card = column[index];
-  const kept: DropOutcome = { kind: "ranked", sortOrder: card.sortOrder };
   if (column.length === 1) {
-    return kept;
+    return { kind: "inPlace" };
   }
-  const { sortOrder: own } = card;
+  const own = column[index].sortOrder;
   const drop = rankInLoaded({ above: column[index - 1]?.sortOrder, below: column[index + 1]?.sortOrder, own, ...loaded });
-  return fromOtherColumn && drop.kind !== "ranked" ? kept : drop;
+  return fromOtherColumn && drop.kind === "refused" ? { kind: "inPlace" } : drop;
 }
 
 /** Patches a card's status and rank in place on every loaded page of the team's board; the board sorts in the browser. */
