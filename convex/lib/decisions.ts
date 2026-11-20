@@ -1,29 +1,20 @@
 import { PaginationOptions, PaginationResult } from "convex/server";
 import { Infer, v } from "convex/values";
-import { invalid, refuse } from "./refusals";
+import { refuse } from "./refusals";
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { LIST_LIMIT } from "../../lib/api-contract";
-import { decisionAnswerValidator, decisionFields, decisionViaValidator } from "../schema";
+import { decisionFields, decisionViaValidator } from "../schema";
 import { logActivity } from "./activity";
+import { answerSummary, DecisionAnswer, DecisionAsk, parseAnswer, parseAsk } from "./decisionInput";
 import { IssueKeys } from "./issueKeys";
 import { getOrgIssue, inOrg, orgRow, requireOrgRow } from "./orgRows";
 import { OrgScope } from "./orgScope";
 
-export const QUESTION_MAX = 500;
-export const CHOICES_MIN = 2;
-export const CHOICES_MAX = 5;
-export const CHOICE_MAX = 60;
-export const ANSWER_TEXT_MAX = 2000;
-/** How much of an answer's text the `decided` activity row keeps. */
-const SUMMARY_TEXT_MAX = 80;
 /** The most decisions one page of a story's history holds. One is open at a time and a person answers each. */
 export const DECISION_PAGE_MAX = 50;
 
 export type AnswerVia = Infer<typeof decisionViaValidator>;
-type Answer = Infer<typeof decisionAnswerValidator>;
-export type DecisionAsk = { issueId: Id<"issues">; question: string; choices?: string[]; recommended?: string };
-export type DecisionAnswer = { decisionId: Id<"decisions">; choice?: string; text?: string };
 
 export const decisionValidator = v.object({ _id: v.id("decisions"), _creationTime: v.number(), ...decisionFields });
 export const listedDecisionValidator = v.object({
@@ -34,62 +25,6 @@ export const listedDecisionValidator = v.object({
 export type ListedDecision = Infer<typeof listedDecisionValidator>;
 
 type Db = { db: QueryCtx["db"] };
-
-function invalidDecision(message: string): never {
-  invalid(`Invalid decision: ${message}`);
-}
-
-function boundedText(value: string, max: number, what: string): string {
-  const text = value.trim();
-  if (text.length === 0 || text.length > max) {
-    invalidDecision(`${what} must be 1 to ${max} characters`);
-  }
-  return text;
-}
-
-function parseChoices(choices: string[]): string[] {
-  if (choices.length < CHOICES_MIN || choices.length > CHOICES_MAX) {
-    invalidDecision(`give ${CHOICES_MIN} to ${CHOICES_MAX} choices, not ${choices.length}`);
-  }
-  const parsed = choices.map((choice) => boundedText(choice, CHOICE_MAX, "each choice"));
-  if (new Set(parsed).size !== parsed.length) {
-    invalidDecision("the choices must all be different");
-  }
-  return parsed;
-}
-
-function pickChoice(choices: string[] | undefined, choice: string): string {
-  const picked = choice.trim();
-  if (!(choices ?? []).includes(picked)) {
-    invalidDecision(`"${picked}" is not one of the choices`);
-  }
-  return picked;
-}
-
-function parseAsk({ question, choices, recommended }: DecisionAsk) {
-  const parsedChoices = choices === undefined ? undefined : parseChoices(choices);
-  return {
-    question: boundedText(question, QUESTION_MAX, "the question"),
-    choices: parsedChoices,
-    recommended: recommended === undefined ? undefined : pickChoice(parsedChoices, recommended),
-  };
-}
-
-function parseAnswer(decision: Doc<"decisions">, { choice, text }: DecisionAnswer): Answer {
-  if (choice === undefined && text === undefined) {
-    invalidDecision("answer with a choice, a text, or both");
-  }
-  return {
-    choice: choice === undefined ? undefined : pickChoice(decision.choices, choice),
-    text: text === undefined ? undefined : boundedText(text, ANSWER_TEXT_MAX, "the answer text"),
-  };
-}
-
-/** The `decided` activity row's value: the choice and/or the start of the text. */
-function answerSummary({ choice, text }: Answer): string {
-  const start = text !== undefined && text.length > SUMMARY_TEXT_MAX ? `${text.slice(0, SUMMARY_TEXT_MAX)}…` : text;
-  return [choice, start].filter((part) => part !== undefined).join(": ");
-}
 
 /** Decisions sit on stories, where the board shows the flag; a sub-task's refusal names its story. */
 async function assertStory(ctx: Db, issue: Doc<"issues">): Promise<void> {

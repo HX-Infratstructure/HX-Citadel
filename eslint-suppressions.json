@@ -304,16 +304,6 @@
       "count": 1
     }
   },
-  "convex/lib/decisions.ts": {
-    "max-lines": {
-      "count": 1
-    }
-  },
-  "convex/lib/rules/levels.ts": {
-    "max-lines": {
-      "count": 1
-    }
-  },
   "convex/mirror.ts": {
     "max-lines": {
       "count": 1

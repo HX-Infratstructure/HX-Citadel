@@ -100,7 +100,7 @@ export const decisionViaValidator = v.union(v.literal("story"), v.literal("inbox
 
 export const decisionAnswerValidator = v.object({ choice: v.optional(v.string()), text: v.optional(v.string()) });
 
-/** A decision an agent asks the owner about one story; the limits and rules live in `convex/lib/decisions.ts`. */
+/** A decision an agent asks the owner about one story; the limits live in `convex/lib/decisionInput.ts`, the rules in `convex/lib/decisions.ts`. */
 export const decisionFields = {
   orgId: v.id("organizations"),
   issueId: v.id("issues"),
