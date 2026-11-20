@@ -1,5 +1,5 @@
 import { ObjectType, v } from "convex/values";
-import { Doc } from "../../_generated/dataModel";
+import { Doc, Id } from "../../_generated/dataModel";
 import { MutationCtx } from "../../_generated/server";
 import { PARENT_KIND } from "../../../lib/issue-key";
 import { ActivityActor, changedFields, FieldLogOptions, logFieldChanges } from "../activity";
@@ -37,15 +37,22 @@ function titleUpdate(args: UpdateIssueArgs): Updates {
   return args.title === undefined ? {} : { title: issueTitle(args.title) };
 }
 
-/** Fields with no rule of their own; null clears. `patchIssue` and `changedFields` drop an unchanged value. */
-function plainUpdates(issue: Doc<"issues">, args: UpdateIssueArgs): Updates {
+function statusUpdate(issue: Doc<"issues">, args: UpdateIssueArgs): Updates {
+  // An unchanged status stays out, or it would re-run the Done gate and the WIP check.
+  if (args.status === undefined || args.status === issue.status) {
+    return {};
+  }
+  return { status: args.status };
+}
+
+/**
+ * Fields with no rule of their own; only estimate and dueDate take null, which clears them. `patchIssue` and
+ * `changedFields` drop an unchanged value.
+ */
+function plainUpdates(args: UpdateIssueArgs): Updates {
   const updates: Updates = {};
   if (args.description !== undefined) {
     updates.description = args.description;
-  }
-  // An unchanged status stays out, or it would re-run the Done gate and the WIP check.
-  if (args.status !== undefined && args.status !== issue.status) {
-    updates.status = args.status;
   }
   if (args.priority !== undefined) {
     updates.priority = args.priority;
@@ -59,12 +66,16 @@ function plainUpdates(issue: Doc<"issues">, args: UpdateIssueArgs): Updates {
   return updates;
 }
 
-async function assigneeUpdate(ctx: MutationCtx, actor: ActivityActor, args: UpdateIssueArgs): Promise<Updates> {
+/**
+ * Once `assigneeId` is sent, its key is always in the updates, even when it names the current assignee, so
+ * re-sending the current assignee re-runs the WIP check (`assertWipFreeAfterUpdate`) on purpose.
+ */
+async function assigneeUpdate(ctx: MutationCtx, orgId: Id<"organizations">, args: UpdateIssueArgs): Promise<Updates> {
   if (args.assigneeId === undefined) {
     return {};
   }
   if (args.assigneeId !== null) {
-    await assertAssignee(ctx, actor.orgId, args.assigneeId);
+    await assertAssignee(ctx, orgId, args.assigneeId);
   }
   return { assigneeId: args.assigneeId ?? undefined };
 }
@@ -96,7 +107,7 @@ async function projectUpdate(
 
 async function cycleUpdate(
   ctx: MutationCtx,
-  actor: ActivityActor,
+  orgId: Id<"organizations">,
   issue: Doc<"issues">,
   args: UpdateIssueArgs
 ): Promise<Updates> {
@@ -104,7 +115,7 @@ async function cycleUpdate(
     return {};
   }
   if (args.cycleId !== null) {
-    await assertCycleInTeam(ctx, actor.orgId, args.cycleId, issue.teamId);
+    await assertCycleInTeam(ctx, orgId, args.cycleId, issue.teamId);
   }
   return { cycleId: args.cycleId ?? undefined };
 }
@@ -129,12 +140,13 @@ export async function updateIssue(
   // Refusals come in this order: title, assignee, project, cycle, rank, then the WIP check and the Done gate.
   // projectUpdate moves descendants and rankUpdate re-spaces ties as they run; a later refusal rolls both back.
   const title = titleUpdate(args);
-  const plain = plainUpdates(issue, args);
-  const assignee = await assigneeUpdate(ctx, actor, args);
+  const status = statusUpdate(issue, args);
+  const plain = plainUpdates(args);
+  const assignee = await assigneeUpdate(ctx, actor.orgId, args);
   const project = await projectUpdate(ctx, actor, issue, args);
-  const cycle = await cycleUpdate(ctx, actor, issue, args);
+  const cycle = await cycleUpdate(ctx, actor.orgId, issue, args);
   const rank = await rankUpdate(ctx, issue, args);
-  const updates: Updates = { ...title, ...plain, ...assignee, ...project, ...cycle, ...rank };
+  const updates: Updates = { ...title, ...status, ...plain, ...assignee, ...project, ...cycle, ...rank };
   await assertWipFreeAfterUpdate(ctx, issue, updates);
   await assertDoneGateAfterUpdate(ctx, issue, updates);
   await patchIssue(ctx, issue._id, updates);

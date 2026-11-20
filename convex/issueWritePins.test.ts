@@ -50,12 +50,15 @@ async function footprint(s: Setup, issueId: Id<"issues">) {
 }
 
 /**
- * Pins today's behaviour on the write branches of `createIssue`, `updateIssue` and `revertChange` that no other test
- * reaches, so moving their bodies out of `convex/issues.ts` can't change it unnoticed.
+ * Pins the write branches of `createIssue`, `updateIssue` and `revertChange` that no other test reaches, so moving
+ * their bodies out of `convex/issues.ts` can't change them unnoticed. Most pins hold the behaviour as it stood before
+ * the split. The two create pins with a missing parent hold the owner-approved change: a missing parent refuses with
+ * "Parent issue not found", and only after `assertValidParent`'s kind checks, such as "needs a project".
  */
 describe("issue write pins", () => {
-  // Catches a create that reads the parent only through `assertValidParent`, which says "Parent issue not found".
-  test("create with a missing parent refuses with Issue not found", async () => {
+  // Catches a create that still reads the parent with its own lookup, which says "Issue not found", instead of only
+  // through `assertValidParent`, which says "Parent issue not found"; or one that writes an issue anyway.
+  test("create with a missing parent refuses with Parent issue not found", async () => {
     const s = await setup();
     const goneId = await s.asMember.mutation(api.issues.create, { teamId: s.teamId, title: "Gone" });
     await s.t.run((ctx) => ctx.db.delete(goneId));
@@ -65,7 +68,7 @@ describe("issue write pins", () => {
       .mutation(api.issues.create, { teamId: s.teamId, kind: "subtask", parentIssueId: goneId, title: "Orphan" })
       .catch(refusalOf);
 
-    expect(error).toEqual({ code: "not_found", message: "Issue not found" });
+    expect(error).toEqual({ code: "not_found", message: "Parent issue not found" });
     expect(await s.issueCount()).toBe(issuesBefore);
   });
 
@@ -276,5 +279,21 @@ describe("issue write pins", () => {
     });
     expect((await s.issue(storyId)).priority).toBe("high");
     expect(await footprint(s, storyId)).toEqual(before);
+  });
+
+  // Catches a create that reads the parent before `assertValidParent`'s project check, so an epic with no project
+  // and a missing parent hears "Issue not found" instead of "An epic needs a project"; or one that writes an issue.
+  test("create with no project and a missing parent refuses for the project first", async () => {
+    const s = await setup();
+    const goneId = await s.asMember.mutation(api.issues.create, { teamId: s.teamId, title: "Gone" });
+    await s.t.run((ctx) => ctx.db.delete(goneId));
+    const issuesBefore = await s.issueCount();
+
+    const error = await s.asMember
+      .mutation(api.issues.create, { teamId: s.teamId, kind: "epic", parentIssueId: goneId, title: "Unplaced" })
+      .catch(refusalOf);
+
+    expect(error).toEqual({ code: "rule_refused", message: "An epic needs a project" });
+    expect(await s.issueCount()).toBe(issuesBefore);
   });
 });
