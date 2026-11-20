@@ -29,6 +29,16 @@ export function boardColumns(issues: Card[]): Columns {
   return columns;
 }
 
+/** The card right above the card at `index` of `column`: the neighbour `dropRank` ranks under. */
+function cardAbove(column: Card[], index: number): Card | undefined {
+  return column[index - 1];
+}
+
+/** The loaded card a drop at `index` of `column` lands right under, the one `dropRank` ranks against; null at the top. */
+export function boardAnchor(column: Card[], index: number): Id<"issues"> | null {
+  return cardAbove(column, index)?._id ?? null;
+}
+
 /**
  * What a drop does to the card at `index` of `column`, the target column's loaded cards in order with the card in
  * place. `loaded` is the team's loaded rank order, whatever the filter.
@@ -46,7 +56,8 @@ export function dropRank({ column, index, loaded, fromOtherColumn }: {
     return { kind: "inPlace" };
   }
   const own = column[index].sortOrder;
-  const drop = rankInLoaded({ above: column[index - 1]?.sortOrder, below: column[index + 1]?.sortOrder, own, ...loaded });
+  const above = cardAbove(column, index)?.sortOrder;
+  const drop = rankInLoaded({ above, below: column[index + 1]?.sortOrder, own, ...loaded });
   return fromOtherColumn && drop.kind === "refused" ? { kind: "inPlace" } : drop;
 }
 

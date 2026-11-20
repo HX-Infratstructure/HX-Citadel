@@ -3,7 +3,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import type { IssueStatus } from "@/components/shared/issue-meta";
 import { fakeLocalStore } from "@/components/fake-local-store";
 import { byRank, LOAD_MORE_TO_PLACE, NO_ROOM_TO_PLACE, REFUSAL_MESSAGE, SORT_GAP } from "@/lib/sort-order";
-import { boardColumns, dropRank, updateBoard } from "./board-dnd";
+import { boardAnchor, boardColumns, dropRank, updateBoard } from "./board-dnd";
 
 const card = (id: string, status: IssueStatus, sortOrder: number, _creationTime = 0) => ({
   _id: id as Id<"issues">,
@@ -228,5 +228,46 @@ describe("updateBoard", () => {
     const { queries, localStore } = loadedBoard();
     updateBoard(localStore, TEAM, { issueId: "B" as Id<"issues">, sortOrder: 40 });
     expect(queries[0].value.page[2]).toEqual(row("B", "todo", 40));
+  });
+});
+
+describe("boardAnchor", () => {
+  const column = [A, B, C];
+
+  it("is null for a card dropped at the top of its column", () => {
+    expect(boardAnchor([C, A, B], 0)).toBeNull();
+    expect(boardAnchor([X, ...column], 0)).toBeNull();
+  });
+
+  it("is the card right above a card dropped in the middle, moved up or down", () => {
+    expect(boardAnchor([A, C, B], 1)).toBe("A");
+    expect(boardAnchor([B, A, C], 1)).toBe("B");
+  });
+
+  it("is the last card above a card dropped at the bottom, moved down or from another column", () => {
+    expect(boardAnchor([B, C, A], 2)).toBe("C");
+    expect(boardAnchor([...column, X], 3)).toBe("C");
+  });
+
+  it("over random columns, is the card above the drop slot, at or above the rank dropRank gives, and null exactly when that rank tops every other card", () => {
+    for (let seed = 1; seed <= 300; seed++) {
+      const next = random(seed);
+      const grid = () => 10 * (1 + Math.floor(next() * 6));
+      const others = Array.from({ length: 1 + Math.floor(next() * 6) }, (_, i) => card(`O${i}`, "todo", grid(), i)).sort(byRank);
+      const index = Math.floor(next() * (others.length + 1));
+      const moved = card("M", "in_progress", grid(), 99);
+      const placed = [...others.slice(0, index), moved, ...others.slice(index)];
+      const floor = Math.min(...placed.map((c) => c.sortOrder)) - (next() < 0.5 ? 0 : 5);
+      const loaded = { floor, moreToLoad: next() < 0.5 };
+      const anchor = boardAnchor(placed, index);
+      const label = `seed ${seed}`;
+      expect(anchor, label).toBe(index === 0 ? null : others[index - 1]._id);
+      const drop = dropRank({ column: placed, index, loaded, fromOtherColumn: next() < 0.5 });
+      if (drop.kind === "ranked") {
+        const above = others.find((c) => c._id === anchor);
+        expect(anchor === null, label).toBe(others.every((c) => c.sortOrder < drop.sortOrder));
+        expect(above === undefined || drop.sortOrder <= above.sortOrder, label).toBe(true);
+      }
+    }
   });
 });

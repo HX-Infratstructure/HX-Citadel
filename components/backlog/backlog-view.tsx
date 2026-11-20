@@ -5,7 +5,6 @@ import {
   DragEndEvent,
   KeyboardSensor,
   PointerSensor,
-  UniqueIdentifier,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
@@ -20,18 +19,8 @@ import { api } from "@/convex/_generated/api";
 import { Doc, Id } from "@/convex/_generated/dataModel";
 import { errorMessage } from "@/lib/error-message";
 import { REFUSAL_MESSAGE } from "@/lib/sort-order";
-import { backlogDrop, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
+import { backlogAnchor, backlogDrop, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
 import { BacklogRow } from "./backlog-row";
-
-/**
- * The loaded story right above the slot `activeId` lands in when dropped on `overId`, or `null` at the top: the target
- * itself when moving down, the story before the target when moving up.
- */
-function storyAbove(stories: Doc<"issues">[], activeId: UniqueIdentifier, overId: UniqueIdentifier): Id<"issues"> | null {
-  const from = stories.findIndex((story) => story._id === activeId);
-  const to = stories.findIndex((story) => story._id === overId);
-  return (from < to ? stories[to] : stories[to - 1])?._id ?? null;
-}
 
 export function BacklogView({
   team,
@@ -69,7 +58,7 @@ export function BacklogView({
       toast(REFUSAL_MESSAGE[drop.reason]);
     }
     if (drop.kind === "ranked") {
-      const aboveId = storyAbove(issues, active.id, over.id);
+      const aboveId = backlogAnchor(issues, active.id, over.id);
       update({ issueId: active.id as Id<"issues">, sortOrder: drop.sortOrder, aboveId }, "Failed to rank story");
     }
   };

@@ -26,7 +26,7 @@ import { Id } from "@/convex/_generated/dataModel";
 import { IssueStatus, STATUSES, TeamIssue } from "@/components/shared/issue-meta";
 import { BoardCardContent, CardAssignee, CardLabel } from "./board-card";
 import { BoardColumn, cardLabels, COLUMN_ID_PREFIX } from "./board-column";
-import { boardColumns, Columns, dropRank, updateBoard } from "./board-dnd";
+import { boardAnchor, boardColumns, Columns, dropRank, updateBoard } from "./board-dnd";
 
 const STATUS_SET = new Set<string>(STATUSES.map((s) => s.value));
 
@@ -48,11 +48,6 @@ function findContainer(
     }
   }
   return null;
-}
-
-/** A rank update for the card at `index` of `column`, anchored on the loaded card right above it (`null` at the top). */
-function rankMove(column: TeamIssue[], index: number, sortOrder: number) {
-  return { sortOrder, aboveId: index === 0 ? null : column[index - 1]._id };
 }
 
 /**
@@ -239,7 +234,7 @@ export function BoardView({
     updateIssue({
       issueId: activeId,
       ...(statusChanged ? { status: activeContainer } : {}),
-      ...(orderChanged ? rankMove(column, index, drop.sortOrder) : {}),
+      ...(orderChanged ? { sortOrder: drop.sortOrder, aboveId: boardAnchor(column, index) } : {}),
     }).catch((error: unknown) => {
       toast.error(
         errorMessage(error, "Failed to move issue")

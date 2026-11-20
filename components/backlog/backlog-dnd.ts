@@ -17,6 +17,35 @@ function loadedIndex(stories: RankedIssue[], id: UniqueIdentifier) {
   return index === -1 ? undefined : index;
 }
 
+type Landing<T> = { from: number; to: number; above?: T; below?: T };
+
+/**
+ * Where the story `activeId` lands when dropped on the story `overId`: its old and new place and its new neighbours in
+ * the loaded backlog after the move. Undefined when either story is not loaded.
+ */
+function landing<T extends RankedIssue>(
+  stories: T[],
+  activeId: UniqueIdentifier,
+  overId: UniqueIdentifier
+): Landing<T> | undefined {
+  const from = loadedIndex(stories, activeId);
+  const to = loadedIndex(stories, overId);
+  if (from === undefined || to === undefined) {
+    return undefined;
+  }
+  const moved = arrayMove(stories, from, to);
+  return { from, to, above: moved[to - 1], below: moved[to + 1] };
+}
+
+/** The loaded story a drop of `activeId` on `overId` lands right under, the one `backlogDrop` ranks against; else null. */
+export function backlogAnchor<T extends RankedIssue>(
+  stories: T[],
+  activeId: UniqueIdentifier,
+  overId: UniqueIdentifier
+): T["_id"] | null {
+  return landing(stories, activeId, overId)?.above?._id ?? null;
+}
+
 /**
  * What a drop does to the story `activeId` dropped on the story `overId` of the loaded backlog, in rank order; its last
  * story is the floor. `gone` when either story is not loaded, `inPlace` when it is dropped on its own place.
@@ -27,18 +56,17 @@ export function backlogDrop({ stories, activeId, overId, moreToLoad }: {
   overId: UniqueIdentifier;
   moreToLoad: boolean;
 }): DropOutcome {
-  const from = loadedIndex(stories, activeId);
-  const to = loadedIndex(stories, overId);
-  if (from === undefined || to === undefined) {
+  const landed = landing(stories, activeId, overId);
+  if (landed === undefined) {
     return { kind: "gone" };
   }
+  const { from, to, above, below } = landed;
   if (from === to) {
     return { kind: "inPlace" };
   }
-  const moved = arrayMove(stories, from, to);
   return rankInLoaded({
-    above: moved[to - 1]?.sortOrder,
-    below: moved[to + 1]?.sortOrder,
+    above: above?.sortOrder,
+    below: below?.sortOrder,
     own: stories[from].sortOrder,
     floor: stories.at(-1)?.sortOrder,
     moreToLoad,
