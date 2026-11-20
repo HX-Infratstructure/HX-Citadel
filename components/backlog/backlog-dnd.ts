@@ -3,7 +3,7 @@ import { arrayMove } from "@dnd-kit/sortable";
 import type { OptimisticLocalStore } from "convex/browser";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { byRank, type DropRank, rankInLoaded, REFUSAL_MESSAGE } from "@/lib/sort-order";
+import { byRank, type DropOutcome, rankInLoaded, REFUSAL_MESSAGE } from "@/lib/sort-order";
 
 type RankedIssue = { _id: string; sortOrder: number; _creationTime: number };
 type RankedStory = RankedIssue & { title: string };
@@ -11,58 +11,80 @@ type BacklogUpdate = { issueId: Id<"issues">; sortOrder?: number; cycleId?: Id<"
 type Dragged = { active: { id: UniqueIdentifier } };
 type DraggedOver = Dragged & { over: { id: UniqueIdentifier } | null };
 
+/** Where the story `id` sits in the loaded backlog, or undefined when it is not loaded. */
+function loadedIndex(stories: RankedIssue[], id: UniqueIdentifier) {
+  const index = stories.findIndex((story) => story._id === id);
+  return index === -1 ? undefined : index;
+}
+
 /**
- * The rank for the story moved from index `from` to `to` of the loaded backlog, in rank order; its last story is the floor.
- * `from` and `to` are indexes of loaded stories.
- * A move inside a run of stories at the story's own rank is refused as no room: that rank is unchanged, so the server
- * would not move the story.
+ * What a drop does to the story `activeId` dropped on the story `overId` of the loaded backlog, in rank order; its last
+ * story is the floor. `gone` when either story is not loaded, `inPlace` when it is dropped on its own place.
  */
-export function moveRank({ stories, from, to, moreToLoad }: {
+export function backlogDrop({ stories, activeId, overId, moreToLoad }: {
   stories: RankedIssue[];
-  from: number;
-  to: number;
+  activeId: UniqueIdentifier;
+  overId: UniqueIdentifier;
   moreToLoad: boolean;
-}): DropRank {
+}): DropOutcome {
+  const from = loadedIndex(stories, activeId);
+  const to = loadedIndex(stories, overId);
+  if (from === undefined || to === undefined) {
+    return { kind: "gone" };
+  }
+  if (from === to) {
+    return { kind: "inPlace" };
+  }
   const moved = arrayMove(stories, from, to);
-  const drop = rankInLoaded({
+  return rankInLoaded({
     above: moved[to - 1]?.sortOrder,
     below: moved[to + 1]?.sortOrder,
+    own: stories[from].sortOrder,
     floor: stories.at(-1)?.sortOrder,
     moreToLoad,
   });
-  const rankUnchanged = from !== to && "sortOrder" in drop && drop.sortOrder === stories[from].sortOrder;
-  return rankUnchanged ? { refused: "noRoom" } : drop;
 }
 
 /** Screen-reader announcements for ranking: story titles and 1-based positions, never internal ids. */
 export function rankAnnouncements(stories: RankedStory[], moreToLoad: boolean) {
   const title = (id: UniqueIdentifier) =>
     stories.find((story) => story._id === id)?.title ?? "Story";
-  const index = (id: UniqueIdentifier) => stories.findIndex((story) => story._id === id);
-  const position = (id: UniqueIdentifier) => `position ${index(id) + 1} of ${stories.length}`;
+  /** "position K of N" for a loaded story, or undefined once it has left the backlog. */
+  const position = (id: UniqueIdentifier) => {
+    const index = loadedIndex(stories, id);
+    return index === undefined ? undefined : `position ${index + 1} of ${stories.length}`;
+  };
   const dropped = (active: UniqueIdentifier, over: UniqueIdentifier) => {
-    if (index(active) === -1 || index(over) === -1) {
+    const outcome = backlogDrop({ stories, activeId: active, overId: over, moreToLoad });
+    if (outcome.kind === "gone") {
       return `${title(active)} was not moved: the backlog changed during the drag.`;
     }
-    const drop = moveRank({ stories, from: index(active), to: index(over), moreToLoad });
-    return "refused" in drop
-      ? `${title(active)} stays at ${position(active)}. ${REFUSAL_MESSAGE[drop.refused]}`
+    return outcome.kind === "refused"
+      ? `${title(active)} stays at ${position(active)}. ${REFUSAL_MESSAGE[outcome.reason]}`
       : `${title(active)} dropped at ${position(over)}.`;
+  };
+  const overText = (active: UniqueIdentifier, target: UniqueIdentifier) => {
+    const at = position(target);
+    return at ? `${title(active)} is over ${at}.` : `${title(active)} is over a story that left the backlog.`;
   };
 
   return {
-    onDragStart: ({ active }: Dragged) =>
-      `Picked up ${title(active.id)} at ${position(active.id)}.`,
+    onDragStart: ({ active }: Dragged) => {
+      const at = position(active.id);
+      return at ? `Picked up ${title(active.id)} at ${at}.` : `Picked up ${title(active.id)}.`;
+    },
     onDragOver: ({ active, over }: DraggedOver) =>
-      over
-        ? `${title(active.id)} is over ${position(over.id)}.`
-        : `${title(active.id)} is outside the backlog.`,
+      over ? overText(active.id, over.id) : `${title(active.id)} is outside the backlog.`,
     onDragEnd: ({ active, over }: DraggedOver) =>
       over
         ? dropped(active.id, over.id)
         : `${title(active.id)} dropped outside the backlog. Its rank is unchanged.`,
-    onDragCancel: ({ active }: Dragged) =>
-      `Ranking cancelled. ${title(active.id)} stays at ${position(active.id)}.`,
+    onDragCancel: ({ active }: Dragged) => {
+      const at = position(active.id);
+      return at
+        ? `Ranking cancelled. ${title(active.id)} stays at ${at}.`
+        : `Ranking cancelled. ${title(active.id)} is no longer in the backlog.`;
+    },
   };
 }
 

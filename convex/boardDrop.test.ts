@@ -4,7 +4,7 @@
  */
 import type { PaginationOptions } from "convex/server";
 import { describe, expect, test } from "vitest";
-import { moveRank } from "../components/backlog/backlog-dnd";
+import { backlogDrop } from "../components/backlog/backlog-dnd";
 import { dropRank } from "../components/board/board-dnd";
 import { byRank, rankInLoaded } from "../lib/sort-order";
 import { api } from "./_generated/api";
@@ -74,7 +74,7 @@ describe("a board drop onto the tie at the floor (thermos round 1)", () => {
   });
 
   test("rankInLoaded still asks to load more for that drop, because its rank is the floor", () => {
-    expect(rankInLoaded({ above: 20, below: 20, floor: 20, moreToLoad: true })).toEqual({ refused: "loadMore" });
+    expect(rankInLoaded({ above: 20, below: 20, own: 50, floor: 20, moreToLoad: true })).toEqual({ kind: "refused", reason: "loadMore" });
   });
 
   test("every drop rankInLoaded accepts keeps all of page 1 loaded after the server ranks it", async () => {
@@ -88,8 +88,8 @@ describe("a board drop onto the tie at the floor (thermos round 1)", () => {
     for (const drop of drops) {
       const team = await teamWith(FLOOR_TIE);
       const { held, pinned } = await pageOne(board(team), 5);
-      const result = rankInLoaded({ ...drop, floor: 20, moreToLoad: true });
-      if ("refused" in result) {
+      const result = rankInLoaded({ ...drop, own: 50, floor: 20, moreToLoad: true });
+      if (result.kind !== "ranked") {
         continue;
       }
       accepted += 1;
@@ -108,7 +108,7 @@ describe("a drop between neighbours too close for a distinct midpoint (CodeRabbi
     const team = await teamWith(rows);
     const { held, pinned } = await pageOne(board(team), 3);
     expect((1000 + D) / 2).toBe(1000);
-    expect(rankInLoaded({ above: 1000, below: D, floor: D, moreToLoad: true })).toEqual({ refused: "noRoom" });
+    expect(rankInLoaded({ above: 1000, below: D, own: 2000, floor: D, moreToLoad: true })).toEqual({ kind: "refused", reason: "noRoom" });
     await team.move("A", 1000);
     expect(await pinned()).toEqual(expect.arrayContaining(held));
   });
@@ -131,7 +131,7 @@ describe("a drop whose midpoint ties a loaded row in another column (CodeRabbit 
     const { first, held, pinned } = await pageOne(board(team), 4);
     const card = (title: string) => first.page.find((issue) => issue.title === title)!;
     expect(first.isDone).toBe(false);
-    expect(dropRank({ column: [card("X"), card("M")], index: 1, loaded, fromOtherColumn: false })).toEqual({ sortOrder: 1000 });
+    expect(dropRank({ column: [card("X"), card("M")], index: 1, loaded, fromOtherColumn: false })).toEqual({ kind: "ranked", sortOrder: 1000 });
     await team.move("M", 1000);
     expect(await pinned()).toEqual(expect.arrayContaining(held));
   });
@@ -140,14 +140,14 @@ describe("a drop whose midpoint ties a loaded row in another column (CodeRabbit 
     const team = await teamWith(rows);
     const { first, held, pinned } = await pageOne(board(team), 4);
     const card = (title: string) => first.page.find((issue) => issue.title === title)!;
-    expect(dropRank({ column: [card("D"), card("M")], index: 1, loaded, fromOtherColumn: true })).toEqual({ sortOrder: 2000 });
+    expect(dropRank({ column: [card("D"), card("M")], index: 1, loaded, fromOtherColumn: true })).toEqual({ kind: "inPlace" });
     await team.asMember.mutation(api.issues.update, { issueId: team.ids.M, status: "backlog" });
     expect(await pinned()).toEqual(held);
   });
 });
 
 describe("a backlog drop whose midpoint ties a row outside the backlog (CodeRabbit 4623632695)", () => {
-  test("moveRank accepts it, and the server's repair keeps every row of the pinned backlog page", async () => {
+  test("backlogDrop accepts it, and the server's repair keeps every row of the pinned backlog page", async () => {
     const team = await teamWith([
       { title: "M", sortOrder: 2000 },
       { title: "X", sortOrder: 1000.0000000000001 },
@@ -157,7 +157,7 @@ describe("a backlog drop whose midpoint ties a row outside the backlog (CodeRabb
     ]);
     const { first, held, pinned } = await pageOne(backlog(team), 3);
     expect(first.page.map((issue) => issue.title)).toEqual(["M", "X", "D"]);
-    expect(moveRank({ stories: first.page, from: 0, to: 1, moreToLoad: true })).toEqual({ sortOrder: 1000 });
+    expect(backlogDrop({ stories: first.page, activeId: first.page[0]._id, overId: first.page[1]._id, moreToLoad: true })).toEqual({ kind: "ranked", sortOrder: 1000 });
     await team.move("M", 1000);
     expect(await pinned()).toEqual(expect.arrayContaining(held));
   });
@@ -178,7 +178,7 @@ describe("a harmless tie on the 1000-step grid (thermos round 3)", () => {
     const card = (title: string) => first.page.find((issue) => issue.title === title)!;
     const column = [card("S300"), card("S290"), card("S298"), card("S51")];
     const drop = dropRank({ column, index: 1, loaded: { floor: 51000, moreToLoad: true }, fromOtherColumn: false });
-    expect(drop).toEqual({ sortOrder: 299000 });
+    expect(drop).toEqual({ kind: "ranked", sortOrder: 299000 });
     const before = await team.ranks();
     await team.move("S290", 299000);
     const after = await team.ranks();
