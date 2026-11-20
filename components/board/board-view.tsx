@@ -50,6 +50,11 @@ function findContainer(
   return null;
 }
 
+/** A rank update for the card at `index` of `column`, anchored on the loaded card right above it (`null` at the top). */
+function rankMove(column: TeamIssue[], index: number, sortOrder: number) {
+  return { sortOrder, aboveId: index === 0 ? null : column[index - 1]._id };
+}
+
 /**
  * Kanban board: one column per status, drag-and-drop via @dnd-kit. Drops
  * persist through `issues.update` with a fractional sortOrder between the
@@ -234,7 +239,7 @@ export function BoardView({
     updateIssue({
       issueId: activeId,
       ...(statusChanged ? { status: activeContainer } : {}),
-      ...(orderChanged ? { sortOrder: drop.sortOrder } : {}),
+      ...(orderChanged ? rankMove(column, index, drop.sortOrder) : {}),
     }).catch((error: unknown) => {
       toast.error(
         errorMessage(error, "Failed to move issue")

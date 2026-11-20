@@ -32,7 +32,7 @@ async function teamWith(rows: Row[]) {
     return new Map(issues.map((issue) => [issue._id, issue.sortOrder]));
   };
   const move = (title: string, sortOrder: number) => asMember.mutation(api.issues.update, { issueId: ids[title], sortOrder });
-  return { asMember, teamId, ids, ranks, move };
+  return { t, asMember, teamId, ids, ranks, move };
 }
 
 type Team = Awaited<ReturnType<typeof teamWith>>;
@@ -245,5 +245,77 @@ describe("the upward tie repair over random teams (T2)", () => {
       const kept = held.filter((id) => id !== team.ids[mover]);
       expect(await pinned(), label).toEqual(expect.arrayContaining(kept));
     }
+  });
+});
+
+const RUN = 1000;
+
+/** A tie of `size` stories at `RUN`, "Mover" below it, and `extra` rows; every read lists the team's issues by rank. */
+async function tieOf(size: number, extra: Row[] = []) {
+  const tied = Array.from({ length: size }, (_, index) => ({ title: `T${index}`, sortOrder: RUN }));
+  const team = await teamWith([...extra, ...tied, { title: "Mover", sortOrder: 0 }]);
+  const rows = async () => (await team.t.run((ctx) => ctx.db.query("issues").collect())).sort(byRank);
+  const listed = async () => (await rows()).map((issue) => issue._id);
+  const moveUnder = (aboveId: Id<"issues"> | null) =>
+    team.asMember.mutation(api.issues.update, { issueId: team.ids.Mover, sortOrder: RUN, aboveId });
+  const runOrder = async () => (await rows()).filter((issue) => issue.sortOrder === RUN).map((issue) => issue._id);
+  return { ...team, rows, listed, moveUnder, runOrder };
+}
+
+/** The issue listed right above `id`, or null when it is first. */
+const listedAbove = (listed: Id<"issues">[], id: Id<"issues">) => listed[listed.indexOf(id) - 1] ?? null;
+
+describe("a drop anchored on its neighbour lands in its exact slot (E1)", () => {
+  test.each([3, 4, 5])("in a tie of %i, right under each card of the run in turn", async (size) => {
+    for (let slot = 0; slot < size; slot++) {
+      const team = await tieOf(size, [{ title: "Top", sortOrder: 5000 }]);
+      const aboveId = (await team.runOrder())[slot];
+      const before = (await team.listed()).filter((id) => id !== team.ids.Mover);
+      await team.moveUnder(aboveId);
+      const after = await team.listed();
+      expect(listedAbove(after, team.ids.Mover), `slot ${slot}`).toBe(aboveId);
+      expect(after.filter((id) => id !== team.ids.Mover), `slot ${slot}`).toEqual(before);
+    }
+  });
+
+  test.each([3, 4, 5])("in a tie of %i, at the top: for null and under a card that ranks above the run", async (size) => {
+    const atTop = await tieOf(size);
+    await atTop.moveUnder(null);
+    expect((await atTop.listed())[0]).toBe(atTop.ids.Mover);
+    const underTop = await tieOf(size, [{ title: "Top", sortOrder: 5000 }]);
+    await underTop.moveUnder(underTop.ids.Top);
+    expect(listedAbove(await underTop.listed(), underTop.ids.Mover)).toBe(underTop.ids.Top);
+  });
+});
+
+/** Moves "Mover" into the tie under the stale `aboveId` and expects today's middle slot, with nothing refused. */
+async function expectMiddleUnder(team: Awaited<ReturnType<typeof tieOf>>, aboveId: Id<"issues">) {
+  const others = (await team.rows()).filter((issue) => issue._id !== team.ids.Mover);
+  await expect(team.moveUnder(aboveId)).resolves.toBeNull();
+  expect((await team.listed()).indexOf(team.ids.Mover)).toBe(expectedIndex(others, RUN));
+}
+
+describe("a stale anchor lands the drop at the tie's middle slot and is never refused (E3)", () => {
+  test("when the anchor was deleted", async () => {
+    const team = await tieOf(4, [{ title: "Gone", sortOrder: 5000 }]);
+    await team.t.run((ctx) => ctx.db.delete(team.ids.Gone));
+    await expectMiddleUnder(team, team.ids.Gone);
+  });
+
+  test("when the anchor moved to a rank below the run", async () => {
+    const team = await tieOf(4, [{ title: "Low", sortOrder: RUN }]);
+    await team.move("Low", -500);
+    await expectMiddleUnder(team, team.ids.Low);
+  });
+
+  test("when the anchor is in another team, even ranked above the run", async () => {
+    const team = await tieOf(4, [{ title: "Top", sortOrder: 5000 }]);
+    const elsewhere = await team.t.run(async (ctx) => {
+      const { orgId, creatorId } = (await ctx.db.get(team.ids.Top))!;
+      const teamId = await ctx.db.insert("teams", { orgId, name: "Ops", key: "OPS", nextIssueNumber: 1 });
+      const story = { orgId, teamId, kind: "story", priority: "none", creatorId, status: "todo" } as const;
+      return await ctx.db.insert("issues", { ...story, title: "Elsewhere", sortOrder: 3000 });
+    });
+    await expectMiddleUnder(team, elsewhere);
   });
 });

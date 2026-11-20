@@ -75,6 +75,34 @@ describe("respaceTie", () => {
   });
 });
 
+describe("respaceTie with a slot", () => {
+  const [first, second, third] = [row(5000, 1), row(5000, 2), row(5000, 3)];
+  const order = (slot: number) => {
+    const ranks = respaceTie(5000, [first, second, third], 9000, slot)!;
+    return [ranks.moved, ...[third, second, first].map((r) => rankOf(ranks, r))].sort((a, b) => b - a).indexOf(ranks.moved);
+  };
+
+  test("puts the moved row at the top of the run for slot 0, the others keeping their listed order below it", () => {
+    const ranks = respaceTie(5000, [first, second, third], 9000, 0);
+    expect([ranks!.moved, rankOf(ranks, third), rankOf(ranks, second), rankOf(ranks, first)]).toEqual([8000, 7000, 6000, 5000]);
+  });
+
+  test("puts the moved row right under the listed row its slot follows, inside the run", () => {
+    const ranks = respaceTie(5000, [first, second, third], 9000, 1);
+    expect([rankOf(ranks, third), ranks!.moved, rankOf(ranks, second), rankOf(ranks, first)]).toEqual([8000, 7000, 6000, 5000]);
+  });
+
+  test("puts the moved row at the bottom of the run, on the tie itself, for the slot after the last row", () => {
+    const ranks = respaceTie(5000, [first, second, third], 9000, 3);
+    expect([rankOf(ranks, third), rankOf(ranks, second), rankOf(ranks, first), ranks!.moved]).toEqual([8000, 7000, 6000, 5000]);
+  });
+
+  test("clamps a slot below 0 to the top and one past the run to the bottom", () => {
+    expect([order(-1), order(-5)]).toEqual([0, 0]);
+    expect([order(4), order(99)]).toEqual([3, 3]);
+  });
+});
+
 const X = 1000.0000000000001;
 const B = 1000;
 const D = 999.9999999999999;

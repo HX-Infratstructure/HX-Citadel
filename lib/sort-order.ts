@@ -96,17 +96,20 @@ export function rankInLoaded(drop: LoadedDrop): DropOutcome {
 /**
  * New ranks for `others` plus one row moved to the rank `tie`. `others` holds the rows at `tie` and any rows ranked
  * between it and `nextHigher` that joined the run. Listed by `byRank`, `others` keep their order and the moved row takes
- * the middle of the rows at `tie`, below a single one. The run steps up evenly from `tie`, which its bottom row keeps,
- * toward `nextHigher`, the closest higher rank, without reaching it; a full `SORT_GAP` apart when nothing ranks higher.
- * Undefined when the gap is too narrow to hold the run as distinct numbers.
+ * `slot`, its index in that list (0 is the top, clamped to the run); without `slot`, it takes the middle of the rows at
+ * `tie`, below a single one. The run steps up evenly from `tie`, which its bottom row keeps, toward `nextHigher`, the
+ * closest higher rank, without reaching it; a full `SORT_GAP` apart when nothing ranks higher. Undefined when the gap
+ * is too narrow to hold the run as distinct numbers.
  */
 export function respaceTie<T extends Ranked>(
   tie: number,
   others: readonly T[],
-  nextHigher?: number
+  nextHigher?: number,
+  slot?: number
 ): { moved: number; others: { row: T; sortOrder: number }[] } | undefined {
   const run = [...others].sort(byRank);
-  const movedSlot = run.length - Math.floor(run.filter((row) => row.sortOrder === tie).length / 2);
+  const middle = run.length - Math.floor(run.filter((row) => row.sortOrder === tie).length / 2);
+  const movedSlot = slot === undefined ? middle : Math.min(Math.max(slot, 0), run.length);
   const slots = run.length + 1;
   const step = nextHigher === undefined ? SORT_GAP : (nextHigher - tie) / slots;
   const ranks = Array.from({ length: slots }, (_, slot) => tie + (slots - 1 - slot) * step);
