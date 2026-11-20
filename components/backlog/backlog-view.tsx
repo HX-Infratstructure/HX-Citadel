@@ -19,7 +19,7 @@ import { api } from "@/convex/_generated/api";
 import { Doc, Id } from "@/convex/_generated/dataModel";
 import { errorMessage } from "@/lib/error-message";
 import { REFUSAL_MESSAGE } from "@/lib/sort-order";
-import { moveRank, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
+import { backlogDrop, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
 import { BacklogRow } from "./backlog-row";
 
 export function BacklogView({
@@ -50,21 +50,15 @@ export function BacklogView({
   };
 
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
-    if (!over || active.id === over.id) {
+    if (!over) {
       return;
     }
-    const from = issues.findIndex((issue) => issue._id === active.id);
-    const to = issues.findIndex((issue) => issue._id === over.id);
-    if (from === -1 || to === -1) {
-      return;
+    const drop = backlogDrop({ stories: issues, activeId: active.id, overId: over.id, moreToLoad });
+    if (drop.kind === "refused") {
+      toast(REFUSAL_MESSAGE[drop.reason]);
     }
-    const drop = moveRank({ stories: issues, from, to, moreToLoad });
-    if ("refused" in drop) {
-      toast(REFUSAL_MESSAGE[drop.refused]);
-      return;
-    }
-    if (drop.sortOrder !== issues[from].sortOrder) {
-      update({ issueId: issues[from]._id, sortOrder: drop.sortOrder }, "Failed to rank story");
+    if (drop.kind === "ranked") {
+      update({ issueId: active.id as Id<"issues">, sortOrder: drop.sortOrder }, "Failed to rank story");
     }
   };
 

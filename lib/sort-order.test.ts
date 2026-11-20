@@ -78,22 +78,24 @@ describe("respaceTie", () => {
 const X = 1000.0000000000001;
 const B = 1000;
 const D = 999.9999999999999;
+/** The dropped row's own rank, which no neighbour, floor or result below holds. */
+const OWN = 7;
 
 describe("rankInLoaded", () => {
   test("accepts a drop whose midpoint ties a row that is not a neighbour, which the server re-spaces upward (CodeRabbit 4623501051)", () => {
     expect((X + D) / 2).toBe(B);
-    expect(rankInLoaded({ above: X, floor: D, moreToLoad: true })).toEqual({ sortOrder: B });
-    expect(rankInLoaded({ above: X, floor: D, moreToLoad: false })).toEqual({ sortOrder: X - SORT_GAP });
+    expect(rankInLoaded({ own: OWN, above: X, floor: D, moreToLoad: true })).toEqual({ kind: "ranked", sortOrder: B });
+    expect(rankInLoaded({ own: OWN, above: X, floor: D, moreToLoad: false })).toEqual({ kind: "ranked", sortOrder: X - SORT_GAP });
   });
 
   test("accepts a harmless tie on the 1000-step grid (thermos round 3)", () => {
-    expect(rankInLoaded({ above: 300000, below: 298000, floor: 51000, moreToLoad: true })).toEqual({ sortOrder: 299000 });
+    expect(rankInLoaded({ own: OWN, above: 300000, below: 298000, floor: 51000, moreToLoad: true })).toEqual({ kind: "ranked", sortOrder: 299000 });
   });
 
   test("refuses a drop between two loaded neighbours too close for a distinct midpoint, loaded or not (CodeRabbit 4623425278)", () => {
     for (const moreToLoad of [true, false]) {
-      expect(rankInLoaded({ above: 1000, below: D, floor: D, moreToLoad })).toEqual({ refused: "noRoom" });
-      expect(rankInLoaded({ above: 1000, below: D, floor: 0, moreToLoad })).toEqual({ refused: "noRoom" });
+      expect(rankInLoaded({ own: OWN, above: 1000, below: D, floor: D, moreToLoad })).toEqual({ kind: "refused", reason: "noRoom" });
+      expect(rankInLoaded({ own: OWN, above: 1000, below: D, floor: 0, moreToLoad })).toEqual({ kind: "refused", reason: "noRoom" });
     }
   });
 
@@ -101,45 +103,45 @@ describe("rankInLoaded", () => {
     expect((900 + 899.9999999999999) / 2).toBe(900);
     expect((900.0000000000001 + 900) / 2).toBe(900);
     for (const moreToLoad of [true, false]) {
-      expect(rankInLoaded({ above: 900, below: 899.9999999999999, floor: 0, moreToLoad })).toEqual({ refused: "noRoom" });
-      expect(rankInLoaded({ above: 900.0000000000001, below: 900, floor: 0, moreToLoad })).toEqual({ refused: "noRoom" });
+      expect(rankInLoaded({ own: OWN, above: 900, below: 899.9999999999999, floor: 0, moreToLoad })).toEqual({ kind: "refused", reason: "noRoom" });
+      expect(rankInLoaded({ own: OWN, above: 900.0000000000001, below: 900, floor: 0, moreToLoad })).toEqual({ kind: "refused", reason: "noRoom" });
     }
   });
 
   test("asks to load more when the floor stands in for a lower neighbour too close to place against", () => {
-    expect(rankInLoaded({ above: 1000, floor: D, moreToLoad: true })).toEqual({ refused: "loadMore" });
-    expect(rankInLoaded({ above: X, floor: 1000, moreToLoad: true })).toEqual({ refused: "loadMore" });
+    expect(rankInLoaded({ own: OWN, above: 1000, floor: D, moreToLoad: true })).toEqual({ kind: "refused", reason: "loadMore" });
+    expect(rankInLoaded({ own: OWN, above: X, floor: 1000, moreToLoad: true })).toEqual({ kind: "refused", reason: "loadMore" });
   });
 
   test("places a drop between two cards tied above the floor, loaded or not", () => {
-    expect(rankInLoaded({ above: 30, below: 30, floor: 10, moreToLoad: true })).toEqual({ sortOrder: 30 });
-    expect(rankInLoaded({ above: 30, below: 30, floor: 10, moreToLoad: false })).toEqual({ sortOrder: 30 });
+    expect(rankInLoaded({ own: OWN, above: 30, below: 30, floor: 10, moreToLoad: true })).toEqual({ kind: "ranked", sortOrder: 30 });
+    expect(rankInLoaded({ own: OWN, above: 30, below: 30, floor: 10, moreToLoad: false })).toEqual({ kind: "ranked", sortOrder: 30 });
   });
 
   test("refuses a drop between two rows tied at the floor while more is to load", () => {
-    expect(rankInLoaded({ above: 1000, below: 1000, floor: 1000, moreToLoad: true })).toEqual({ refused: "loadMore" });
+    expect(rankInLoaded({ own: OWN, above: 1000, below: 1000, floor: 1000, moreToLoad: true })).toEqual({ kind: "refused", reason: "loadMore" });
   });
 
   test("lands a bottom drop between its upper neighbour and the floor while more is to load", () => {
-    expect(rankInLoaded({ above: 3000, floor: 1000, moreToLoad: true })).toEqual({ sortOrder: 2000 });
+    expect(rankInLoaded({ own: OWN, above: 3000, floor: 1000, moreToLoad: true })).toEqual({ kind: "ranked", sortOrder: 2000 });
   });
 
   test("refuses a bottom drop when the row above it is the floor", () => {
-    expect(rankInLoaded({ above: 1000, floor: 1000, moreToLoad: true })).toEqual({ refused: "loadMore" });
+    expect(rankInLoaded({ own: OWN, above: 1000, floor: 1000, moreToLoad: true })).toEqual({ kind: "refused", reason: "loadMore" });
   });
 
   test("ranks below the bottom row once everything is loaded", () => {
-    expect(rankInLoaded({ above: 1000, floor: 1000, moreToLoad: false })).toEqual({ sortOrder: 1000 - SORT_GAP });
-    expect(rankInLoaded({ above: 1000, below: 1000, floor: 1000, moreToLoad: false })).toEqual({ sortOrder: 1000 });
+    expect(rankInLoaded({ own: OWN, above: 1000, floor: 1000, moreToLoad: false })).toEqual({ kind: "ranked", sortOrder: 1000 - SORT_GAP });
+    expect(rankInLoaded({ own: OWN, above: 1000, below: 1000, floor: 1000, moreToLoad: false })).toEqual({ kind: "ranked", sortOrder: 1000 });
   });
 
   test("ranks top and middle drops against their loaded neighbours", () => {
-    expect(rankInLoaded({ below: 3000, floor: 1000, moreToLoad: true })).toEqual({ sortOrder: 3000 + SORT_GAP });
-    expect(rankInLoaded({ above: 5000, below: 3000, floor: 1000, moreToLoad: true })).toEqual({ sortOrder: 4000 });
+    expect(rankInLoaded({ own: OWN, below: 3000, floor: 1000, moreToLoad: true })).toEqual({ kind: "ranked", sortOrder: 3000 + SORT_GAP });
+    expect(rankInLoaded({ own: OWN, above: 5000, below: 3000, floor: 1000, moreToLoad: true })).toEqual({ kind: "ranked", sortOrder: 4000 });
   });
 
   test("refuses when there is nothing to rank against", () => {
-    expect(rankInLoaded({ floor: 1000, moreToLoad: false })).toEqual({ refused: "noRoom" });
-    expect(rankInLoaded({ above: 3000, moreToLoad: true })).toEqual({ refused: "loadMore" });
+    expect(rankInLoaded({ own: OWN, floor: 1000, moreToLoad: false })).toEqual({ kind: "refused", reason: "noRoom" });
+    expect(rankInLoaded({ own: OWN, above: 3000, moreToLoad: true })).toEqual({ kind: "refused", reason: "loadMore" });
   });
 });

@@ -35,10 +35,22 @@ export type DropRefusal = "loadMore" | "noRoom";
 /** What the board and the backlog tell the user when a drop is refused, by reason. */
 export const REFUSAL_MESSAGE: Record<DropRefusal, string> = { loadMore: LOAD_MORE_TO_PLACE, noRoom: NO_ROOM_TO_PLACE };
 
-/** A drop's rank, or why it is refused. */
-export type DropRank = { sortOrder: number } | { refused: DropRefusal };
+/** The loaded part of a rank order. Every row not loaded yet ranks at or below `floor`. */
+export type LoadedOrder = { floor: number | undefined; moreToLoad: boolean };
 
-type LoadedDrop = { above?: number; below?: number; floor?: number; moreToLoad: boolean };
+/** What a drop does: nothing (`gone`, `inPlace`), a refusal with its reason, or a new rank. */
+export type DropOutcome =
+  | { kind: "gone" }
+  | { kind: "inPlace" }
+  | { kind: "refused"; reason: DropRefusal }
+  | { kind: "ranked"; sortOrder: number };
+
+type LoadedDrop = { above?: number; below?: number; own: number; floor?: number; moreToLoad: boolean };
+
+/** The neighbour a drop ranks above: the row below it, or the floor in its place while more is to load. */
+function lowerBound({ below, floor, moreToLoad }: LoadedDrop) {
+  return moreToLoad ? below ?? floor : below;
+}
 
 /** Two loaded neighbours that differ but hold no distinct number between them: their midpoint `rank` equals one. */
 function noRoomBetween(above: number | undefined, below: number | undefined, rank: number) {
@@ -54,25 +66,31 @@ function aboveFloor({ above, below, floor }: LoadedDrop, rank: number) {
 }
 
 /**
- * The rank for a row dropped between its loaded neighbours in a list that shows part of one rank order. `floor` is
- * the lowest loaded rank of that order, and every row not loaded yet ranks at or below it. While more is to load, the
- * floor stands in for a missing lower neighbour, and a rank must lie above it: `placeRank` re-spaces a tie upward, so
- * every loaded row stays loaded. A drop between two loaded neighbours whose midpoint equals one of them is refused,
- * loaded or not, because the server can't tell which side was meant.
+ * What a drop does to a row dropped between its loaded neighbours in a list that shows part of one rank order. `own`
+ * is the row's current rank. `floor` is the lowest loaded rank of that order, and every row not loaded yet ranks at or
+ * below it. While more is to load, the floor stands in for a missing lower neighbour, and a rank must lie above it:
+ * `placeRank` re-spaces a tie upward, so every loaded row stays loaded. A drop between two loaded neighbours whose
+ * midpoint equals one of them is refused, loaded or not, because the server can't tell which side was meant. A drop
+ * between two neighbours that both hold `own` is refused as no room: no rank there differs from `own`, so the server
+ * would not move the row. A rank equal to `own` leaves the row in place.
  */
-export function rankInLoaded(drop: LoadedDrop): DropRank {
-  const { above, below, floor, moreToLoad } = drop;
-  const sortOrder = sortOrderBetween(above, moreToLoad ? below ?? floor : below);
-  if (sortOrder === undefined) {
-    return { refused: moreToLoad ? "loadMore" : "noRoom" };
+export function rankInLoaded(drop: LoadedDrop): DropOutcome {
+  const { above, own, moreToLoad } = drop;
+  const below = lowerBound(drop);
+  if (above === own && below === own) {
+    return { kind: "refused", reason: "noRoom" };
   }
-  if (noRoomBetween(above, below, sortOrder)) {
-    return { refused: "noRoom" };
+  const sortOrder = sortOrderBetween(above, below);
+  if (sortOrder === undefined) {
+    return { kind: "refused", reason: moreToLoad ? "loadMore" : "noRoom" };
+  }
+  if (noRoomBetween(above, drop.below, sortOrder)) {
+    return { kind: "refused", reason: "noRoom" };
   }
   if (moreToLoad && !aboveFloor(drop, sortOrder)) {
-    return { refused: "loadMore" };
+    return { kind: "refused", reason: "loadMore" };
   }
-  return { sortOrder };
+  return sortOrder === own ? { kind: "inPlace" } : { kind: "ranked", sortOrder };
 }
 
 /**

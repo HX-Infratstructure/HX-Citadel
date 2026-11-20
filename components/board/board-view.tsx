@@ -1,7 +1,7 @@
 "use client";
 
 import { errorMessage } from "@/lib/error-message";
-import { REFUSAL_MESSAGE } from "@/lib/sort-order";
+import { type DropOutcome, type LoadedOrder, REFUSAL_MESSAGE } from "@/lib/sort-order";
 import {
   closestCorners,
   DndContext,
@@ -26,7 +26,7 @@ import { Id } from "@/convex/_generated/dataModel";
 import { IssueStatus, STATUSES, TeamIssue } from "@/components/shared/issue-meta";
 import { BoardCardContent, CardAssignee, CardLabel } from "./board-card";
 import { BoardColumn, cardLabels, COLUMN_ID_PREFIX } from "./board-column";
-import { boardColumns, Columns, dropRank, LoadedOrder, updateBoard } from "./board-dnd";
+import { boardColumns, Columns, dropRank, updateBoard } from "./board-dnd";
 
 const STATUS_SET = new Set<string>(STATUSES.map((s) => s.value));
 
@@ -48,6 +48,11 @@ function findContainer(
     }
   }
   return null;
+}
+
+/** The card's rank after a drop: its new rank, or its own when the drop leaves it in place. */
+function rankAfter(drop: DropOutcome, own: number) {
+  return drop.kind === "ranked" ? drop.sortOrder : own;
 }
 
 /**
@@ -222,11 +227,11 @@ export function BoardView({
       return;
     }
     const drop = dropRank({ column, index, loaded, fromOtherColumn: statusChanged });
-    if ("refused" in drop) {
-      toast(REFUSAL_MESSAGE[drop.refused]);
+    if (drop.kind === "refused") {
+      toast(REFUSAL_MESSAGE[drop.reason]);
       return;
     }
-    const { sortOrder } = drop;
+    const sortOrder = rankAfter(drop, issue.sortOrder);
     const orderChanged = sortOrder !== issue.sortOrder;
     if (!statusChanged && !orderChanged) {
       return;

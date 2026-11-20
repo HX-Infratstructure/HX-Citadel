@@ -22,52 +22,65 @@ const allLoaded = (floor: number) => ({ floor, moreToLoad: false });
 
 describe("dropRank", () => {
   it("ranks a drop between two cards at the mean of their ranks", () => {
-    expect(dropRank({ column: [A, X, B], index: 1, loaded: more(5), fromOtherColumn: true })).toEqual({ sortOrder: 25 });
+    expect(dropRank({ column: [A, X, B], index: 1, loaded: more(5), fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 25 });
   });
 
   it("ranks a drop at the top above the top card", () => {
-    expect(dropRank({ column: [X, A, B], index: 0, loaded: more(5), fromOtherColumn: true })).toEqual({ sortOrder: 30 + SORT_GAP });
+    expect(dropRank({ column: [X, A, B], index: 0, loaded: more(5), fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 30 + SORT_GAP });
   });
 
   it("ranks a drop at the bottom below the bottom card once every page is loaded", () => {
-    expect(dropRank({ column: [A, B, X], index: 2, loaded: allLoaded(5), fromOtherColumn: true })).toEqual({ sortOrder: 20 - SORT_GAP });
+    expect(dropRank({ column: [A, B, X], index: 2, loaded: allLoaded(5), fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 20 - SORT_GAP });
   });
 
   it("keeps the card's rank in an empty column", () => {
-    expect(dropRank({ column: [X], index: 0, loaded: allLoaded(5), fromOtherColumn: true })).toEqual({ sortOrder: 5 });
-    expect(dropRank({ column: [X], index: 0, loaded: more(5), fromOtherColumn: true })).toEqual({ sortOrder: 5 });
+    expect(dropRank({ column: [X], index: 0, loaded: allLoaded(5), fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 5 });
+    expect(dropRank({ column: [X], index: 0, loaded: more(5), fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 5 });
   });
 
   it("lands a drop at the bottom of a column between the bottom card and the floor while more is to load", () => {
-    expect(dropRank({ column: [A, B, X], index: 2, loaded: more(5), fromOtherColumn: true })).toEqual({ sortOrder: 12.5 });
-    expect(dropRank({ column: [B, C, A], index: 2, loaded: more(5), fromOtherColumn: false })).toEqual({ sortOrder: 7.5 });
+    expect(dropRank({ column: [A, B, X], index: 2, loaded: more(5), fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 12.5 });
+    expect(dropRank({ column: [B, C, A], index: 2, loaded: more(5), fromOtherColumn: false })).toEqual({ kind: "ranked", sortOrder: 7.5 });
   });
 
   it("refuses a drop at the bottom of a column whose bottom card is the floor while more is to load", () => {
-    expect(dropRank({ column: [B, C, A], index: 2, loaded: more(10), fromOtherColumn: false })).toEqual({ refused: "loadMore" });
+    expect(dropRank({ column: [B, C, A], index: 2, loaded: more(10), fromOtherColumn: false })).toEqual({ kind: "refused", reason: "loadMore" });
   });
 
   it("refuses a move within a column between two cards tied at the floor while more is to load", () => {
     const column = [A, card("T2", "todo", 10, 2), card("M", "todo", 50), card("T1", "todo", 10, 1)];
-    expect(dropRank({ column, index: 2, loaded: more(10), fromOtherColumn: false })).toEqual({ refused: "loadMore" });
+    expect(dropRank({ column, index: 2, loaded: more(10), fromOtherColumn: false })).toEqual({ kind: "refused", reason: "loadMore" });
   });
 
   it("keeps the rank of a card moved in from another column onto a spot that can't be ranked, so its status still changes", () => {
     const moved = card("M", "in_progress", 50);
     const column = [A, card("T2", "todo", 10, 2), moved, card("T1", "todo", 10, 1)];
-    expect(dropRank({ column, index: 2, loaded: more(10), fromOtherColumn: true })).toEqual({ sortOrder: 50 });
-    expect(dropRank({ column: [B, C, moved], index: 2, loaded: more(10), fromOtherColumn: true })).toEqual({ sortOrder: 50 });
+    expect(dropRank({ column, index: 2, loaded: more(10), fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 50 });
+    expect(dropRank({ column: [B, C, moved], index: 2, loaded: more(10), fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 50 });
   });
 
   it("places a move at a midpoint that a card in another column holds (CodeRabbit 4623501051)", () => {
     const x = card("X", "todo", 1000.0000000000001);
     const floor = 999.9999999999999;
-    expect(dropRank({ column: [x, card("M", "todo", 2000)], index: 1, loaded: more(floor), fromOtherColumn: false })).toEqual({ sortOrder: 1000 });
-    expect(dropRank({ column: [x, card("M", "done", 2000)], index: 1, loaded: more(floor), fromOtherColumn: true })).toEqual({ sortOrder: 1000 });
+    expect(dropRank({ column: [x, card("M", "todo", 2000)], index: 1, loaded: more(floor), fromOtherColumn: false })).toEqual({ kind: "ranked", sortOrder: 1000 });
+    expect(dropRank({ column: [x, card("M", "done", 2000)], index: 1, loaded: more(floor), fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 1000 });
   });
 
   it("reorders within the card's own column between loaded cards while more is to load", () => {
-    expect(dropRank({ column: [B, A, C], index: 1, loaded: more(10), fromOtherColumn: false })).toEqual({ sortOrder: 15 });
+    expect(dropRank({ column: [B, A, C], index: 1, loaded: more(10), fromOtherColumn: false })).toEqual({ kind: "ranked", sortOrder: 15 });
+  });
+
+  it("leaves a card in its place between neighbours whose midpoint is its own rank, with no refusal (thermos P3-1)", () => {
+    const column = [card("U", "todo", 21), card("M", "todo", 20), card("L", "todo", 19)];
+    for (const loaded of [more(10), allLoaded(10)]) {
+      expect(dropRank({ column, index: 1, loaded, fromOtherColumn: false })).toEqual({ kind: "inPlace" });
+    }
+  });
+
+  it("refuses a move inside a tie at the floor as no room while more is to load (thermos P3-3)", () => {
+    const column = [A, card("T3", "todo", 10, 3), card("T1", "todo", 10, 1), card("T2", "todo", 10, 2)];
+    expect(dropRank({ column, index: 2, loaded: more(10), fromOtherColumn: false })).toEqual({ kind: "refused", reason: "noRoom" });
+    expect(dropRank({ column, index: 3, loaded: more(10), fromOtherColumn: false })).toEqual({ kind: "refused", reason: "noRoom" });
   });
 });
 
@@ -76,13 +89,13 @@ describe("dropRank at a tie or a gap with no room", () => {
     const top = card("S300", "in_progress", 300000);
     const bottom = card("S298", "in_progress", 298000);
     const loaded = more(51000);
-    expect(dropRank({ column: [top, card("S290", "in_progress", 290000), bottom], index: 1, loaded, fromOtherColumn: false })).toEqual({ sortOrder: 299000 });
-    expect(dropRank({ column: [top, card("S297", "done", 297000), bottom], index: 1, loaded, fromOtherColumn: true })).toEqual({ sortOrder: 299000 });
+    expect(dropRank({ column: [top, card("S290", "in_progress", 290000), bottom], index: 1, loaded, fromOtherColumn: false })).toEqual({ kind: "ranked", sortOrder: 299000 });
+    expect(dropRank({ column: [top, card("S297", "done", 297000), bottom], index: 1, loaded, fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 299000 });
   });
 
   it("places a drop between two cards tied above the floor at their shared rank", () => {
     const column = [card("T", "todo", 20, 2), card("M", "todo", 50), card("S", "todo", 20, 1), C];
-    expect(dropRank({ column, index: 1, loaded: more(10), fromOtherColumn: false })).toEqual({ sortOrder: 20 });
+    expect(dropRank({ column, index: 1, loaded: more(10), fromOtherColumn: false })).toEqual({ kind: "ranked", sortOrder: 20 });
   });
 
   it.each([
@@ -92,23 +105,23 @@ describe("dropRank at a tie or a gap with no room", () => {
   ])("refuses a drop into a gap with no room, loaded or not, and keeps a card from another column at its rank: %s", (_, upper, lower) => {
     const column = [card("U", "todo", upper), card("M", "todo", 2000), card("L", "todo", lower)];
     for (const loaded of [more(10), allLoaded(10)]) {
-      expect(dropRank({ column, index: 1, loaded, fromOtherColumn: false })).toEqual({ refused: "noRoom" });
-      expect(dropRank({ column, index: 1, loaded, fromOtherColumn: true })).toEqual({ sortOrder: 2000 });
+      expect(dropRank({ column, index: 1, loaded, fromOtherColumn: false })).toEqual({ kind: "refused", reason: "noRoom" });
+      expect(dropRank({ column, index: 1, loaded, fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 2000 });
     }
   });
 
   it("refuses a move into a run of 3 cards at one rank, which would keep its own rank, and keeps a card from another column at its rank (CodeRabbit 4624154372)", () => {
     const [top, bottom] = [card("T3", "todo", 20, 3), card("T1", "todo", 20, 1)];
     for (const loaded of [more(10), allLoaded(10)]) {
-      const drop = dropRank({ column: [top, card("T2", "todo", 20, 2), bottom], index: 1, loaded, fromOtherColumn: false });
-      expect(drop).toEqual({ refused: "noRoom" });
-      expect("refused" in drop && REFUSAL_MESSAGE[drop.refused]).toBe(NO_ROOM_TO_PLACE);
-      expect(dropRank({ column: [top, card("T2", "done", 20, 2), bottom], index: 1, loaded, fromOtherColumn: true })).toEqual({ sortOrder: 20 });
+      const drop = dropRank({ column: [card("T2", "todo", 20, 2), top, bottom], index: 1, loaded, fromOtherColumn: false });
+      expect(drop).toEqual({ kind: "refused", reason: "noRoom" });
+      expect(drop.kind === "refused" && REFUSAL_MESSAGE[drop.reason]).toBe(NO_ROOM_TO_PLACE);
+      expect(dropRank({ column: [top, card("T2", "done", 20, 2), bottom], index: 1, loaded, fromOtherColumn: true })).toEqual({ kind: "ranked", sortOrder: 20 });
     }
   });
 
   it("tells the user to load more, or that the gap has no room, by the refusal's reason", () => {
-    const message = (drop: ReturnType<typeof dropRank>) => ("refused" in drop ? REFUSAL_MESSAGE[drop.refused] : undefined);
+    const message = (drop: ReturnType<typeof dropRank>) => (drop.kind === "refused" ? REFUSAL_MESSAGE[drop.reason] : undefined);
     const noRoom = [card("U", "todo", 900), card("M", "todo", 2000), card("L", "todo", 899.9999999999999)];
     expect(message(dropRank({ column: [B, C, A], index: 2, loaded: more(10), fromOtherColumn: false }))).toBe("Load more to place it here.");
     expect(message(dropRank({ column: noRoom, index: 1, loaded: allLoaded(10), fromOtherColumn: false }))).toBe(NO_ROOM_TO_PLACE);
@@ -144,11 +157,11 @@ describe("dropRank over a partly loaded board", () => {
       column.splice(index, 0, moved);
 
       const drop = dropRank({ column, index, loaded: more(end.sortOrder), fromOtherColumn: moved.status !== status });
-      if ("refused" in drop) {
+      if (drop.kind === "refused") {
         outcomes.refused++;
         continue;
       }
-      if (drop.sortOrder === moved.sortOrder) {
+      if (drop.kind !== "ranked" || drop.sortOrder === moved.sortOrder) {
         outcomes.kept++;
         continue;
       }
@@ -200,7 +213,7 @@ describe("updateBoard", () => {
     const column = todo.map((id) => teamRows().find((issue) => issue._id === id)!);
 
     const drop = dropRank({ column, index: 1, loaded: allLoaded(5), fromOtherColumn: true });
-    expect(drop).toEqual({ sortOrder: 25 });
+    expect(drop).toEqual({ kind: "ranked", sortOrder: 25 });
     updateBoard(localStore, TEAM, { issueId: "Y" as Id<"issues">, status: "todo", sortOrder: 25 });
 
     expect(queries[1].value.page).toEqual([row("C", "todo", 10), row("Y", "todo", 25)]);
