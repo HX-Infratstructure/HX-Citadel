@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
-import { LIST_LIMIT } from "./lib/paging";
+import { LIST_LIMIT } from "../lib/api-contract";
 import { CASCADE_BUDGET } from "./lib/orgRows";
 import schema from "./schema";
 

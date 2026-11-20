@@ -1,9 +1,8 @@
 import { v } from "convex/values";
 import { MAX_LABELS_PER_ISSUE, TOO_MANY_LABELS } from "../lib/api-contract";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
-import { getOrgIssue } from "./lib/issues/shape";
 import { logActivity } from "./lib/activity";
-import { orgRow, requireOrgRow } from "./lib/orgRows";
+import { getOrgIssue, orgRow, requireOrgRow } from "./lib/orgRows";
 import { refuse } from "./lib/refusals";
 
 const labelShape = {

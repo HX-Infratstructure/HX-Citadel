@@ -1,16 +1,18 @@
-import { PaginationOptions } from "convex/server";
-import { Doc, Id } from "../../_generated/dataModel";
+import { paginationOptsValidator } from "convex/server";
+import { ObjectType, v } from "convex/values";
+import { Id } from "../../_generated/dataModel";
 import { QueryCtx } from "../../_generated/server";
-import { MAX_LABELS_PER_ISSUE } from "../../../lib/api-contract";
+import { LIST_LIMIT, MAX_LABELS_PER_ISSUE } from "../../../lib/api-contract";
 import { PARENT_KIND } from "../../../lib/issue-key";
 import { isGatedStatus } from "../../../lib/issue-status";
 import { inOrg, orgRow, requireOrgRow } from "../orgRows";
 import { CLOSED_STATUSES } from "../rules/doneGate";
-import { issueStatusValidator } from "../../schema";
-import { capPage, CONVEX_DOCUMENT_READS, LIST_LIMIT, PAGE_READ_ROWS } from "../paging";
+import { issueKindValidator, issueStatusValidator } from "../../schema";
+import { capPage, CONVEX_DOCUMENT_READS, PAGE_READ_ROWS } from "../paging";
 
-type OrgReadCtx = { db: QueryCtx["db"]; org: Doc<"organizations"> };
-type TeamPageArgs = { teamId: Id<"teams">; paginationOpts: PaginationOptions };
+export const teamPageArgs = { teamId: v.id("teams"), paginationOpts: paginationOptsValidator };
+export const parentCandidateArgs = { teamId: v.id("teams"), kind: issueKindValidator };
+export const storyByNumberArgs = { teamId: v.id("teams"), number: v.number() };
 
 const OPEN_STATUSES = issueStatusValidator.members
   .map((member) => member.value)
@@ -44,8 +46,12 @@ async function issueLabelIds(ctx: { db: QueryCtx["db"] }, issueId: Id<"issues">)
  * top-ranked story, however old it is. Closed rows count toward a page's reads, so a page under many of them
  * can come back short, or empty, with a cursor to the rest.
  */
-export async function backlogPage(ctx: OrgReadCtx, args: TeamPageArgs) {
-  return await (await teamIssuesByRank(ctx, ctx.org._id, args.teamId))
+export async function backlogPage(
+  ctx: { db: QueryCtx["db"] },
+  orgId: Id<"organizations">,
+  args: ObjectType<typeof teamPageArgs>
+) {
+  return await (await teamIssuesByRank(ctx, orgId, args.teamId))
     .filter((q) =>
       q.and(
         q.eq(q.field("kind"), "story"),
@@ -79,8 +85,12 @@ export const PINNED_PAGE_MAX_ROWS = Math.floor(
  * link order. The loaded pages always hold the team's top-ranked issues, so a browser filter over them sees each
  * status's top-ranked issues.
  */
-export async function teamPage(ctx: OrgReadCtx, args: TeamPageArgs) {
-  const result = await (await teamIssuesByRank(ctx, ctx.org._id, args.teamId)).paginate(capPage(args.paginationOpts));
+export async function teamPage(
+  ctx: { db: QueryCtx["db"] },
+  orgId: Id<"organizations">,
+  args: ObjectType<typeof teamPageArgs>
+) {
+  const result = await (await teamIssuesByRank(ctx, orgId, args.teamId)).paginate(capPage(args.paginationOpts));
   const page = await Promise.all(
     result.page.map(async (issue) => ({ ...issue, labelIds: await issueLabelIds(ctx, issue._id) }))
   );
@@ -92,8 +102,12 @@ const PARENT_STATUSES = issueStatusValidator.members
   .filter((status) => !isGatedStatus(status));
 
 /** The issues a child of `kind` may sit under: the team's newest `LIST_LIMIT` issues one level up that are not In Review or Done. */
-export async function parentCandidates(ctx: OrgReadCtx, args: { teamId: Id<"teams">; kind: Doc<"issues">["kind"] }) {
-  await requireOrgRow(ctx, ctx.org._id, args.teamId, "Team");
+export async function parentCandidates(
+  ctx: { db: QueryCtx["db"] },
+  orgId: Id<"organizations">,
+  args: ObjectType<typeof parentCandidateArgs>
+) {
+  await requireOrgRow(ctx, orgId, args.teamId, "Team");
   const parentKind = PARENT_KIND[args.kind];
   if (parentKind === null) {
     return [];
@@ -105,7 +119,7 @@ export async function parentCandidates(ctx: OrgReadCtx, args: { teamId: Id<"team
           .query("issues")
           .withIndex("by_team_kind_status", (q) => q.eq("teamId", args.teamId).eq("kind", parentKind).eq("status", status))
           .order("desc"),
-        ctx.org._id
+        orgId
       ).take(LIST_LIMIT)
     )
   );
@@ -116,13 +130,17 @@ export async function parentCandidates(ctx: OrgReadCtx, args: { teamId: Id<"team
 }
 
 /** Look up a story by its display identifier (team key + number, e.g. ENG-42). */
-export async function storyByNumber(ctx: OrgReadCtx, args: { teamId: Id<"teams">; number: number }) {
-  if ((await orgRow(ctx, ctx.org._id, args.teamId)) === null) {
+export async function storyByNumber(
+  ctx: { db: QueryCtx["db"] },
+  orgId: Id<"organizations">,
+  args: ObjectType<typeof storyByNumberArgs>
+) {
+  if ((await orgRow(ctx, orgId, args.teamId)) === null) {
     return null;
   }
   const issue = await inOrg(
     ctx.db.query("issues").withIndex("by_team_and_number", (q) => q.eq("teamId", args.teamId).eq("number", args.number)),
-    ctx.org._id
+    orgId
   ).unique();
   return issue?.kind === "story" ? issue : null;
 }

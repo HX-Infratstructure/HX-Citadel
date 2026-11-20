@@ -5,7 +5,7 @@ import { MCP_TOOL_NAMES } from "../lib/mcp/tools";
 import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import http from "./http";
-import { LIST_LIMIT } from "./lib/paging";
+import { LIST_LIMIT } from "../lib/api-contract";
 import { parseIssuePath } from "./lib/httpApi";
 import schema from "./schema";
 

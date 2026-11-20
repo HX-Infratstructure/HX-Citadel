@@ -20,6 +20,34 @@ const eslintConfig = defineConfig([
       "max-lines": ["error", { max: 150, skipBlankLines: true, skipComments: true }],
     },
   },
+  // Module boundaries: server helpers stay below the function modules, and only server code imports them.
+  {
+    rules: {
+      "import/no-restricted-paths": [
+        "error",
+        {
+          zones: [
+            {
+              target: "./convex/lib",
+              from: "./convex",
+              except: ["./lib", "./_generated", "./schema.ts"],
+              message: "A convex/lib helper never imports a top-level Convex function module.",
+            },
+            {
+              target: ["./app", "./components", "./lib", "./cli", "./scripts"],
+              from: "./convex/lib",
+              message: "Browser and tool code never imports a server helper from convex/lib.",
+            },
+            {
+              target: "./",
+              from: "./convex/issues.ts",
+              message: "Nothing imports convex/issues.ts; import its helpers from convex/lib/issues.",
+            },
+          ],
+        },
+      ],
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

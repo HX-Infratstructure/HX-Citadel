@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
 import { issueShape } from "./lib/issues/shape";
-import { LIST_LIMIT } from "./lib/paging";
+import { LIST_LIMIT } from "../lib/api-contract";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { findMembership } from "./lib/mirror";

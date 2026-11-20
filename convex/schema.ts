@@ -59,6 +59,40 @@ export const issueRelationTypeValidator = v.union(
   v.literal("duplicate_of")
 );
 
+export const issueFields = {
+  orgId: v.id("organizations"),
+  teamId: v.id("teams"),
+  kind: issueKindValidator,
+  /** Set only on stories */
+  type: v.optional(issueTypeValidator),
+  /** Per-team sequence number, stories only, displayed as KEY-number */
+  number: v.optional(v.number()),
+  /** Per-story sequence number, subtasks only, displayed as KEY-number.subNumber */
+  subNumber: v.optional(v.number()),
+  /** Stories only: the subNumber the next subtask claims, so a moved or deleted subtask's key is never reused */
+  nextSubNumber: v.optional(v.number()),
+  title: v.string(),
+  description: v.optional(v.string()),
+  status: issueStatusValidator,
+  priority: issuePriorityValidator,
+  assigneeId: v.optional(v.id("users")),
+  creatorId: v.id("users"),
+  projectId: v.optional(v.id("projects")),
+  cycleId: v.optional(v.id("cycles")),
+  parentIssueId: v.optional(v.id("issues")),
+  estimate: v.optional(v.number()),
+  /** Due date as ms since epoch */
+  dueDate: v.optional(v.number()),
+  /** Fractional ranking for board/list ordering */
+  sortOrder: v.number(),
+  /** True only on a story's Complete testing sub-task */
+  testing: v.optional(v.boolean()),
+  /** Absolute http(s) proof link, Complete testing sub-task only */
+  proofUrl: v.optional(v.string()),
+  /** Bumped by one on every patch (`patchIssue`) that changes a field outside `BOOKKEEPING_FIELDS`; absent reads as 1 */
+  version: v.optional(v.number()),
+};
+
 export const decisionStatusValidator = v.union(v.literal("open"), v.literal("answered"));
 
 /** Where the owner answered: on the story, or in the Inbox copy (P3.6d carries that answer back). */
@@ -127,39 +161,7 @@ export default defineSchema({
     .index("by_org", ["orgId"])
     .index("by_org_and_key", ["orgId", "key"]),
 
-  issues: defineTable({
-    orgId: v.id("organizations"),
-    teamId: v.id("teams"),
-    kind: issueKindValidator,
-    /** Set only on stories */
-    type: v.optional(issueTypeValidator),
-    /** Per-team sequence number, stories only, displayed as KEY-number */
-    number: v.optional(v.number()),
-    /** Per-story sequence number, subtasks only, displayed as KEY-number.subNumber */
-    subNumber: v.optional(v.number()),
-    /** Stories only: the subNumber the next subtask claims, so a moved or deleted subtask's key is never reused */
-    nextSubNumber: v.optional(v.number()),
-    title: v.string(),
-    description: v.optional(v.string()),
-    status: issueStatusValidator,
-    priority: issuePriorityValidator,
-    assigneeId: v.optional(v.id("users")),
-    creatorId: v.id("users"),
-    projectId: v.optional(v.id("projects")),
-    cycleId: v.optional(v.id("cycles")),
-    parentIssueId: v.optional(v.id("issues")),
-    estimate: v.optional(v.number()),
-    /** Due date as ms since epoch */
-    dueDate: v.optional(v.number()),
-    /** Fractional ranking for board/list ordering */
-    sortOrder: v.number(),
-    /** True only on a story's Complete testing sub-task */
-    testing: v.optional(v.boolean()),
-    /** Absolute http(s) proof link, Complete testing sub-task only */
-    proofUrl: v.optional(v.string()),
-    /** Bumped by one on every patch (`patchIssue`) that changes a field outside `BOOKKEEPING_FIELDS`; absent reads as 1 */
-    version: v.optional(v.number()),
-  })
+  issues: defineTable(issueFields)
     .index("by_org", ["orgId"])
     .index("by_team", ["teamId"])
     .index("by_team_and_number", ["teamId", "number"])

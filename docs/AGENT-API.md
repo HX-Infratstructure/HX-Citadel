@@ -41,7 +41,7 @@ A create with `parentKey` and no `teamKey` takes the parent's team ([Levels](#fo
 
 A decision asks the owner a question about a story. The limits on the question and the choices are in `convex/lib/decisions.ts`. No route answers a decision, so an agent can't answer its own.
 
-The list returns one page, newest first. A page holds up to 500 issues (`LIST_LIMIT` in `convex/lib/paging.ts`). To get the next page:
+The list returns one page, newest first. A page holds up to 500 issues (`LIST_LIMIT` in `lib/api-contract.ts`). To get the next page:
 
 1. Read `nextCursor` from the response. If it is `null`, there are no more pages.
 2. Send the same request again, with the same `team`, `status` and `assignee`, and add `cursor=<nextCursor>`. URL-encode the cursor.

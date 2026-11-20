@@ -42,6 +42,15 @@ export async function requireOrgRow<T extends OrgTable>(
   return row;
 }
 
+/** Verify an issue belongs to the caller's org before any read/write. */
+export async function getOrgIssue(
+  ctx: { db: QueryCtx["db"] },
+  orgId: Id<"organizations">,
+  issueId: Id<"issues">
+): Promise<Doc<"issues">> {
+  return await requireOrgRow(ctx, orgId, issueId, "Issue");
+}
+
 /**
  * The query's rows that belong to the workspace. It filters inside the query, so a row from another workspace
  * that points at one of ours never uses up a `take` or `paginate` limit, never comes back from `first`, and never

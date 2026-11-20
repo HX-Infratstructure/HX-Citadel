@@ -3,7 +3,7 @@ import { cycleName } from "../lib/sprint";
 import { Doc, Id } from "./_generated/dataModel";
 import { QueryCtx } from "./_generated/server";
 import { issueShape } from "./lib/issues/shape";
-import { LIST_LIMIT } from "./lib/paging";
+import { LIST_LIMIT } from "../lib/api-contract";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { CASCADE_BUDGET, groupDigits, inOrg, orgRow, requireOrgRow } from "./lib/orgRows";
