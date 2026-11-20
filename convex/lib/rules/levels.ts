@@ -26,6 +26,9 @@ export type ResolvedPlacement = {
   projectId?: Id<"projects">;
 };
 
+/** A `ResolvedPlacement` with the parent it was resolved from, or null when the issue has none. */
+export type PlacementWithParent = ResolvedPlacement & { parent: Doc<"issues"> | null };
+
 function article(kind: IssueKind): string {
   return kind === "epic" ? "an" : "a";
 }
@@ -79,14 +82,14 @@ function inheritedProject(
 
 /**
  * Enforce the level matrix (epic → project, feature → epic, story → feature or none,
- * subtask → story) and return the team and project the issue must carry.
+ * subtask → story) and return the team and project the issue must carry, with the parent it read.
  */
-export async function assertValidParent(
+export async function resolvePlacement(
   ctx: { db: QueryCtx["db"] },
   orgId: Id<"organizations">,
   kind: IssueKind,
   placement: Placement
-): Promise<ResolvedPlacement> {
+): Promise<PlacementWithParent> {
   const parentKind = PARENT_KIND[kind];
   const subject = capitalize(article(kind));
   if (PROJECT_REQUIRED[kind] && !placement.projectId) {
@@ -101,14 +104,26 @@ export async function assertValidParent(
     if (placement.projectId) {
       await requireOrgRow(ctx, orgId, placement.projectId, "Project");
     }
-    return { teamId: placement.teamId, projectId: placement.projectId };
+    return { teamId: placement.teamId, projectId: placement.projectId, parent: null };
   }
   const parent = await requireOrgRow(ctx, orgId, placement.parentIssueId, "Parent issue");
   assertParentKind(kind, parent.kind);
   return {
     teamId: inheritedTeam(kind, parent, placement.teamId),
     projectId: inheritedProject(kind, parent, placement.projectId),
+    parent,
   };
+}
+
+/** `resolvePlacement` without the parent, for callers that need only the team and project. */
+export async function assertValidParent(
+  ctx: { db: QueryCtx["db"] },
+  orgId: Id<"organizations">,
+  kind: IssueKind,
+  placement: Placement
+): Promise<ResolvedPlacement> {
+  const { teamId, projectId } = await resolvePlacement(ctx, orgId, kind, placement);
+  return { teamId, projectId };
 }
 
 /**

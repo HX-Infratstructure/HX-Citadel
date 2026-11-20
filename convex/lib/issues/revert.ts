@@ -86,7 +86,10 @@ async function isNewestForField(ctx: MutationCtx, issue: Doc<"issues">, row: Doc
   return recent.find((newer) => newer.field === row.field)?._id === row._id;
 }
 
-/** Apply an activity row's old value back through `updateIssue`, logged as one `reverted` row. */
+/**
+ * Apply an activity row's old value back through `updateIssue`, logged as one `reverted` row. The caller enforces
+ * admin: `revertChange` (an `orgAdminMutation`) is the only caller.
+ */
 export async function revertActivity(ctx: MutationCtx, scope: OrgScope, activityId: Id<"activity">): Promise<void> {
   const change = await requireOrgRow(ctx, scope.org._id, activityId, "Change");
   const issue = await getOrgIssue(ctx, scope.org._id, change.issueId);
