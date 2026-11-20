@@ -4,7 +4,7 @@ import { Doc, Id } from "../../_generated/dataModel";
 import { MutationCtx } from "../../_generated/server";
 import { SORT_GAP } from "../../../lib/sort-order";
 import { logActivity } from "../activity";
-import { inOrg, requireOrgRow } from "../orgRows";
+import { getOrgIssue, inOrg, requireOrgRow } from "../orgRows";
 import { OrgScope } from "../orgScope";
 import { assertCycleInTeam } from "../rules/cycles";
 import { assertDoneGate } from "../rules/doneGate";
@@ -18,7 +18,6 @@ import { createTestingSubtask } from "../rules/testing";
 import { assertWipFree } from "../rules/wip";
 import { issueKindValidator, issuePriorityValidator, issueStatusValidator, issueTypeValidator } from "../../schema";
 import { assertAssignee, issueTitle } from "./fields";
-import { getOrgIssue } from "./shape";
 
 export const createArgs = {
   teamId: v.id("teams"),

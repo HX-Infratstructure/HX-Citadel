@@ -6,8 +6,9 @@ import { createComment as createCommentWithRules } from "./comments";
 import { createIssue as createIssueWithRules } from "./lib/issues/create";
 import { updateIssue as updateIssueWithRules } from "./lib/issues/update";
 import { setIssueProof } from "./lib/issues/proof";
-import { getOrgIssue, issueShape } from "./lib/issues/shape";
-import { capPage, LIST_LIMIT } from "./lib/paging";
+import { issueShape } from "./lib/issues/shape";
+import { LIST_LIMIT } from "../lib/api-contract";
+import { capPage } from "./lib/paging";
 import {
   findAgentMember,
   OrgScope,
@@ -24,7 +25,7 @@ import {
   listedDecisionValidator,
   listIssueDecisions,
 } from "./lib/decisions";
-import { inOrg, orgChildren } from "./lib/orgRows";
+import { getOrgIssue, inOrg, orgChildren } from "./lib/orgRows";
 import { invalid, notFound } from "./lib/refusals";
 import { findTeamByKey } from "./lib/teams";
 import {

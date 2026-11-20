@@ -1,7 +1,5 @@
 import { PaginationOptions } from "convex/server";
-
-/** The most issues one list or page returns. */
-export const LIST_LIMIT = 500;
+import { LIST_LIMIT } from "../../lib/api-contract";
 
 /** Convex fails a query or mutation past this many documents read. */
 export const CONVEX_DOCUMENT_READS = 32_000;

@@ -3,8 +3,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { ConvexError } from "convex/values";
 import { api } from "./_generated/api";
-import { MAX_ATTACHMENT_BYTES } from "../lib/api-contract";
-import { LIST_LIMIT } from "./lib/paging";
+import { LIST_LIMIT, MAX_ATTACHMENT_BYTES } from "../lib/api-contract";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 

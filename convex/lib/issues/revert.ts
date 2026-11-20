@@ -2,12 +2,11 @@ import { Doc, Id } from "../../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../../_generated/server";
 import { fieldText } from "../activity";
 import { IssueKeys } from "../issueKeys";
-import { inOrg, requireOrgRow } from "../orgRows";
+import { getOrgIssue, inOrg, requireOrgRow } from "../orgRows";
 import { OrgScope } from "../orgScope";
-import { LIST_LIMIT } from "../paging";
+import { LIST_LIMIT } from "../../../lib/api-contract";
 import { refuse } from "../refusals";
 import { issuePriorityValidator, issueStatusValidator } from "../../schema";
-import { getOrgIssue } from "./shape";
 import { updateIssue, UpdateIssueArgs } from "./update";
 
 function literalOf<T extends string>(validator: { members: { value: T }[] }, text: string | undefined): T {

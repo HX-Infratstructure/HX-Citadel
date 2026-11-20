@@ -4,7 +4,7 @@ import { logActivity } from "../activity";
 import { patchIssue } from "../issueVersion";
 import { OrgScope } from "../orgScope";
 import { assertProofUrl, assertTestingSubtask } from "../rules/testing";
-import { getOrgIssue } from "./shape";
+import { getOrgIssue } from "../orgRows";
 
 async function logProofChange(
   ctx: MutationCtx,

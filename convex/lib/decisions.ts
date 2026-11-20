@@ -3,12 +3,11 @@ import { Infer, v } from "convex/values";
 import { invalid, refuse } from "./refusals";
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
-import { LIST_LIMIT } from "./paging";
-import { getOrgIssue } from "./issues/shape";
+import { LIST_LIMIT } from "../../lib/api-contract";
 import { decisionAnswerValidator, decisionFields, decisionViaValidator } from "../schema";
 import { logActivity } from "./activity";
 import { IssueKeys } from "./issueKeys";
-import { inOrg, orgRow, requireOrgRow } from "./orgRows";
+import { getOrgIssue, inOrg, orgRow, requireOrgRow } from "./orgRows";
 import { OrgScope } from "./orgScope";
 
 export const QUESTION_MAX = 500;

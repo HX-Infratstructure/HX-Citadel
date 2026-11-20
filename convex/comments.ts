@@ -1,12 +1,11 @@
 import { ObjectType, v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx } from "./_generated/server";
-import { getOrgIssue } from "./lib/issues/shape";
-import { LIST_LIMIT } from "./lib/paging";
+import { LIST_LIMIT } from "../lib/api-contract";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { findMembership } from "./lib/mirror";
-import { inOrg, requireOrgRow } from "./lib/orgRows";
+import { getOrgIssue, inOrg, requireOrgRow } from "./lib/orgRows";
 import { OrgScope } from "./lib/orgScope";
 import { invalid, refuse } from "./lib/refusals";
 

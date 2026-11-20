@@ -13,7 +13,7 @@ import { assertWipFreeAfterUpdate } from "../rules/wip";
 import { issuePriorityValidator, issueStatusValidator } from "../../schema";
 import { assertAssignee, issueTitle } from "./fields";
 import { placeRank } from "./ranking";
-import { getOrgIssue } from "./shape";
+import { getOrgIssue } from "../orgRows";
 
 export const updateArgs = {
   issueId: v.id("issues"),

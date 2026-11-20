@@ -1,11 +1,11 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { MAX_LABELS_PER_ISSUE } from "../lib/api-contract";
+import { LIST_LIMIT, MAX_LABELS_PER_ISSUE } from "../lib/api-contract";
 import { byRank } from "../lib/sort-order";
 import { api } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
-import { LIST_LIMIT, PAGE_READ_ROWS } from "./lib/paging";
+import { PAGE_READ_ROWS } from "./lib/paging";
 import schema, { issueStatusValidator } from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
