@@ -8,12 +8,9 @@ import { IssueKeys } from "./lib/issueKeys";
 import { RELATION_LIMIT, relationsOf } from "./lib/issueRelations";
 import { patchIssue } from "./lib/issueVersion";
 import { getOrgIssue, orgChildren, orgRow } from "./lib/orgRows";
-import {
-  assertParentOpen,
-  assertValidParent,
-  cascadeProject,
-  nextSubNumber,
-} from "./lib/rules/levels";
+import { cascadeProject } from "./lib/rules/cascade";
+import { assertParentOpen, assertValidParent } from "./lib/rules/levels";
+import { nextSubNumber } from "./lib/rules/subNumbers";
 import { assertNotTestingSubtask } from "./lib/rules/testing";
 import {
   issueKindValidator,

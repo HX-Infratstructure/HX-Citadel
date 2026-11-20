@@ -39,7 +39,7 @@ The routes are in `convex/http.ts`, under `ISSUES_PATH` (`/api/v1/issues`). The 
 
 A create with `parentKey` and no `teamKey` takes the parent's team ([Levels](#follow-the-rules-agents-meet)). A create with neither fails with `400 validation` (`createIssue` in `convex/agentApi.ts`).
 
-A decision asks the owner a question about a story. The limits on the question and the choices are in `convex/lib/decisions.ts`. No route answers a decision, so an agent can't answer its own.
+A decision asks the owner a question about a story. The limits on the question and the choices are in `convex/lib/decisionInput.ts`. No route answers a decision, so an agent can't answer its own.
 
 The list returns one page, newest first. A page holds up to 500 issues (`LIST_LIMIT` in `lib/api-contract.ts`). To get the next page:
 
@@ -49,7 +49,7 @@ The list returns one page, newest first. A page holds up to 500 issues (`LIST_LI
 
 An empty `cursor` fails with `400 validation`. So does a `cursor` that Convex rejects as invalid (`pageFailure` in `convex/agentApi.ts`). Any other failure is `500 server_error`. The MCP tool `list_issues` takes the same `cursor`, and the CLI takes `pnpm citadel list --team KEY --cursor <nextCursor>`. Both return `nextCursor` in the JSON body.
 
-An issue key is a story key such as `CIT-12` or a sub-task key such as `CIT-12.1` (`parseIssueKey` in `lib/issue-key.ts`). Each story keeps its own sub-task counter, so once a story has its counter, the key of a moved sub-task is never handed out again (`nextSubNumber` in `convex/lib/rules/levels.ts`). A request for that old key returns `404 not_found`. Every story this code creates starts with the counter. A story without one, such as a story created before the counter existed, gets it on its next new sub-task, set after its highest sub-task. So a key that a sub-task gave up before then can be handed out once more. Keys and `If-Match` versions are valid only for the life of their team. For what to do after a team clear, see [Clear test data](../AGENTS.md#clear-test-data) in `AGENTS.md`. Epics and features have no display key, so their `key` is `null` (`hasDisplayKey`). The allowed values of `kind`, `type`, `status`, and `priority` are the validators in `convex/schema.ts`.
+An issue key is a story key such as `CIT-12` or a sub-task key such as `CIT-12.1` (`parseIssueKey` in `lib/issue-key.ts`). Each story keeps its own sub-task counter, so once a story has its counter, the key of a moved sub-task is never handed out again (`nextSubNumber` in `convex/lib/rules/subNumbers.ts`). A request for that old key returns `404 not_found`. Every story this code creates starts with the counter. A story without one, such as a story created before the counter existed, gets it on its next new sub-task, set after its highest sub-task. So a key that a sub-task gave up before then can be handed out once more. Keys and `If-Match` versions are valid only for the life of their team. For what to do after a team clear, see [Clear test data](../AGENTS.md#clear-test-data) in `AGENTS.md`. Epics and features have no display key, so their `key` is `null` (`hasDisplayKey`). The allowed values of `kind`, `type`, `status`, and `priority` are the validators in `convex/schema.ts`.
 
 ### Send the three headers
 

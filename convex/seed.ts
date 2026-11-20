@@ -9,7 +9,7 @@ import { patchIssue } from "./lib/issueVersion";
 import { internalMutation } from "./_generated/server";
 import { storyType } from "./lib/issues/create";
 import { getMembershipOrThrow, getOrgByClerkIdOrThrow, getUserByClerkIdOrThrow } from "./lib/mirror";
-import { FIRST_SUB_NUMBER, nextSubNumber } from "./lib/rules/levels";
+import { FIRST_SUB_NUMBER, nextSubNumber } from "./lib/rules/subNumbers";
 import { createTestingSubtask } from "./lib/rules/testing";
 
 /**

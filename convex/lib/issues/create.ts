@@ -8,12 +8,8 @@ import { getOrgIssue, inOrg, requireOrgRow } from "../orgRows";
 import { OrgScope } from "../orgScope";
 import { assertCycleInTeam } from "../rules/cycles";
 import { assertDoneGate } from "../rules/doneGate";
-import {
-  assertParentOpen,
-  FIRST_SUB_NUMBER,
-  nextSubNumber,
-  resolvePlacement,
-} from "../rules/levels";
+import { assertParentOpen, resolvePlacement } from "../rules/levels";
+import { FIRST_SUB_NUMBER, nextSubNumber } from "../rules/subNumbers";
 import { createTestingSubtask } from "../rules/testing";
 import { assertWipFree } from "../rules/wip";
 import { issueKindValidator, issuePriorityValidator, issueStatusValidator, issueTypeValidator } from "../../schema";
