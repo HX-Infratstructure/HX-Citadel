@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import { ConvexError, type Value } from "convex/values";
 import { internal } from "./_generated/api";
 import { pageFailure } from "./agentApi";
-import { PAGE_READ_ROWS } from "./issues";
+import { PAGE_READ_ROWS } from "./lib/paging";
 import { AGENT, freshKey, registerWorkspaceEnv, workspaceTest, writeHeaders, type WorkspaceTest } from "./workspace.fixture";
 
 const WIP_REFUSAL = "cc1 already has ENG-1 In Progress; move it to In Review or Done first";

@@ -1,7 +1,7 @@
 import { Presence } from "@convex-dev/presence";
 import { v } from "convex/values";
 import { components } from "./_generated/api";
-import { getOrgIssue } from "./issues";
+import { getOrgIssue } from "./lib/issues/shape";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 
 /**

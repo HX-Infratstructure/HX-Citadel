@@ -3,15 +3,10 @@ import { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, MutationCtx, QueryCtx } from "./_generated/server";
 import { parseIssueKey } from "../lib/issue-key";
 import { createComment as createCommentWithRules } from "./comments";
-import {
-  capPage,
-  createIssue as createIssueWithRules,
-  getOrgIssue,
-  issueShape,
-  LIST_LIMIT,
-  setIssueProof,
-  updateIssue as updateIssueWithRules,
-} from "./issues";
+import { createIssue as createIssueWithRules, updateIssue as updateIssueWithRules } from "./issues";
+import { setIssueProof } from "./lib/issues/proof";
+import { getOrgIssue, issueShape } from "./lib/issues/shape";
+import { capPage, LIST_LIMIT } from "./lib/paging";
 import {
   findAgentMember,
   OrgScope,

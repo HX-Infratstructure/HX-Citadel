@@ -3,7 +3,7 @@ import { Infer, v } from "convex/values";
 import { invalid, refuse } from "./refusals";
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
-import { LIST_LIMIT } from "./issues/paging";
+import { LIST_LIMIT } from "./paging";
 import { getOrgIssue } from "./issues/shape";
 import { decisionAnswerValidator, decisionFields, decisionViaValidator } from "../schema";
 import { logActivity } from "./activity";

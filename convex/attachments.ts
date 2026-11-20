@@ -2,7 +2,8 @@ import { paginationOptsValidator, paginationResultValidator } from "convex/serve
 import { v } from "convex/values";
 import { ATTACHMENT_TOO_LARGE, MAX_ATTACHMENT_BYTES } from "../lib/api-contract";
 import { invalid, refuse } from "./lib/refusals";
-import { capPage, getOrgIssue } from "./issues";
+import { getOrgIssue } from "./lib/issues/shape";
+import { capPage } from "./lib/paging";
 import { logActivity } from "./lib/activity";
 import { orgMutation, orgQuery } from "./lib/customFunctions";
 import { inOrg, requireOrgRow } from "./lib/orgRows";

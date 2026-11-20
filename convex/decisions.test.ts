@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { QueryCtx } from "./_generated/server";
-import { LIST_LIMIT } from "./issues";
+import { LIST_LIMIT } from "./lib/paging";
 import { answerDecision, askDecision, DECISION_PAGE_MAX, listIssueDecisions, pageIssueDecisions } from "./lib/decisions";
 import { AGENT, ORG, registerWorkspaceEnv, workspaceTest, writeHeaders, type WorkspaceTest } from "./workspace.fixture";
 
