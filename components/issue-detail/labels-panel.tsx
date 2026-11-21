@@ -44,7 +44,7 @@ export function LabelsPanel({ issue }: IssueDetailSlotProps) {
   });
   const allLabels = useQuery(api.labels.list);
   const toggleLabel = useMutation(api.labels.toggleOnIssue);
-  const createLabel = useMutation(api.labels.create);
+  const createOnIssue = useMutation(api.labels.createOnIssue);
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -72,8 +72,7 @@ export function LabelsPanel({ issue }: IssueDetailSlotProps) {
     setQuery("");
     try {
       const color = LABEL_COLORS[(allLabels?.length ?? 0) % LABEL_COLORS.length];
-      const labelId = await createLabel({ name, color });
-      await toggleLabel({ issueId: issue._id, labelId });
+      await createOnIssue({ issueId: issue._id, name, color });
     } catch (error) {
       toast.error(
         errorMessage(error, "Failed to create label")

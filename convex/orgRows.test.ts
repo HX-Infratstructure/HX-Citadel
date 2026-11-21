@@ -168,6 +168,17 @@ const team: Seed<"teams"> = (ctx, orgId) => ctx.db.insert("teams", { orgId, name
 const project: Seed<"projects"> = (ctx, orgId) => ctx.db.insert("projects", { orgId, name: "Other", status: "planned" });
 const cycle: Seed<"cycles"> = (ctx, orgId, s) =>
   ctx.db.insert("cycles", { orgId, teamId: s.teamId, number: 9, startDate: 0, endDate: 1 });
+const issue: Seed<"issues"> = (ctx, orgId, s) =>
+  ctx.db.insert("issues", {
+    orgId,
+    teamId: s.teamId,
+    kind: "story",
+    title: "Other",
+    status: "todo",
+    priority: "none",
+    creatorId: s.userId,
+    sortOrder: 3,
+  });
 const onStory = (orgId: Id<"organizations">, s: Setup) => ({ orgId, issueId: s.storyId });
 
 const LOADERS = [
@@ -239,21 +250,10 @@ const LOADERS = [
       ctx.db.insert("activity", { ...onStory(orgId, s), actorId: s.userId, type: "title_changed", field: "title" }),
     (s, activityId) => s.admin.mutation(api.issues.revertChange, { activityId })
   ),
-  loader(
-    "Issue",
-    "issues.update",
-    (ctx, orgId, s) =>
-      ctx.db.insert("issues", {
-        orgId,
-        teamId: s.teamId,
-        kind: "story",
-        title: "Other",
-        status: "todo",
-        priority: "none",
-        creatorId: s.userId,
-        sortOrder: 3,
-      }),
-    (s, issueId) => s.admin.mutation(api.issues.update, { issueId, title: "Renamed" })
+  loader("Issue", "issues.update", issue, (s, issueId) => s.admin.mutation(api.issues.update, { issueId, title: "Renamed" })),
+  // Catches a label created and attached through an issue the caller's workspace cannot see.
+  loader("Issue", "labels.createOnIssue", issue, (s, issueId) =>
+    s.admin.mutation(api.labels.createOnIssue, { issueId, name: "New", color: "#ffffff" })
   ),
 ];
 
@@ -274,7 +274,7 @@ describe("a row loaded by id", () => {
       await ctx.db.delete(deletedLabel);
       return { foreignLabel, deletedLabel };
     });
-    const ourLabel = await admin.mutation(api.labels.create, { name: "Ours", color: "#ffffff" });
+    const ourLabel = await t.run((ctx) => ctx.db.insert("labels", { orgId, name: "Ours", color: "#ffffff" }));
     await admin.mutation(api.labels.toggleOnIssue, { issueId: storyId, labelId: ourLabel });
 
     const labels = await admin.query(api.labels.listForIssue, { issueId: storyId });
