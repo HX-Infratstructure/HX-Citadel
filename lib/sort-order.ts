@@ -38,10 +38,7 @@ export const REFUSAL_MESSAGE: Record<DropRefusal, string> = { loadMore: LOAD_MOR
 /** The loaded part of a rank order. Every row not loaded yet ranks at or below `floor`. */
 export type LoadedOrder = { floor: number | undefined; moreToLoad: boolean };
 
-/**
- * What a drop does to a row's rank: keeps it (`inPlace`, though the board may still change the card's status), refuses
- * it with a reason, or gives it a new rank.
- */
+/** What a drop does to a row's rank: keeps it (`inPlace`), refuses it with a reason, or gives it a new rank. */
 export type DropOutcome =
   | { kind: "inPlace" }
   | { kind: "refused"; reason: DropRefusal }

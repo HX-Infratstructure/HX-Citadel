@@ -46,7 +46,7 @@ export function backlogAnchor<T extends RankedIssue>(
   return landing(stories, activeId, overId)?.above?._id ?? null;
 }
 
-/** A drop in the backlog, or `gone`: a story left the loaded backlog during the drag. */
+/** What a drop in the backlog does: a `DropOutcome`, or `gone`, which only the backlog's drop returns. */
 export type BacklogDrop = DropOutcome | { kind: "gone" };
 
 /**

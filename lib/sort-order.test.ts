@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, expectTypeOf, test } from "vitest";
 import { type DropOutcome, rankInLoaded, respaceTie, SORT_GAP, sortOrderBetween } from "./sort-order";
 
 describe("sortOrderBetween", () => {
@@ -103,15 +103,17 @@ describe("respaceTie with a slot", () => {
   });
 });
 
+describe("DropOutcome", () => {
+  test("has no gone, since only the backlog's drop can be gone", () => {
+    expectTypeOf<Extract<DropOutcome, { kind: "gone" }>>().toBeNever();
+  });
+});
+
 const X = 1000.0000000000001;
 const B = 1000;
 const D = 999.9999999999999;
 /** The dropped row's own rank, which no neighbour, floor or result below holds. */
 const OWN = 7;
-
-// @ts-expect-error `gone` is the backlog's own outcome (BacklogDrop): a rank in a loaded order never loses its row.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const g: DropOutcome = { kind: "gone" };
 
 describe("rankInLoaded", () => {
   test("accepts a drop whose midpoint ties a row that is not a neighbour, which the server re-spaces upward (CodeRabbit 4623501051)", () => {
