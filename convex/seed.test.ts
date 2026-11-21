@@ -185,6 +185,30 @@ describe("seed.demoData", () => {
     });
   });
 
+  // Catches a seed that numbers its stories but leaves a team's counter behind them, so the next story created
+  // takes a number a seeded story already holds.
+  test("leaves each team's issue counter one past its highest story number", async () => {
+    const { t } = await setup();
+    await t.mutation(internal.seed.demoData, {
+      clerkOrgId: SEEDED_ORG,
+      clerkUserId: ADMIN_CLERK_ID,
+    });
+
+    const { teams, stories } = await t.run(async (ctx) => ({
+      teams: await ctx.db.query("teams").collect(),
+      stories: (await ctx.db.query("issues").collect()).filter((issue) => issue.kind === "story"),
+    }));
+
+    expect(teams).toHaveLength(EXPECTED_COUNTS.teams);
+    for (const team of teams) {
+      const numbers = stories.filter((story) => story.teamId === team._id).map((story) => story.number!);
+      expect(numbers.length, `${team.key} has seeded stories`).toBeGreaterThan(0);
+      expect(team.nextIssueNumber, `${team.key}'s counter is one past its highest story`).toBe(
+        Math.max(...numbers) + 1
+      );
+    }
+  });
+
   test("refuses an organization that is not synced", async () => {
     const { t } = await setup();
 

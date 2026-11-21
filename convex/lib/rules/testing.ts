@@ -2,7 +2,7 @@ import { Doc, Id } from "../../_generated/dataModel";
 import { invalid, refuse } from "../refusals";
 import { MutationCtx } from "../../_generated/server";
 import { logActivity } from "../activity";
-import { nextSubNumber } from "./subNumbers";
+import { claimSubNumber } from "./numbering";
 
 export const TESTING_SUBTASK_TITLE = "Complete testing";
 
@@ -18,7 +18,7 @@ export async function createTestingSubtask(
     teamId: story.teamId,
     kind: "subtask",
     testing: true,
-    subNumber: await nextSubNumber(ctx, story.orgId, story._id),
+    subNumber: await claimSubNumber(ctx, story.orgId, story._id),
     title: TESTING_SUBTASK_TITLE,
     status: "todo",
     priority: "none",

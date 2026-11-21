@@ -9,7 +9,7 @@ import { OrgScope } from "../orgScope";
 import { assertCycleInTeam } from "../rules/cycles";
 import { assertDoneGate } from "../rules/doneGate";
 import { assertParentOpen, resolvePlacement } from "../rules/levels";
-import { FIRST_SUB_NUMBER, nextSubNumber } from "../rules/subNumbers";
+import { claimNumbering, Numbering } from "../rules/numbering";
 import { createTestingSubtask } from "../rules/testing";
 import { assertWipFree } from "../rules/wip";
 import { issueKindValidator, issuePriorityValidator, issueStatusValidator, issueTypeValidator } from "../../schema";
@@ -33,9 +33,6 @@ export const createArgs = {
 
 export type CreateIssueArgs = ObjectType<typeof createArgs>;
 
-/** The counters a create claims after every check has passed. */
-type Numbering = Pick<Doc<"issues">, "number" | "subNumber" | "nextSubNumber">;
-
 /**
  * The row every check before the first write settled; only the counters and the rank are claimed after. A new issue
  * never carries the testing flag, a proof link or a version.
@@ -51,23 +48,6 @@ export function storyType(
   type: Doc<"issues">["type"]
 ): Doc<"issues">["type"] {
   return kind === "story" ? (type ?? "story") : undefined;
-}
-
-/**
- * Stories take the next team number (ENG-1, ENG-2, ...) and start their own subtask counter;
- * subtasks take the next number under their story.
- */
-async function claimNumbering(ctx: MutationCtx, row: NewIssue): Promise<Numbering> {
-  if (row.kind === "story") {
-    const team = await requireOrgRow(ctx, row.orgId, row.teamId, "Team");
-    const number = team.nextIssueNumber;
-    await ctx.db.patch(team._id, { nextIssueNumber: number + 1 });
-    return { number, nextSubNumber: FIRST_SUB_NUMBER };
-  }
-  if (row.kind === "subtask" && row.parentIssueId) {
-    return { subNumber: await nextSubNumber(ctx, row.orgId, row.parentIssueId) };
-  }
-  return {};
 }
 
 /** Every create rule that runs before the first write, in refusal order. */

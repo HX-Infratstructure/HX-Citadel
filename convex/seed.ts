@@ -9,7 +9,7 @@ import { patchIssue } from "./lib/issueVersion";
 import { internalMutation } from "./_generated/server";
 import { storyType } from "./lib/issues/create";
 import { getMembershipOrThrow, getOrgByClerkIdOrThrow, getUserByClerkIdOrThrow } from "./lib/mirror";
-import { FIRST_SUB_NUMBER, nextSubNumber } from "./lib/rules/subNumbers";
+import { claimNumbering, claimSubNumber, FIRST_ISSUE_NUMBER } from "./lib/rules/numbering";
 import { createTestingSubtask } from "./lib/rules/testing";
 
 /**
@@ -300,7 +300,7 @@ export const demoData = internalMutation({
         name: team.name,
         key: team.key,
         description: team.description,
-        nextIssueNumber: 1,
+        nextIssueNumber: FIRST_ISSUE_NUMBER,
       });
 
       const cycleIds = new Map<"prev" | "current" | "next", Id<"cycles">>();
@@ -318,7 +318,6 @@ export const demoData = internalMutation({
         cycleCount++;
       }
 
-      let nextNumber = 1;
       let position = 0;
 
       const logSeededState = async (issueId: Id<"issues">, status: IssueStatus, assign?: boolean) => {
@@ -359,7 +358,7 @@ export const demoData = internalMutation({
             orgId,
             teamId,
             kind: "subtask",
-            subNumber: await nextSubNumber(ctx, orgId, story._id),
+            subNumber: await claimSubNumber(ctx, orgId, story._id),
             title: subtask.title,
             status: subtask.status,
             priority: "none",
@@ -376,7 +375,7 @@ export const demoData = internalMutation({
 
       const insertIssue = async (spec: IssueSpec, parent?: Doc<"issues">): Promise<void> => {
         const kind = spec.kind ?? "story";
-        const numbering = kind === "story" ? { number: nextNumber++, nextSubNumber: FIRST_SUB_NUMBER } : {};
+        const numbering = await claimNumbering(ctx, { kind, orgId, teamId, parentIssueId: parent?._id });
         const ownProject = spec.project === undefined ? undefined : projectIds[spec.project];
         position++;
         const issueId = await ctx.db.insert("issues", {
@@ -421,8 +420,6 @@ export const demoData = internalMutation({
       for (const spec of team.issues) {
         await insertIssue(spec);
       }
-
-      await ctx.db.patch(teamId, { nextIssueNumber: nextNumber });
     }
 
     let commentCount = 0;
