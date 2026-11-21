@@ -7,14 +7,29 @@ import { footprint, refusalOf } from "./test-helpers.fixture";
 import { ORG, workspaceTest } from "./workspace.fixture";
 
 const MEMBER = "user_member";
+const CREATOR = "user_creator";
 
-/** The HX workspace with one story and no labels, a member signed in, and what that member can read and call. */
+/**
+ * The HX workspace with one story and no labels, a member signed in, and what that member can read and call.
+ * Another member created the story, so a row that names the story's creator instead of the caller is visible.
+ */
 async function story() {
-  const t = await workspaceTest({ members: [{ clerkId: MEMBER, role: "member" }] });
+  const t = await workspaceTest({
+    members: [
+      { clerkId: CREATOR, role: "member" },
+      { clerkId: MEMBER, role: "member" },
+    ],
+  });
   const asMember = t.withIdentity({ subject: MEMBER, org_id: ORG });
-  const { orgId, issueId } = await t.run(async (ctx) => {
+  const { orgId, issueId, memberId } = await t.run(async (ctx) => {
     const team = (await ctx.db.query("teams").first())!;
-    const user = (await ctx.db.query("users").first())!;
+    const userOf = async (clerkId: string) =>
+      (await ctx.db
+        .query("users")
+        .withIndex("by_clerk_id", (q) => q.eq("clerkId", clerkId))
+        .unique())!;
+    const creator = await userOf(CREATOR);
+    const member = await userOf(MEMBER);
     const issueId = await ctx.db.insert("issues", {
       orgId: team.orgId,
       teamId: team._id,
@@ -23,15 +38,15 @@ async function story() {
       title: "Story",
       status: "todo",
       priority: "none",
-      creatorId: user._id,
+      creatorId: creator._id,
       sortOrder: 1,
     });
-    return { orgId: team.orgId, issueId };
+    return { orgId: team.orgId, issueId, memberId: member._id };
   });
   const listed = async () => (await asMember.query(api.labels.listForIssue, { issueId })).map((label) => label._id);
   const workspaceLabels = async () => (await asMember.query(api.labels.list, {})).map((label) => label._id);
   const createOnIssue = (name: string) => asMember.mutation(api.labels.createOnIssue, { issueId, name, color: "#ff8800" });
-  return { t, asMember, orgId, issueId, listed, workspaceLabels, createOnIssue };
+  return { t, asMember, memberId, orgId, issueId, listed, workspaceLabels, createOnIssue };
 }
 
 /** One story, `MAX_LABELS_PER_ISSUE` + 1 workspace labels, and the story already carrying the first `MAX_LABELS_PER_ISSUE`. */
@@ -79,7 +94,8 @@ describe("labels.toggleOnIssue at the per-issue limit", () => {
 
 describe("labels.createOnIssue", () => {
   // Catches the two-call defect: a label created in the workspace but never attached, or attached without its activity row.
-  test("creates the label in the workspace with the trimmed name, attaches it to the story, and logs one label_added row", async () => {
+  // Also catches a row that names the wrong actor, such as the story's creator instead of the caller.
+  test("creates the label in the workspace with the trimmed name, attaches it to the story, and logs one label_added row by the caller", async () => {
     const s = await story();
 
     const labelId = await s.createOnIssue("  Needs review  ");
@@ -93,6 +109,7 @@ describe("labels.createOnIssue", () => {
     expect(feed.map(({ type, field, newValue }) => ({ type, field, newValue }))).toEqual([
       { type: "label_added", field: "label", newValue: "Needs review" },
     ]);
+    expect(feed.map(({ actorId }) => actorId)).toEqual([s.memberId]);
   });
 
   // Catches a cap checked only in the browser: the 21st label would be created and linked on the server.

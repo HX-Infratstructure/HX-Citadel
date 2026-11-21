@@ -32,8 +32,8 @@ async function teamIssuesByRank(ctx: { db: QueryCtx["db"] }, orgId: Id<"organiza
 }
 
 /**
- * An issue's label ids as stored, in link order. Only `labels.toggleOnIssue`, `labels.createOnIssue` and the dev seed
- * (`seed.demoData`) write links, and all three link only a label of the issue's workspace. By owner decision
+ * An issue's label ids as stored, in link order. Only `attachLabel` (`convex/labels.ts`) and the dev seed
+ * (`seed.demoData`) write links, and both link only a label of the issue's workspace. By owner decision
  * q-f874e530, the workspace is checked when a link is written, not here, so no label is read. A label delete must
  * delete its links first (`by_label`).
  */
