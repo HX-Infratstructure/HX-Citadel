@@ -11,7 +11,7 @@ export const ANSWER_TEXT_MAX = 2000;
 
 export type Answer = Infer<typeof decisionAnswerValidator>;
 export type DecisionAsk = { issueId: Id<"issues">; question: string; choices?: string[]; recommended?: string };
-export type DecisionAnswer = { decisionId: Id<"decisions">; choice?: string; text?: string };
+export type DecisionAnswer = { decisionId: Id<"decisions"> } & Answer;
 
 function invalidDecision(message: string): never {
   invalid(`Invalid decision: ${message}`);
@@ -53,7 +53,7 @@ export function parseAsk({ question, choices, recommended }: Omit<DecisionAsk, "
   };
 }
 
-export function parseAnswer(choices: string[] | undefined, { choice, text }: Omit<DecisionAnswer, "decisionId">): Answer {
+export function parseAnswer(choices: string[] | undefined, { choice, text }: Answer): Answer {
   if (choice === undefined && text === undefined) {
     invalidDecision("answer with a choice, a text, or both");
   }

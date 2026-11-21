@@ -14,7 +14,7 @@ import { OrgScope } from "./orgScope";
 /** The most decisions one page of a story's history holds. One is open at a time and a person answers each. */
 export const DECISION_PAGE_MAX = 50;
 /** How much of an answer's text the `decided` activity row keeps. */
-const SUMMARY_TEXT_MAX = 80;
+export const SUMMARY_TEXT_MAX = 80;
 
 export type AnswerVia = Infer<typeof decisionViaValidator>;
 
