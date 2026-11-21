@@ -26,7 +26,7 @@ import { Id } from "@/convex/_generated/dataModel";
 import { IssueStatus, STATUSES, TeamIssue } from "@/components/shared/issue-meta";
 import { BoardCardContent, CardAssignee, CardLabel } from "./board-card";
 import { BoardColumn, cardLabels, COLUMN_ID_PREFIX } from "./board-column";
-import { boardColumns, Columns, dropRank, updateBoard } from "./board-dnd";
+import { boardAnchor, boardColumns, Columns, dropRank, updateBoard } from "./board-dnd";
 
 const STATUS_SET = new Set<string>(STATUSES.map((s) => s.value));
 
@@ -234,7 +234,7 @@ export function BoardView({
     updateIssue({
       issueId: activeId,
       ...(statusChanged ? { status: activeContainer } : {}),
-      ...(orderChanged ? { sortOrder: drop.sortOrder } : {}),
+      ...(orderChanged ? { sortOrder: drop.sortOrder, aboveId: boardAnchor(column, index) } : {}),
     }).catch((error: unknown) => {
       toast.error(
         errorMessage(error, "Failed to move issue")

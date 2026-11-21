@@ -28,6 +28,7 @@ export const updateArgs = {
   estimate: v.optional(v.union(v.number(), v.null())),
   dueDate: v.optional(v.union(v.number(), v.null())),
   sortOrder: v.optional(v.number()),
+  aboveId: v.optional(v.union(v.id("issues"), v.null())),
 };
 
 export type UpdateIssueArgs = ObjectType<typeof updateArgs>;
@@ -126,7 +127,7 @@ async function rankUpdate(ctx: MutationCtx, issue: Doc<"issues">, args: UpdateIs
   if (args.sortOrder === undefined || args.sortOrder === issue.sortOrder) {
     return {};
   }
-  return { sortOrder: await placeRank(ctx, issue, args.sortOrder) };
+  return { sortOrder: await placeRank(ctx, issue, args.sortOrder, args.aboveId) };
 }
 
 /** Every update rule in one place; the Clerk session and agent calls both come through here. */

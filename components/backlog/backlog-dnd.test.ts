@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Id } from "@/convex/_generated/dataModel";
 import { fakeLocalStore } from "@/components/fake-local-store";
 import { NO_ROOM_TO_PLACE, SORT_GAP } from "@/lib/sort-order";
-import { backlogDrop, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
+import { backlogAnchor, backlogDrop, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
 
 const stories = [
   { _id: "id-a", title: "Login page", sortOrder: 30, _creationTime: 0 },
@@ -290,5 +290,64 @@ describe("updateBacklog", () => {
     const list = twoPages();
     list.move("C", { cycleId: "cycle-1" });
     expect(list.ids()).toEqual(["A", "B", "D"]);
+  });
+});
+
+/** A small deterministic generator (mulberry32), so a failing trial can be replayed by its seed. */
+function random(seed: number) {
+  let state = seed;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+describe("backlogAnchor", () => {
+  const [a, b, c] = stories.map((story) => story._id);
+
+  it("is null for a story moved up to the top", () => {
+    expect(backlogAnchor(stories, c, a)).toBeNull();
+    expect(backlogAnchor(stories, b, a)).toBeNull();
+  });
+
+  it("is the story right above the slot in the middle: the target moving down, the story before it moving up", () => {
+    expect(backlogAnchor(stories, a, b)).toBe(b);
+    expect(backlogAnchor(stories, c, b)).toBe(a);
+  });
+
+  it("is the target for a story moved down to the bottom", () => {
+    expect(backlogAnchor(stories, a, c)).toBe(c);
+    expect(backlogAnchor(stories, b, c)).toBe(c);
+  });
+
+  it("is null when either story is not loaded", () => {
+    expect(backlogAnchor(stories, "gone", a)).toBeNull();
+    expect(backlogAnchor(stories, a, "gone")).toBeNull();
+  });
+
+  it("over random backlogs, is the story above the drop slot, at or above the rank backlogDrop gives, and null exactly when that rank tops every other story", () => {
+    for (let seed = 1; seed <= 300; seed++) {
+      const next = random(seed);
+      const list = Array.from({ length: 2 + Math.floor(next() * 6) }, (_, i) => ({
+        _id: `S${i}`,
+        sortOrder: 10 * (1 + Math.floor(next() * 6)),
+        _creationTime: i,
+      })).sort((x, y) => y.sortOrder - x.sortOrder || y._creationTime - x._creationTime);
+      const from = Math.floor(next() * list.length);
+      const to = Math.floor(next() * list.length);
+      const active = list[from];
+      const others = list.filter((story) => story !== active);
+      const anchor = backlogAnchor(list, active._id, list[to]._id);
+      const label = `seed ${seed}`;
+      expect(anchor, label).toBe(to === 0 ? null : others[to - 1]._id);
+      const drop = backlogDrop({ stories: list, activeId: active._id, overId: list[to]._id, moreToLoad: next() < 0.5 });
+      if (drop.kind === "ranked") {
+        const above = others.find((story) => story._id === anchor);
+        expect(anchor === null, label).toBe(others.every((story) => story.sortOrder < drop.sortOrder));
+        expect(above === undefined || drop.sortOrder <= above.sortOrder, label).toBe(true);
+      }
+    }
   });
 });

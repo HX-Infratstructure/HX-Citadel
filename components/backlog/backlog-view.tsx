@@ -19,7 +19,7 @@ import { api } from "@/convex/_generated/api";
 import { Doc, Id } from "@/convex/_generated/dataModel";
 import { errorMessage } from "@/lib/error-message";
 import { REFUSAL_MESSAGE } from "@/lib/sort-order";
-import { backlogDrop, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
+import { backlogAnchor, backlogDrop, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
 import { BacklogRow } from "./backlog-row";
 
 export function BacklogView({
@@ -41,7 +41,7 @@ export function BacklogView({
   );
 
   const update = (
-    patch: { issueId: Id<"issues">; sortOrder?: number; cycleId?: Id<"cycles"> },
+    patch: { issueId: Id<"issues">; sortOrder?: number; aboveId?: Id<"issues"> | null; cycleId?: Id<"cycles"> },
     failure: string
   ) => {
     updateIssue(patch).catch((error: unknown) => {
@@ -58,7 +58,8 @@ export function BacklogView({
       toast(REFUSAL_MESSAGE[drop.reason]);
     }
     if (drop.kind === "ranked") {
-      update({ issueId: active.id as Id<"issues">, sortOrder: drop.sortOrder }, "Failed to rank story");
+      const aboveId = backlogAnchor(issues, active.id, over.id);
+      update({ issueId: active.id as Id<"issues">, sortOrder: drop.sortOrder, aboveId }, "Failed to rank story");
     }
   };
 
