@@ -44,7 +44,7 @@ export function LabelsPanel({ issue }: IssueDetailSlotProps) {
   });
   const allLabels = useQuery(api.labels.list);
   const toggleLabel = useMutation(api.labels.toggleOnIssue);
-  const createLabel = useMutation(api.labels.create);
+  const createOnIssue = useMutation(api.labels.createOnIssue);
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -64,7 +64,7 @@ export function LabelsPanel({ issue }: IssueDetailSlotProps) {
     if (!name) {
       return;
     }
-    // This count is a UX guard only; the server's cap in `convex/labels.ts` is the rule.
+    // This count is a UX guard only; the server's cap in `labels.createOnIssue` is the rule.
     if ((issueLabels?.length ?? 0) >= MAX_LABELS_PER_ISSUE) {
       toast.error(TOO_MANY_LABELS);
       return;
@@ -72,8 +72,7 @@ export function LabelsPanel({ issue }: IssueDetailSlotProps) {
     setQuery("");
     try {
       const color = LABEL_COLORS[(allLabels?.length ?? 0) % LABEL_COLORS.length];
-      const labelId = await createLabel({ name, color });
-      await toggleLabel({ issueId: issue._id, labelId });
+      await createOnIssue({ issueId: issue._id, name, color });
     } catch (error) {
       toast.error(
         errorMessage(error, "Failed to create label")

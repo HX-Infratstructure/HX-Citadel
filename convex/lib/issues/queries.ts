@@ -32,9 +32,10 @@ async function teamIssuesByRank(ctx: { db: QueryCtx["db"] }, orgId: Id<"organiza
 }
 
 /**
- * An issue's label ids as stored, in link order. Only `labels.toggleOnIssue` and the dev seed (`seed.demoData`) write
- * links, and both link only a label of the issue's workspace. By owner decision q-f874e530, the workspace is checked
- * when a link is written, not here, so no label is read. A label delete must delete its links first (`by_label`).
+ * An issue's label ids as stored, in link order. Only `labels.toggleOnIssue`, `labels.createOnIssue` and the dev seed
+ * (`seed.demoData`) write links, and all three link only a label of the issue's workspace. By owner decision
+ * q-f874e530, the workspace is checked when a link is written, not here, so no label is read. A label delete must
+ * delete its links first (`by_label`).
  */
 async function issueLabelIds(ctx: { db: QueryCtx["db"] }, issueId: Id<"issues">): Promise<Id<"labels">[]> {
   const links = await ctx.db.query("issueLabels").withIndex("by_issue", (q) => q.eq("issueId", issueId)).collect();
