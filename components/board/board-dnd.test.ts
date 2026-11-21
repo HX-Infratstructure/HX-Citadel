@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { IssueStatus } from "@/components/shared/issue-meta";
 import { fakeLocalStore } from "@/components/fake-local-store";
+import { pick, seededRandom } from "@/lib/seeded-random.fixture";
 import { byRank, LOAD_MORE_TO_PLACE, NO_ROOM_TO_PLACE, REFUSAL_MESSAGE, SORT_GAP } from "@/lib/sort-order";
 import { boardAnchor, boardColumns, dropRank, updateBoard } from "./board-dnd";
 
@@ -129,29 +130,19 @@ describe("dropRank at a tie or a gap with no room", () => {
   });
 });
 
-function random(seed: number) {
-  return () => {
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 const STATUSES: IssueStatus[] = ["backlog", "todo", "in_progress", "done"];
 
 describe("dropRank over a partly loaded board", () => {
   it("places every accepted drop above the floor and between its neighbours, over 200 random drops", () => {
-    const next = random(42);
-    const pick = <T,>(items: T[]) => items[Math.floor(next() * items.length)];
+    const next = seededRandom(42);
     const outcomes = { refused: 0, kept: 0, placed: 0 };
     for (let trial = 0; trial < 200; trial++) {
       const size = 4 + Math.floor(next() * 12);
-      const team = Array.from({ length: size }, (_, i) => card(`I${i}`, pick(STATUSES), 1000 * Math.floor(next() * 5), i)).sort(byRank);
+      const team = Array.from({ length: size }, (_, i) => card(`I${i}`, pick(next, STATUSES), 1000 * Math.floor(next() * 5), i)).sort(byRank);
       const loaded = team.slice(0, 1 + Math.floor(next() * (size - 1)));
       const end = loaded[loaded.length - 1];
-      const moved = pick(loaded);
-      const status = pick(STATUSES);
+      const moved = pick(next, loaded);
+      const status = pick(next, STATUSES);
       const column = loaded.filter((issue) => issue.status === status && issue._id !== moved._id);
       const index = Math.floor(next() * (column.length + 1));
       column.splice(index, 0, moved);
@@ -251,7 +242,7 @@ describe("boardAnchor", () => {
 
   it("over random columns, is the card above the drop slot, at or above the rank dropRank gives, and null exactly when that rank tops every other card", () => {
     for (let seed = 1; seed <= 300; seed++) {
-      const next = random(seed);
+      const next = seededRandom(seed);
       const grid = () => 10 * (1 + Math.floor(next() * 6));
       const others = Array.from({ length: 1 + Math.floor(next() * 6) }, (_, i) => card(`O${i}`, "todo", grid(), i)).sort(byRank);
       const index = Math.floor(next() * (others.length + 1));

@@ -1,12 +1,12 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { ConvexError } from "convex/values";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
 import { Id, TableNames } from "./_generated/dataModel";
 import { deleteIssuesWithOwnedRows } from "./lib/issueCleanup";
 import { groupDigits, MAX_CHILDREN } from "./lib/orgRows";
 import schema from "./schema";
+import { refusalOf } from "./test-helpers.fixture";
 import { ORG, registerWorkspaceEnv } from "./workspace.fixture";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -145,8 +145,6 @@ describe("an issue or cycle from another workspace that names our team", () => {
 type Setup = Awaited<ReturnType<typeof setup>>;
 type RunCtx = Parameters<Parameters<Setup["t"]["run"]>[0]>[0];
 type Seed<T extends TableNames> = (ctx: RunCtx, orgId: Id<"organizations">, s: Setup) => Promise<Id<T>>;
-
-const refusalOf = (error: unknown) => (error instanceof ConvexError ? error.data : error);
 
 /** One site that loads a row by id: what it refuses with, how to write such a row, and the call that loads it. */
 function loader<T extends TableNames>(label: string, site: string, seed: Seed<T>, call: (s: Setup, id: Id<T>) => Promise<unknown>) {

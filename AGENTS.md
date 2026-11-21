@@ -81,7 +81,17 @@ The owner set rules 1 to 7 on 2026-11-17.
 
 Run the checks in the order the README's [Commands](README.md#commands) section lists them.
 
-Convex function tests live next to the function as `convex/<module>.test.ts`. A new test of the agent API takes its workspace from `convex/workspace.fixture.ts`.
+### Where tests and their helpers live
+
+- A Convex test sits at `convex/` top level and is named after the module or the feature it tests. `convex/issues.test.ts` tests `convex/issues.ts`, and `convex/boardDrop.test.ts` tests board and backlog drops.
+- A test of a `convex/lib` helper can sit next to the helper, as `convex/lib/mirror.test.ts` does. Zone 1 of `import/no-restricted-paths` in `eslint.config.mjs` limits what a `convex/lib` file can import from top-level `convex/`. A helper test that imports a top-level file that zone 1 forbids, such as `convex/workspace.fixture.ts`, sits at `convex/` top level, as `convex/idempotency.test.ts` does.
+- These shared helper files hold test helpers for more than one test file:
+  - `convex/workspace.fixture.ts`, the HX workspace that every new agent-API test takes;
+  - `convex/test-helpers.fixture.ts`, the readers for refusals, issues and activity rows that top-level Convex tests share;
+  - `lib/seeded-random.fixture.ts`, the seeded random generator for property tests;
+  - `components/fake-local-store.ts`, a test double of Convex's `OptimisticLocalStore`.
+- A new helper that a second test file needs goes into a shared helper file that every test that uses it can import. Don't copy it. Under `convex/`, name a new shared helper file `<name>.fixture.ts`, so Convex doesn't deploy it as a function module.
+- Some setup code is still copied between Convex tests, such as the organization and member setup and the `asMember` identities. Moving it into a shared helper file is a known follow-up.
 
 ## Reference
 

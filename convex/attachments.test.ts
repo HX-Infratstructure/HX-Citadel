@@ -6,6 +6,7 @@ import { api } from "./_generated/api";
 import { LIST_LIMIT, MAX_ATTACHMENT_BYTES } from "../lib/api-contract";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { refusalOf } from "./test-helpers.fixture";
 
 const modules = import.meta.glob("./**/*.*s");
 
@@ -108,8 +109,6 @@ describe("attachments.remove", () => {
     expect(await storedFile(file)).not.toBeNull();
   });
 });
-
-const refusalOf = (error: unknown) => (error instanceof ConvexError ? error.data : error);
 
 describe("attachments.create", () => {
   test("a file over the limit is a typed validation refusal", async () => {

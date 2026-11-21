@@ -264,6 +264,7 @@ describe("projects.progress for the index rows", () => {
 });
 
 describe("projects.remove past the cascade budget", () => {
+  const TOO_MANY_ISSUES = "This project has more than 5 issues. Move some to another project before deleting it.";
   const real = { ...CASCADE_BUDGET };
   beforeEach(() => {
     Object.assign(CASCADE_BUDGET, { rows: 5, queries: 4 });
@@ -272,7 +273,7 @@ describe("projects.remove past the cascade budget", () => {
     Object.assign(CASCADE_BUDGET, real);
   });
 
-  const withStories = async (count: number, transactionLimits?: { documentsRead: number }) => {
+  const withStories = async (count: number, transactionLimits?: Parameters<typeof setupProject>[0]) => {
     const s = await setupProject(transactionLimits);
     await s.t.run(async (ctx) => {
       for (let number = 1; number <= count; number++) {
@@ -298,9 +299,7 @@ describe("projects.remove past the cascade budget", () => {
   test("refuses a project with 6 issues past a cap of 5, and detaches none", async () => {
     const s = await withStories(6);
 
-    await expect(s.member.mutation(api.projects.remove, { projectId: s.projectId })).rejects.toThrow(
-      "This project has more than 5 issues. Move some to another project before deleting it."
-    );
+    await expect(s.member.mutation(api.projects.remove, { projectId: s.projectId })).rejects.toThrow(TOO_MANY_ISSUES);
 
     expect(await projectsOf(s)).toEqual(Array(6).fill(s.projectId));
   });
@@ -314,11 +313,9 @@ describe("projects.remove past the cascade budget", () => {
     expect(await s.t.run((ctx) => ctx.db.get(s.projectId))).toBeNull();
   });
 
-  test("refuses a project with 30 issues within 20 document reads, reading at most cap + 1 of them", async () => {
+  test("refuses a project with 30 issues within 20 document reads, so it never reads all 30", async () => {
     const s = await withStories(30, { documentsRead: 20 });
 
-    await expect(s.member.mutation(api.projects.remove, { projectId: s.projectId })).rejects.toThrow(
-      "This project has more than 5 issues. Move some to another project before deleting it."
-    );
+    await expect(s.member.mutation(api.projects.remove, { projectId: s.projectId })).rejects.toThrow(TOO_MANY_ISSUES);
   });
 });

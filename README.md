@@ -91,7 +91,7 @@ pnpm exec tsc --noEmit
 pnpm exec tsc -p convex --noEmit
 ```
 
-`pnpm test` runs the Convex function tests. Each test sits next to its function as `convex/<module>.test.ts`.
+`pnpm test` runs Vitest on every test file in the repository. `AGENTS.md` says [where tests and their helpers live](AGENTS.md#where-tests-and-their-helpers-live).
 
 `pnpm lint` fails on any warning as well as any error.
 
