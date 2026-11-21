@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
 import { EXPIRY_BATCH } from "./lib/idempotency";
 import { AGENT, registerWorkspaceEnv, workspaceTest, type WorkspaceTest } from "./workspace.fixture";
@@ -6,6 +6,10 @@ import { AGENT, registerWorkspaceEnv, workspaceTest, type WorkspaceTest } from "
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 registerWorkspaceEnv();
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const write = (t: WorkspaceTest, method: string, path: string, body: unknown, headers: Record<string, string>) =>
   t.fetch(`/api/v1/issues${path}`, { method, headers: { ...AGENT, ...headers }, body: JSON.stringify(body) });
@@ -175,7 +179,6 @@ describe("Idempotency-Key", () => {
     expect(await count()).toBe(1);
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await count()).toBe(0);
-    vi.useRealTimers();
   });
 
   test("the cleanup clears large receipts over several runs, each within Convex's read limit", async () => {
@@ -197,6 +200,5 @@ describe("Idempotency-Key", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     const left = await t.run(async (ctx) => (await ctx.db.query("idempotencyKeys").collect()).map((row) => row.key));
     expect(left).toEqual(["seed"]);
-    vi.useRealTimers();
   });
 });

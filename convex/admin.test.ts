@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { StorageActionWriter } from "convex/server";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
 import { PAGE_SIZE } from "./admin";
 import { CLEANUP_BUDGET, ISSUE_OWNED_TABLES, IssueOwnedCounts } from "./lib/issueCleanup";
@@ -11,6 +11,10 @@ import { createTestingSubtask } from "./lib/rules/testing";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const CLEARED_ORG = "org_cleared";
 const KEPT_ORG = "org_kept";
@@ -348,7 +352,6 @@ describe("admin.clearOrgContent", () => {
       expect(contentAfter[table], table).toEqual(contentBefore[table].filter((doc) => !isCleared(doc)));
     }
     expect(await t.run((ctx) => ctx.db.system.get(cleared.storageId))).toBeNull();
-    vi.useRealTimers();
   });
 
   test("deletes at most one page of cycles per run across its teams, and the scheduled runs delete the rest", async () => {
@@ -375,7 +378,6 @@ describe("admin.clearOrgContent", () => {
       expect(contentAfter[table], table).toEqual(contentBefore[table].filter((doc) => !isCleared(doc)));
     }
     expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
-    vi.useRealTimers();
   });
 
   test("clears an issue that owns more rows than one run deletes over the scheduled runs, every run succeeding", async () => {
@@ -403,7 +405,6 @@ describe("admin.clearOrgContent", () => {
       expect(contentAfter[table], table).toEqual(contentBefore[table].filter((doc) => !isCleared(doc)));
     }
     expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
-    vi.useRealTimers();
   }, 60_000);
 
   test("a queued run leaves the workspace once its mirror is created again under the same Clerk id", async () => {
@@ -421,7 +422,6 @@ describe("admin.clearOrgContent", () => {
 
     expect(await snapshot(t, [...CONTENT_TABLES, ...MIRROR_TABLES])).toEqual(before);
     expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
-    vi.useRealTimers();
   });
 
   /**
@@ -446,7 +446,6 @@ describe("admin.clearOrgContent", () => {
     expect(await snapshot(t, CONTENT_TABLES)).toEqual(Object.fromEntries(CONTENT_TABLES.map((table) => [table, []])));
     expect(await snapshot(t, MIRROR_TABLES)).toEqual(mirrorBefore);
     expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
-    vi.useRealTimers();
   }, 60_000);
 });
 
@@ -725,7 +724,6 @@ describe("admin.clearTeamContent", () => {
       expect(contentAfter[table], table).toEqual(contentBefore[table].filter((doc) => !isCleared(doc)));
     }
     expect(await t.run((ctx) => ctx.db.get(kept.teamId))).not.toBeNull();
-    vi.useRealTimers();
   });
 
   test("clears a team with more cycles than one page over the scheduled runs", async () => {
@@ -744,7 +742,6 @@ describe("admin.clearTeamContent", () => {
     expect(await cyclesOf(cleared.teamId)).toEqual([]);
     expect(await cyclesOf(kept.teamId)).toHaveLength(1);
     expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
-    vi.useRealTimers();
   });
 
   test("a rerun after a scheduled run failed finishes the clear", async () => {
@@ -766,7 +763,6 @@ describe("admin.clearTeamContent", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect(await left()).toEqual({ team: null, issues: [] });
-    vi.useRealTimers();
   });
 
   test("clears a team whose issue owns more rows than one run deletes over the scheduled runs, every run succeeding", async () => {
@@ -792,7 +788,6 @@ describe("admin.clearTeamContent", () => {
     expect(await t.run((ctx) => ctx.db.get(kept.teamId))).not.toBeNull();
     expect(await t.run((ctx) => ctx.db.system.get(cleared.storageId))).toBeNull();
     expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
-    vi.useRealTimers();
   }, 60_000);
 
   test("a rerun after a scheduled run failed partway through a heavy issue finishes the clear", async () => {
@@ -817,7 +812,6 @@ describe("admin.clearTeamContent", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect(await left()).toEqual({ team: null, story: null, activity: 0 });
-    vi.useRealTimers();
   }, 60_000);
 
   test("clears a team whose issue's comments pass the read limit over the scheduled runs, every run succeeding", async () => {
@@ -837,7 +831,6 @@ describe("admin.clearTeamContent", () => {
       ).length,
     }));
     expect(left).toEqual({ team: null, story: null, comments: 0 });
-    vi.useRealTimers();
   }, 60_000);
 
   test("a queued run for a team that is already gone stops without error", async () => {
@@ -850,7 +843,6 @@ describe("admin.clearTeamContent", () => {
 
     expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
     expect(await snapshot(t, CONTENT_TABLES)).toEqual(before);
-    vi.useRealTimers();
   });
 
   test("a queued run leaves a new team created with the cleared team's key", async () => {
@@ -870,7 +862,6 @@ describe("admin.clearTeamContent", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect(await snapshot(t, CONTENT_TABLES)).toEqual(before);
-    vi.useRealTimers();
   });
 
   test("checks every saved view a page per run, deletes those that open the team and keeps the rest", async () => {
@@ -887,7 +878,6 @@ describe("admin.clearTeamContent", () => {
     expect(await allViewIds(t)).toEqual(idsBefore.filter((id) => !opensCleared.has(id)));
     expect(await t.run((ctx) => ctx.db.get(cleared.teamId))).toBeNull();
     expect(await scheduledRunStates(t)).toEqual(new Set(["success"]));
-    vi.useRealTimers();
   });
 
   test("a rerun after a scheduled run failed in the saved-view scan finishes the clear", async () => {
@@ -905,7 +895,6 @@ describe("admin.clearTeamContent", () => {
 
     expect(await allViewIds(t)).toEqual(idsBefore.filter((id) => !opensCleared.has(id)));
     expect(await t.run((ctx) => ctx.db.get(cleared.teamId))).toBeNull();
-    vi.useRealTimers();
   });
 
   test("leaves another workspace's rows that point at a cleared issue", async () => {
