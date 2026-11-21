@@ -9,7 +9,7 @@ import { patchIssue } from "./lib/issueVersion";
 import { internalMutation } from "./_generated/server";
 import { storyType } from "./lib/issues/create";
 import { getMembershipOrThrow, getOrgByClerkIdOrThrow, getUserByClerkIdOrThrow } from "./lib/mirror";
-import { claimStoryNumber, FIRST_ISSUE_NUMBER, nextSubNumber } from "./lib/rules/numbering";
+import { claimNumbering, claimSubNumber, FIRST_ISSUE_NUMBER } from "./lib/rules/numbering";
 import { createTestingSubtask } from "./lib/rules/testing";
 
 /**
@@ -358,7 +358,7 @@ export const demoData = internalMutation({
             orgId,
             teamId,
             kind: "subtask",
-            subNumber: await nextSubNumber(ctx, orgId, story._id),
+            subNumber: await claimSubNumber(ctx, orgId, story._id),
             title: subtask.title,
             status: subtask.status,
             priority: "none",
@@ -375,7 +375,7 @@ export const demoData = internalMutation({
 
       const insertIssue = async (spec: IssueSpec, parent?: Doc<"issues">): Promise<void> => {
         const kind = spec.kind ?? "story";
-        const numbering = kind === "story" ? await claimStoryNumber(ctx, orgId, teamId) : {};
+        const numbering = await claimNumbering(ctx, { kind, orgId, teamId, parentIssueId: parent?._id });
         const ownProject = spec.project === undefined ? undefined : projectIds[spec.project];
         position++;
         const issueId = await ctx.db.insert("issues", {

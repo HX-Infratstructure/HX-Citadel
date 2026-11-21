@@ -1,4 +1,4 @@
-import { Id } from "../../_generated/dataModel";
+import { Doc, Id } from "../../_generated/dataModel";
 import { MutationCtx } from "../../_generated/server";
 import { patchIssue } from "../issueVersion";
 import { orgChildren, requireOrgRow } from "../orgRows";
@@ -7,10 +7,13 @@ import { orgChildren, requireOrgRow } from "../orgRows";
 export const FIRST_ISSUE_NUMBER = 1;
 
 /** The counter every story is inserted with, so its first subtask (Complete testing) is KEY-n.1. */
-export const FIRST_SUB_NUMBER = 1;
+const FIRST_SUB_NUMBER = 1;
+
+/** The counters an issue is inserted with. */
+export type Numbering = Pick<Doc<"issues">, "number" | "subNumber" | "nextSubNumber">;
 
 /** Claim the team's next story number (ENG-1, ENG-2, ...) and start the story's own subtask counter. */
-export async function claimStoryNumber(
+async function claimStoryNumber(
   ctx: { db: MutationCtx["db"] },
   orgId: Id<"organizations">,
   teamId: Id<"teams">
@@ -32,7 +35,7 @@ export async function claimStoryNumber(
  * on from there. A key a subtask vacated before the counter existed is unknown, so a claim can
  * hand it out again.
  */
-export async function nextSubNumber(
+export async function claimSubNumber(
   ctx: { db: MutationCtx["db"] },
   orgId: Id<"organizations">,
   storyId: Id<"issues">
@@ -45,4 +48,18 @@ export async function nextSubNumber(
   }
   await patchIssue(ctx, story, { nextSubNumber: subNumber + 1 });
   return subNumber;
+}
+
+/** The counters a new issue takes by its kind: a story its team number, a subtask its number under its story. */
+export async function claimNumbering(
+  ctx: { db: MutationCtx["db"] },
+  row: Pick<Doc<"issues">, "kind" | "orgId" | "teamId" | "parentIssueId">
+): Promise<Numbering> {
+  if (row.kind === "story") {
+    return await claimStoryNumber(ctx, row.orgId, row.teamId);
+  }
+  if (row.kind === "subtask" && row.parentIssueId) {
+    return { subNumber: await claimSubNumber(ctx, row.orgId, row.parentIssueId) };
+  }
+  return {};
 }

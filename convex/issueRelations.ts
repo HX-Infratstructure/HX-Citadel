@@ -10,7 +10,7 @@ import { patchIssue } from "./lib/issueVersion";
 import { getOrgIssue, orgChildren, orgRow } from "./lib/orgRows";
 import { cascadeProject } from "./lib/rules/cascade";
 import { assertParentOpen, assertValidParent } from "./lib/rules/levels";
-import { nextSubNumber } from "./lib/rules/numbering";
+import { claimSubNumber } from "./lib/rules/numbering";
 import { assertNotTestingSubtask } from "./lib/rules/testing";
 import {
   issueKindValidator,
@@ -270,7 +270,7 @@ async function renumberedSubtask(
   if (issue.kind !== "subtask" || parentIssueId === null) {
     return {};
   }
-  return { subNumber: await nextSubNumber(ctx, issue.orgId, parentIssueId) };
+  return { subNumber: await claimSubNumber(ctx, issue.orgId, parentIssueId) };
 }
 
 export const setParent = orgMutation({
