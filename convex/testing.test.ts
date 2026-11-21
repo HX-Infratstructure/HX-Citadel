@@ -5,6 +5,7 @@ import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { insertOrgMember, MEMBER_IDENTITY } from "./lib/orgMember.fixture";
 import schema from "./schema";
+import { testingSubtasksOf } from "./test-helpers.fixture";
 
 const modules = import.meta.glob("./**/*.*s");
 
@@ -13,7 +14,7 @@ type StoryType = "story" | "bug" | "chore";
 
 async function setup() {
   const t = convexTest(schema, modules);
-  const { teamId, projectId } = await t.run(async (ctx) => {
+  const { orgId, teamId, projectId } = await t.run(async (ctx) => {
     const { orgId } = await insertOrgMember(ctx);
     const teamId = await ctx.db.insert("teams", {
       orgId,
@@ -26,7 +27,7 @@ async function setup() {
       name: "Phase 2",
       status: "planned",
     });
-    return { teamId, projectId };
+    return { orgId, teamId, projectId };
   });
   const asMember = t.withIdentity(MEMBER_IDENTITY);
 
@@ -36,16 +37,15 @@ async function setup() {
   ) => asMember.mutation(api.issues.create, { teamId, title: `A ${kind}`, kind, ...extra });
 
   const children = (parentIssueId: Id<"issues">) =>
-    t.run(async (ctx) => {
-      const { orgId } = (await ctx.db.get(parentIssueId))!;
-      return await ctx.db
+    t.run((ctx) =>
+      ctx.db
         .query("issues")
         .withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", parentIssueId))
-        .collect();
-    });
+        .collect()
+    );
 
   const testingSubtaskOf = async (storyId: Id<"issues">) => {
-    const testing = (await children(storyId)).filter((child) => child.testing);
+    const testing = await testingSubtasksOf({ t, orgId }, storyId);
     expect(testing).toHaveLength(1);
     return testing[0];
   };

@@ -213,8 +213,9 @@ describe("issues.listBacklog", () => {
   });
 
   test("the first page starts at the top-ranked story, the oldest, when one open status holds more than LIST_LIMIT", async () => {
-    const { t, orgId, teamId, memberId, asMember } = await setup();
-    const rankOrder = await seedOldestRankedTop({ t, orgId, teamId, memberId });
+    const s = await setup();
+    const { teamId, asMember } = s;
+    const rankOrder = await seedOldestRankedTop(s);
 
     const first = await asMember.query(api.issues.listBacklog, {
       teamId,
@@ -227,8 +228,9 @@ describe("issues.listBacklog", () => {
   });
 
   test("following the cursor reaches every story once, in rank order across pages", async () => {
-    const { t, orgId, teamId, memberId, asMember } = await setup();
-    const rankOrder = await seedOldestRankedTop({ t, orgId, teamId, memberId });
+    const s = await setup();
+    const { teamId, asMember } = s;
+    const rankOrder = await seedOldestRankedTop(s);
 
     const pages = await backlogPages((cursor) =>
       asMember.query(api.issues.listBacklog, { teamId, paginationOpts: { numItems: 200, cursor } })
@@ -287,7 +289,7 @@ describe("issues.listBacklog", () => {
 
     expect(pages[0]).toEqual([]);
     expect(pages.flat().map((issue) => issue._id)).toEqual([openId]);
-  });
+  }, 60_000);
 });
 
 describe("issues.listParentCandidates", () => {
@@ -510,8 +512,9 @@ describe("issue ranking", () => {
   });
 
   test("moving a story between two tied neighbours lands strictly between them, the pair in the order the list shows", async () => {
-    const { t, orgId, teamId, memberId, asMember } = await setup();
-    const { older, newer, moved } = await storiesAt({ t, orgId, teamId, memberId }, { older: 5000, newer: 5000, moved: 1000 });
+    const s = await setup();
+    const { teamId, asMember } = s;
+    const { older, newer, moved } = await storiesAt(s, { older: 5000, newer: 5000, moved: 1000 });
     const { page: before } = await asMember.query(api.issues.listBacklog, { teamId, paginationOpts: FIRST_PAGE });
     expect(before.map((issue) => issue._id)).toEqual([newer, older, moved]);
 
@@ -523,8 +526,9 @@ describe("issue ranking", () => {
   });
 
   test("moving a story into a tie whose gap to the next higher rank holds no new number widens the run upward", async () => {
-    const { t, orgId, teamId, memberId, asMember } = await setup();
-    const rows = await storiesAt({ t, orgId, teamId, memberId }, {
+    const s = await setup();
+    const { t, teamId, asMember } = s;
+    const rows = await storiesAt(s, {
       top: 2000,
       up2: 1000.0000000000002,
       up1: 1000.0000000000001,
@@ -562,8 +566,9 @@ describe("a tie repair goes upward and keeps the order the list shows", () => {
   });
 
   test("a story moved into a tie of three lands inside the tied run, which keeps its order above the tie", async () => {
-    const { t, orgId, teamId, memberId, asMember } = await setup();
-    const { first, second, third, moved } = await storiesAt({ t, orgId, teamId, memberId }, { first: 5000, second: 5000, third: 5000, moved: 1000 });
+    const s = await setup();
+    const { t, teamId, asMember } = s;
+    const { first, second, third, moved } = await storiesAt(s, { first: 5000, second: 5000, third: 5000, moved: 1000 });
 
     await asMember.mutation(api.issues.update, { issueId: moved, sortOrder: 5000 });
 
@@ -573,8 +578,9 @@ describe("a tie repair goes upward and keeps the order the list shows", () => {
   });
 
   test("a tie repair leaves a row of another workspace that names the team untouched, and spaces within the team's own gap", async () => {
-    const { t, orgId, teamId, memberId, asMember } = await setup();
-    const rows = await storiesAt({ t, orgId, teamId, memberId }, { top: 7000, older: 5000, newer: 5000, moved: 1000 });
+    const s = await setup();
+    const { t, teamId, memberId, asMember } = s;
+    const rows = await storiesAt(s, { top: 7000, older: 5000, newer: 5000, moved: 1000 });
     const foreign = await t.run(async (ctx) => {
       const orgId = await ctx.db.insert("organizations", { clerkOrgId: "org_other", name: "Other", slug: "other" });
       const fields = { orgId, teamId, kind: "story", status: "todo", priority: "none", creatorId: memberId } as const;

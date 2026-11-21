@@ -37,22 +37,32 @@ export function issueReaders(t: Test) {
   };
 }
 
-/** Passes the story's done gate (P2.4): its testing sub-task gets a proof and moves to Done. Returns that sub-task. */
-export async function passDoneGate(
-  { t, asMember, orgId }: { t: Test; asMember: AsMember; orgId: Id<"organizations"> },
+/** The proof link the tests put on a testing sub-task. */
+export const PROOF_URL = "https://ci.example.com/run/1";
+
+/** The story's testing sub-tasks, in the org's parent index order. A story has exactly one. */
+export const testingSubtasksOf = (
+  { t, orgId }: { t: Test; orgId: Id<"organizations"> },
   storyId: Id<"issues">
-) {
-  const testing = await t.run(async (ctx) =>
+) =>
+  t.run(async (ctx) =>
     (
       await ctx.db
         .query("issues")
         .withIndex("by_org_and_parent", (q) => q.eq("orgId", orgId).eq("parentIssueId", storyId))
         .collect()
-    ).find((child) => child.testing)
+    ).filter((child) => child.testing)
   );
-  await asMember.mutation(api.issues.setProof, { issueId: testing!._id, proofUrl: "https://ci.example.com/run/1" });
-  await asMember.mutation(api.issues.update, { issueId: testing!._id, status: "done" });
-  return testing!._id;
+
+/** Passes the story's done gate (P2.4): its testing sub-task gets a proof and moves to Done. Returns that sub-task. */
+export async function passDoneGate(
+  { t, asMember, orgId }: { t: Test; asMember: AsMember; orgId: Id<"organizations"> },
+  storyId: Id<"issues">
+) {
+  const [testing] = await testingSubtasksOf({ t, orgId }, storyId);
+  await asMember.mutation(api.issues.setProof, { issueId: testing._id, proofUrl: PROOF_URL });
+  await asMember.mutation(api.issues.update, { issueId: testing._id, status: "done" });
+  return testing._id;
 }
 
 /** Restores real timers after each test. Call it once, at the top of the file. */
