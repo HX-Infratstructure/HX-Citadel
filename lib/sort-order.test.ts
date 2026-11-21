@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { rankInLoaded, respaceTie, SORT_GAP, sortOrderBetween } from "./sort-order";
+import { type DropOutcome, rankInLoaded, respaceTie, SORT_GAP, sortOrderBetween } from "./sort-order";
 
 describe("sortOrderBetween", () => {
   test("takes the midpoint between two neighbors", () => {
@@ -108,6 +108,10 @@ const B = 1000;
 const D = 999.9999999999999;
 /** The dropped row's own rank, which no neighbour, floor or result below holds. */
 const OWN = 7;
+
+// @ts-expect-error `gone` is the backlog's own outcome (BacklogDrop): a rank in a loaded order never loses its row.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const g: DropOutcome = { kind: "gone" };
 
 describe("rankInLoaded", () => {
   test("accepts a drop whose midpoint ties a row that is not a neighbour, which the server re-spaces upward (CodeRabbit 4623501051)", () => {
