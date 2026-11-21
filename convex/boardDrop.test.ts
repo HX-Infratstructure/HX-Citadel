@@ -326,4 +326,14 @@ describe("an anchor without a rank is refused (follow-up 4)", () => {
       expect(await footprint(team.t, team.ids.Mover), label).toEqual(before);
     }
   });
+
+  test("an update with aboveId and the issue's unchanged sortOrder resolves and leaves the issue's version and activity as they were", async () => {
+    const team = await tieOf(3);
+    const sortOrder = (await team.rows()).find((issue) => issue._id === team.ids.Mover)!.sortOrder;
+    const before = await footprint(team.t, team.ids.Mover);
+    await expect(
+      team.asMember.mutation(api.issues.update, { issueId: team.ids.Mover, sortOrder, aboveId: team.ids.T0 }),
+    ).resolves.toBeNull();
+    expect(await footprint(team.t, team.ids.Mover)).toEqual(before);
+  });
 });
