@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { refuse } from "./lib/refusals";
 import { isValidTeamKey, normalizeTeamKey, TEAM_KEY_RULE } from "../lib/issue-key";
 import { orgAdminMutation, orgQuery } from "./lib/customFunctions";
+import { FIRST_ISSUE_NUMBER } from "./lib/rules/numbering";
 
 const teamShape = {
   _id: v.id("teams"),
@@ -62,7 +63,7 @@ export const create = orgAdminMutation({
       name: args.name.trim(),
       key,
       description: args.description,
-      nextIssueNumber: 1,
+      nextIssueNumber: FIRST_ISSUE_NUMBER,
     });
   },
 });

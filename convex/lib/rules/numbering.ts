@@ -3,8 +3,23 @@ import { MutationCtx } from "../../_generated/server";
 import { patchIssue } from "../issueVersion";
 import { orgChildren, requireOrgRow } from "../orgRows";
 
+/** The counter every team is inserted with, so its first story is KEY-1. */
+export const FIRST_ISSUE_NUMBER = 1;
+
 /** The counter every story is inserted with, so its first subtask (Complete testing) is KEY-n.1. */
 export const FIRST_SUB_NUMBER = 1;
+
+/** Claim the team's next story number (ENG-1, ENG-2, ...) and start the story's own subtask counter. */
+export async function claimStoryNumber(
+  ctx: { db: MutationCtx["db"] },
+  orgId: Id<"organizations">,
+  teamId: Id<"teams">
+): Promise<{ number: number; nextSubNumber: number }> {
+  const team = await requireOrgRow(ctx, orgId, teamId, "Team");
+  const number = team.nextIssueNumber;
+  await ctx.db.patch(team._id, { nextIssueNumber: number + 1 });
+  return { number, nextSubNumber: FIRST_SUB_NUMBER };
+}
 
 /**
  * Claim the next subtask number under a story. The story keeps a counter, so a key a moved or

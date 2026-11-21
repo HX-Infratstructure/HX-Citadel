@@ -9,7 +9,7 @@ import { OrgScope } from "../orgScope";
 import { assertCycleInTeam } from "../rules/cycles";
 import { assertDoneGate } from "../rules/doneGate";
 import { assertParentOpen, resolvePlacement } from "../rules/levels";
-import { FIRST_SUB_NUMBER, nextSubNumber } from "../rules/subNumbers";
+import { claimStoryNumber, nextSubNumber } from "../rules/numbering";
 import { createTestingSubtask } from "../rules/testing";
 import { assertWipFree } from "../rules/wip";
 import { issueKindValidator, issuePriorityValidator, issueStatusValidator, issueTypeValidator } from "../../schema";
@@ -59,10 +59,7 @@ export function storyType(
  */
 async function claimNumbering(ctx: MutationCtx, row: NewIssue): Promise<Numbering> {
   if (row.kind === "story") {
-    const team = await requireOrgRow(ctx, row.orgId, row.teamId, "Team");
-    const number = team.nextIssueNumber;
-    await ctx.db.patch(team._id, { nextIssueNumber: number + 1 });
-    return { number, nextSubNumber: FIRST_SUB_NUMBER };
+    return await claimStoryNumber(ctx, row.orgId, row.teamId);
   }
   if (row.kind === "subtask" && row.parentIssueId) {
     return { subNumber: await nextSubNumber(ctx, row.orgId, row.parentIssueId) };
