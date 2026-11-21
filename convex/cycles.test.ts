@@ -149,6 +149,7 @@ describe("cycles.progress for the index rows", () => {
 });
 
 describe("cycles.remove past the cascade budget", () => {
+  const TOO_MANY_ISSUES = "This cycle has more than 5 issues. Move some to another cycle before deleting it.";
   const real = { ...CASCADE_BUDGET };
   beforeEach(() => {
     Object.assign(CASCADE_BUDGET, { rows: 5, queries: 4 });
@@ -157,7 +158,7 @@ describe("cycles.remove past the cascade budget", () => {
     Object.assign(CASCADE_BUDGET, real);
   });
 
-  const withStories = async (count: number, transactionLimits?: { documentsRead: number }) => {
+  const withStories = async (count: number, transactionLimits?: Parameters<typeof setup>[0]) => {
     const s = await setup(transactionLimits);
     await s.t.run(async (ctx) => {
       for (let number = 1; number <= count; number++) {
@@ -183,9 +184,7 @@ describe("cycles.remove past the cascade budget", () => {
   test("refuses a cycle with 6 issues past a cap of 5, and unschedules none", async () => {
     const s = await withStories(6);
 
-    await expect(s.member.mutation(api.cycles.remove, { cycleId: s.cycleId })).rejects.toThrow(
-      "This cycle has more than 5 issues. Move some to another cycle before deleting it."
-    );
+    await expect(s.member.mutation(api.cycles.remove, { cycleId: s.cycleId })).rejects.toThrow(TOO_MANY_ISSUES);
 
     expect(await cyclesOf(s)).toEqual(Array(6).fill(s.cycleId));
   });
@@ -199,11 +198,9 @@ describe("cycles.remove past the cascade budget", () => {
     expect(await s.t.run((ctx) => ctx.db.get(s.cycleId))).toBeNull();
   });
 
-  test("refuses a cycle with 30 issues within 20 document reads, reading at most cap + 1 of them", async () => {
+  test("refuses a cycle with 30 issues within 20 document reads, so it never reads all 30", async () => {
     const s = await withStories(30, { documentsRead: 20 });
 
-    await expect(s.member.mutation(api.cycles.remove, { cycleId: s.cycleId })).rejects.toThrow(
-      "This cycle has more than 5 issues. Move some to another cycle before deleting it."
-    );
+    await expect(s.member.mutation(api.cycles.remove, { cycleId: s.cycleId })).rejects.toThrow(TOO_MANY_ISSUES);
   });
 });

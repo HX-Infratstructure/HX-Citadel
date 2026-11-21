@@ -6,6 +6,7 @@ import type { PaginationOptions } from "convex/server";
 import { describe, expect, test } from "vitest";
 import { backlogDrop } from "../components/backlog/backlog-dnd";
 import { dropRank } from "../components/board/board-dnd";
+import { pick, seededRandom } from "../lib/seeded-random.fixture";
 import { byRank, rankInLoaded } from "../lib/sort-order";
 import { api } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
@@ -189,24 +190,12 @@ describe("a harmless tie on the 1000-step grid (thermos round 3)", () => {
   });
 });
 
-/** A small deterministic generator (mulberry32), so a failing trial can be replayed by its seed. */
-function random(seed: number) {
-  let state = seed;
-  return () => {
-    state = (state + 0x6d2b79f5) | 0;
-    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
-    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
-    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 /** 6 to 10 rows on a coarse grid, with heavy ties and clusters one ulp apart that leave a gap no room. */
 function randomRanks(next: () => number) {
-  const pick = <T,>(items: T[]) => items[Math.floor(next() * items.length)];
   const ranks: number[] = [];
   for (let i = 6 + Math.floor(next() * 5); i > 0; i--) {
     const grid = 1000 * (1 + Math.floor(next() * 5));
-    ranks.push(pick([grid, grid, pick(ranks.length ? ranks : [grid]), grid + Number.EPSILON * grid * pick([1, 2, 3])]));
+    ranks.push(pick(next, [grid, grid, pick(next, ranks.length ? ranks : [grid]), grid + Number.EPSILON * grid * pick(next, [1, 2, 3])]));
   }
   return ranks;
 }
@@ -221,7 +210,7 @@ function expectedIndex(others: Doc<"issues">[], rank: number) {
 describe("the upward tie repair over random teams (T2)", () => {
   test("writes nothing below the requested rank, keeps the others' order, places the moved row at its slot and keeps page 1 whole", async () => {
     for (let seed = 1; seed <= 40; seed++) {
-      const next = random(seed);
+      const next = seededRandom(seed);
       const ranks = randomRanks(next);
       const team = await teamWith(ranks.map((sortOrder, index) => ({ title: `R${index}`, sortOrder })));
       const { held, pinned } = await pageOne(board(team), Math.ceil(ranks.length / 2));

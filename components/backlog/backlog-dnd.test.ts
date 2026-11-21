@@ -2,7 +2,8 @@ import { CollisionDetection } from "@dnd-kit/core";
 import { describe, expect, it } from "vitest";
 import type { Id } from "@/convex/_generated/dataModel";
 import { fakeLocalStore } from "@/components/fake-local-store";
-import { NO_ROOM_TO_PLACE, SORT_GAP } from "@/lib/sort-order";
+import { seededRandom } from "@/lib/seeded-random.fixture";
+import { byRank, NO_ROOM_TO_PLACE, SORT_GAP } from "@/lib/sort-order";
 import { backlogAnchor, backlogDrop, rankAnnouncements, rankCollision, updateBacklog } from "./backlog-dnd";
 
 const stories = [
@@ -293,17 +294,6 @@ describe("updateBacklog", () => {
   });
 });
 
-/** A small deterministic generator (mulberry32), so a failing trial can be replayed by its seed. */
-function random(seed: number) {
-  let state = seed;
-  return () => {
-    state = (state + 0x6d2b79f5) | 0;
-    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
-    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
-    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 describe("backlogAnchor", () => {
   const [a, b, c] = stories.map((story) => story._id);
 
@@ -329,12 +319,12 @@ describe("backlogAnchor", () => {
 
   it("over random backlogs, is the story above the drop slot, at or above the rank backlogDrop gives, and null exactly when that rank tops every other story", () => {
     for (let seed = 1; seed <= 300; seed++) {
-      const next = random(seed);
+      const next = seededRandom(seed);
       const list = Array.from({ length: 2 + Math.floor(next() * 6) }, (_, i) => ({
         _id: `S${i}`,
         sortOrder: 10 * (1 + Math.floor(next() * 6)),
         _creationTime: i,
-      })).sort((x, y) => y.sortOrder - x.sortOrder || y._creationTime - x._creationTime);
+      })).sort(byRank);
       const from = Math.floor(next() * list.length);
       const to = Math.floor(next() * list.length);
       const active = list[from];
