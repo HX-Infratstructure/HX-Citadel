@@ -1,5 +1,5 @@
-import { describe, expect, test } from "vitest";
-import { rankInLoaded, respaceTie, SORT_GAP, sortOrderBetween } from "./sort-order";
+import { describe, expect, expectTypeOf, test } from "vitest";
+import { type DropOutcome, rankInLoaded, respaceTie, SORT_GAP, sortOrderBetween } from "./sort-order";
 
 describe("sortOrderBetween", () => {
   test("takes the midpoint between two neighbors", () => {
@@ -100,6 +100,12 @@ describe("respaceTie with a slot", () => {
   test("clamps a slot below 0 to the top and one past the run to the bottom", () => {
     expect([order(-1), order(-5)]).toEqual([0, 0]);
     expect([order(4), order(99)]).toEqual([3, 3]);
+  });
+});
+
+describe("DropOutcome", () => {
+  test("has no gone, since only the backlog's drop can be gone", () => {
+    expectTypeOf<Extract<DropOutcome, { kind: "gone" }>>().toBeNever();
   });
 });
 

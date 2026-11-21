@@ -38,9 +38,8 @@ export const REFUSAL_MESSAGE: Record<DropRefusal, string> = { loadMore: LOAD_MOR
 /** The loaded part of a rank order. Every row not loaded yet ranks at or below `floor`. */
 export type LoadedOrder = { floor: number | undefined; moreToLoad: boolean };
 
-/** What a drop does: nothing (`gone`, `inPlace`), a refusal with its reason, or a new rank. */
+/** What a drop does to a row's rank: keeps it (`inPlace`), refuses it with a reason, or gives it a new rank. */
 export type DropOutcome =
-  | { kind: "gone" }
   | { kind: "inPlace" }
   | { kind: "refused"; reason: DropRefusal }
   | { kind: "ranked"; sortOrder: number };
@@ -112,10 +111,10 @@ export function respaceTie<T extends Ranked>(
   const movedSlot = slot === undefined ? middle : Math.min(Math.max(slot, 0), run.length);
   const slots = run.length + 1;
   const step = nextHigher === undefined ? SORT_GAP : (nextHigher - tie) / slots;
-  const ranks = Array.from({ length: slots }, (_, slot) => tie + (slots - 1 - slot) * step);
-  if (!ranks.every((rank, slot) => rank < (ranks[slot - 1] ?? nextHigher ?? Infinity))) {
+  const ranks = Array.from({ length: slots }, (_, index) => tie + (slots - 1 - index) * step);
+  if (!ranks.every((rank, index) => rank < (ranks[index - 1] ?? nextHigher ?? Infinity))) {
     return undefined;
   }
-  const rest = ranks.filter((_, slot) => slot !== movedSlot);
+  const rest = ranks.filter((_, index) => index !== movedSlot);
   return { moved: ranks[movedSlot], others: run.map((row, index) => ({ row, sortOrder: rest[index] })) };
 }

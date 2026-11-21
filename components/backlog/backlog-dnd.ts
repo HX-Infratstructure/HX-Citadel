@@ -46,6 +46,9 @@ export function backlogAnchor<T extends RankedIssue>(
   return landing(stories, activeId, overId)?.above?._id ?? null;
 }
 
+/** What a drop in the backlog does: a `DropOutcome`, or `gone`, which only the backlog's drop returns. */
+export type BacklogDrop = DropOutcome | { kind: "gone" };
+
 /**
  * What a drop does to the story `activeId` dropped on the story `overId` of the loaded backlog, in rank order; its last
  * story is the floor. `gone` when either story is not loaded, `inPlace` when it is dropped on its own place.
@@ -55,7 +58,7 @@ export function backlogDrop({ stories, activeId, overId, moreToLoad }: {
   activeId: UniqueIdentifier;
   overId: UniqueIdentifier;
   moreToLoad: boolean;
-}): DropOutcome {
+}): BacklogDrop {
   const landed = landing(stories, activeId, overId);
   if (landed === undefined) {
     return { kind: "gone" };
