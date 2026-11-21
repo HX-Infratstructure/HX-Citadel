@@ -192,6 +192,16 @@ describe("answering a decision", () => {
     });
   });
 
+  test("an answer text over 80 characters logs its first 80 and an ellipsis in the decided row", async () => {
+    const DECIDED_ROW_TEXT_MAX = 80; // mirrors SUMMARY_TEXT_MAX, the decided activity row's limit in ./lib/decisions.ts
+    const { t, issue } = await setup();
+    const { decision } = await ask(t);
+    const text = "0123456789".repeat(10);
+    await answer(t, decision._id, { text });
+    const after = await issueState(t, issue._id);
+    expect(after.activity.at(-1)).toMatchObject({ type: "decided", newValue: `${text.slice(0, DECIDED_ROW_TEXT_MAX)}…` });
+  });
+
   test("a second answer is refused, so a race has one winner", async () => {
     const { t } = await setup();
     const { decision } = await ask(t);

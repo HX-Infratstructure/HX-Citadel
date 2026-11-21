@@ -6,13 +6,15 @@ import { MutationCtx, QueryCtx } from "../_generated/server";
 import { LIST_LIMIT } from "../../lib/api-contract";
 import { decisionFields, decisionViaValidator } from "../schema";
 import { logActivity } from "./activity";
-import { answerSummary, DecisionAnswer, DecisionAsk, parseAnswer, parseAsk } from "./decisionInput";
+import { Answer, DecisionAnswer, DecisionAsk, parseAnswer, parseAsk } from "./decisionInput";
 import { IssueKeys } from "./issueKeys";
 import { getOrgIssue, inOrg, orgRow, requireOrgRow } from "./orgRows";
 import { OrgScope } from "./orgScope";
 
 /** The most decisions one page of a story's history holds. One is open at a time and a person answers each. */
 export const DECISION_PAGE_MAX = 50;
+/** How much of an answer's text the `decided` activity row keeps. */
+const SUMMARY_TEXT_MAX = 80;
 
 export type AnswerVia = Infer<typeof decisionViaValidator>;
 
@@ -71,13 +73,19 @@ export async function askDecision(ctx: MutationCtx, scope: OrgScope, ask: Decisi
   return await requireOrgRow(ctx, scope.org._id, decisionId, "Decision");
 }
 
+/** The `decided` activity row's value: the choice and/or the start of the text. */
+function answerSummary({ choice, text }: Answer): string {
+  const start = text !== undefined && text.length > SUMMARY_TEXT_MAX ? `${text.slice(0, SUMMARY_TEXT_MAX)}…` : text;
+  return [choice, start].filter((part) => part !== undefined).join(": ");
+}
+
 /** Record the owner's answer to an open decision; the first answer wins. Never changes the issue. */
 export async function answerDecision(ctx: MutationCtx, scope: OrgScope, answer: DecisionAnswer, via: AnswerVia): Promise<void> {
   const decision = await requireOrgRow(ctx, scope.org._id, answer.decisionId, "Decision");
   if (decision.status !== "open") {
     refuse("This decision was already answered");
   }
-  const parsed = parseAnswer(decision, answer);
+  const parsed = parseAnswer(decision.choices, answer);
   await ctx.db.patch(decision._id, {
     status: "answered",
     answer: parsed,
