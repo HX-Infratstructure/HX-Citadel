@@ -10,6 +10,7 @@ import { pick, seededRandom } from "../lib/seeded-random.fixture";
 import { byRank, rankInLoaded } from "../lib/sort-order";
 import { api } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
+import { footprint, refusalOf } from "./test-helpers.fixture";
 import { ORG, workspaceTest } from "./workspace.fixture";
 
 type Row = { title: string; sortOrder: number; status?: Doc<"issues">["status"] };
@@ -306,5 +307,23 @@ describe("a stale anchor lands the drop at the tie's middle slot and is never re
       return await ctx.db.insert("issues", { ...story, title: "Elsewhere", sortOrder: 3000 });
     });
     await expectMiddleUnder(team, elsewhere);
+  });
+});
+
+describe("an anchor without a rank is refused (follow-up 4)", () => {
+  test("an update with aboveId and no sortOrder is a validation error and leaves the issue's version and activity as they were", async () => {
+    const team = await tieOf(3);
+    const cases: [string, Id<"issues"> | null][] = [
+      ["aboveId T0", team.ids.T0],
+      ["aboveId null", null],
+    ];
+    for (const [label, aboveId] of cases) {
+      const before = await footprint(team.t, team.ids.Mover);
+      const error = await team.asMember
+        .mutation(api.issues.update, { issueId: team.ids.Mover, aboveId })
+        .catch(refusalOf);
+      expect(error, label).toEqual(expect.objectContaining({ code: "validation" }));
+      expect(await footprint(team.t, team.ids.Mover), label).toEqual(before);
+    }
   });
 });

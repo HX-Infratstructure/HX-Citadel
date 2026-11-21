@@ -5,7 +5,7 @@ import { PARENT_KIND } from "../../../lib/issue-key";
 import { ActivityActor, changedFields, FieldLogOptions, logFieldChanges } from "../activity";
 import { patchIssue } from "../issueVersion";
 import { OrgScope } from "../orgScope";
-import { refuse } from "../refusals";
+import { invalid, refuse } from "../refusals";
 import { assertCycleInTeam } from "../rules/cycles";
 import { assertDoneGateAfterUpdate } from "../rules/doneGate";
 import { cascadeProject } from "../rules/cascade";
@@ -123,6 +123,9 @@ async function cycleUpdate(
 }
 
 async function rankUpdate(ctx: MutationCtx, issue: Doc<"issues">, args: UpdateIssueArgs): Promise<Updates> {
+  if (args.aboveId !== undefined && args.sortOrder === undefined) {
+    invalid("aboveId needs a sortOrder");
+  }
   // An unchanged rank stays out, or `placeRank` would re-space the story's testing sub-task, which shares it.
   if (args.sortOrder === undefined || args.sortOrder === issue.sortOrder) {
     return {};

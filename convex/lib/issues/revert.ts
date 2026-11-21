@@ -29,7 +29,7 @@ function assigneeOf(ctx: MutationCtx, text: string | undefined) {
   return userId;
 }
 
-type RevertArgs = Omit<UpdateIssueArgs, "issueId">;
+type RevertArgs = Pick<UpdateIssueArgs, "title" | "status" | "priority" | "assigneeId">;
 type ToRevertArgs = (ctx: MutationCtx, issue: Doc<"issues">, text: string | undefined) => Promise<RevertArgs>;
 
 /** The fields a revert may touch, each turning recorded text back into its update argument. */
