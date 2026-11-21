@@ -1,10 +1,7 @@
 // Helpers shared by the top-level Convex tests; Convex never bundles this file.
-import type { TestConvex } from "convex-test";
 import { ConvexError } from "convex/values";
 import { Id } from "./_generated/dataModel";
-import schema from "./schema";
-
-type Test = TestConvex<typeof schema>;
+import type { WorkspaceTest as Test } from "./workspace.fixture";
 
 export const refusalOf = (error: unknown) => (error instanceof ConvexError ? error.data : error);
 

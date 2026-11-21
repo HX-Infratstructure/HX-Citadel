@@ -90,7 +90,7 @@ Run the checks in the order the README's [Commands](README.md#commands) section 
   - `convex/test-helpers.fixture.ts`, the readers for refusals, issues and activity rows that top-level Convex tests share;
   - `lib/seeded-random.fixture.ts`, the seeded random generator for property tests;
   - `components/fake-local-store.ts`, a test double of Convex's `OptimisticLocalStore`.
-- A new helper that a second test file needs goes into a shared helper file that every test that uses it can import. Don't copy it.
+- A new helper that a second test file needs goes into a shared helper file that every test that uses it can import. Don't copy it. Under `convex/`, name a new shared helper file `<name>.fixture.ts`, so Convex doesn't deploy it as a function module.
 - Some setup code is still copied between Convex tests, such as the organization and member setup and the `asMember` identities. Moving it into a shared helper file is a known follow-up.
 
 ## Reference
