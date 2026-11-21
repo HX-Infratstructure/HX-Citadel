@@ -1,10 +1,10 @@
 import { PaginationOptions } from "convex/server";
 import { LIST_LIMIT } from "../../lib/api-contract";
 
-/** Convex fails a query or mutation past this many documents read. */
-export const CONVEX_DOCUMENT_READS = 32_000;
-
-/** Rows and bytes one page may read, rows its filter drops included: well inside `CONVEX_DOCUMENT_READS` and 16 MiB. */
+/**
+ * Rows and bytes one page may read, rows its filter drops included: well inside `TRANSACTION_LIMITS`' `documentsRead`
+ * and `bytesRead`.
+ */
 export const PAGE_READ_ROWS = 8_000;
 const PAGE_READ_BYTES = 8 * 1024 * 1024;
 
@@ -13,7 +13,7 @@ const PAGE_READ_BYTES = 8 * 1024 * 1024;
  * read, whatever the client asks for. A page that runs out of reads first comes back `SplitRequired`, holding every
  * match among the rows it read, and its `continueCursor` resumes after the last row read. A caller that follows
  * `continueCursor`, like the REST list, misses nothing; `usePaginatedQuery` replaces the page by its two halves at
- * `splitCursor`.
+ * `splitCursor`. A page pinned by an end cursor ignores `numItems` and `maximumRowsRead` (see `PINNED_PAGE_MAX_ROWS`).
  */
 export function capPage(paginationOpts: PaginationOptions): PaginationOptions {
   return {

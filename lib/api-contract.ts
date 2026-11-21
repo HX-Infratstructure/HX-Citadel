@@ -49,5 +49,8 @@ export const ATTACHMENT_TOO_LARGE = `Attachments are limited to ${MAX_ATTACHMENT
 export const MAX_LABELS_PER_ISSUE = 20;
 export const TOO_MANY_LABELS = `An issue can have at most ${MAX_LABELS_PER_ISSUE} labels`;
 
-/** The most rows any capped list or page returns. */
+/**
+ * The most rows a capped list returns, and the most items a page asks for (`capPage` holds `numItems` to it). A
+ * `listByTeam` page pinned by an end cursor can hold more (`PINNED_PAGE_MAX_ROWS`).
+ */
 export const LIST_LIMIT = 500;

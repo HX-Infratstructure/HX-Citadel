@@ -9,7 +9,7 @@ import { refusal } from "./refusals";
 export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 /**
  * Receipts hold whole write results of any size, so one cleanup run stops after `rows` receipts or once the
- * receipts it read pass `bytes`, which keeps the run well under Convex's 16 MiB read limit.
+ * receipts it read pass `bytes`, which keeps the run well under `TRANSACTION_LIMITS.bytesRead`.
  */
 export const EXPIRY_BATCH = { rows: 256, bytes: 4 * 1024 * 1024 } as const;
 const KEY_PATTERN = /^[\x21-\x7e]{1,200}$/;
