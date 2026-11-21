@@ -3,12 +3,11 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
+import { insertOrgMember, MEMBER_IDENTITY } from "./lib/orgMember.fixture";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
 
-const ORG_CLAIM = "org_test";
-const MEMBER_CLERK_ID = "user_member";
 const PROOF = "https://ci.example.com/run/1";
 
 type Kind = "epic" | "feature" | "story" | "subtask";
@@ -17,22 +16,7 @@ type Status = Doc<"issues">["status"];
 async function setup() {
   const t = convexTest(schema, modules);
   const { teamId, projectId } = await t.run(async (ctx) => {
-    const memberId = await ctx.db.insert("users", {
-      clerkId: MEMBER_CLERK_ID,
-      name: "Member",
-      email: "member@example.com",
-    });
-    const orgId = await ctx.db.insert("organizations", {
-      clerkOrgId: ORG_CLAIM,
-      name: "Test Org",
-      slug: "test-org",
-    });
-    await ctx.db.insert("members", {
-      orgId,
-      userId: memberId,
-      role: "member",
-      clerkMembershipId: "mem_member",
-    });
+    const { orgId } = await insertOrgMember(ctx);
     const teamId = await ctx.db.insert("teams", {
       orgId,
       name: "Engineering",
@@ -46,7 +30,7 @@ async function setup() {
     });
     return { teamId, projectId };
   });
-  const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+  const asMember = t.withIdentity(MEMBER_IDENTITY);
 
   const create = (kind: Kind, title: string, parentIssueId?: Id<"issues">) =>
     asMember.mutation(api.issues.create, {
@@ -221,7 +205,7 @@ describe("Done gate: every status write path", () => {
       });
       return;
     }
-    const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+    const asMember = t.withIdentity(MEMBER_IDENTITY);
     await expect(
       asMember.mutation(api.issues.create, { teamId, title: "Login", status: "done" })
     ).rejects.toThrow("Can't move ENG-1 to Done: open — ENG-1.1 Complete testing (no proof link)");
@@ -257,7 +241,7 @@ describe("Done gate: no new child under a gated parent", () => {
     const feature = await create("feature", "Sign-in", epic);
     await move(feature, status);
     const story = await create("story", "Login");
-    const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+    const asMember = t.withIdentity(MEMBER_IDENTITY);
 
     await expect(
       asMember.mutation(api.issueRelations.setParent, { issueId: story, parentIssueId: feature })
@@ -270,7 +254,7 @@ describe("Done gate: no new child under a gated parent", () => {
     const feature = await create("feature", "Sign-in", epic);
     await move(feature, status);
     const story = await create("story", "Login");
-    const asMember = t.withIdentity({ subject: MEMBER_CLERK_ID, org_id: ORG_CLAIM });
+    const asMember = t.withIdentity(MEMBER_IDENTITY);
 
     await expect(create("story", "Logout", feature)).resolves.toBeDefined();
     await expect(
