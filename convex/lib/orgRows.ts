@@ -72,8 +72,8 @@ export const MAX_CHILDREN = 250;
 
 /**
  * The most rows a project cascade, or a project or cycle remove, may change, and the most child queries a cascade's
- * walk may make. Each changed row is two writes (the issue and its activity row), so both stay inside Convex's
- * per-transaction limits (16,000 writes, 4,096 index ranges); past them the mutation is refused before any write
+ * walk may make. Each changed row is two writes (the issue and its activity row), so both stay inside
+ * `TRANSACTION_LIMITS.documentsWritten` and `.databaseQueries`; past them the mutation is refused before any write
  * persists.
  */
 export const CASCADE_BUDGET = { rows: 7_900, queries: 4_000 } as const;

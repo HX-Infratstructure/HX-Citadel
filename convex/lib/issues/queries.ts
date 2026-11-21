@@ -8,7 +8,8 @@ import { isGatedStatus } from "../../../lib/issue-status";
 import { inOrg, orgRow, requireOrgRow } from "../orgRows";
 import { CLOSED_STATUSES } from "../rules/doneGate";
 import { issueKindValidator, issueStatusValidator } from "../../schema";
-import { capPage, CONVEX_DOCUMENT_READS, PAGE_READ_ROWS } from "../paging";
+import { capPage, PAGE_READ_ROWS } from "../paging";
+import { TRANSACTION_LIMITS } from "../transactionLimits";
 
 export const teamPageArgs = { teamId: v.id("teams"), paginationOpts: paginationOptsValidator };
 export const parentCandidateArgs = { teamId: v.id("teams"), kind: issueKindValidator };
@@ -66,18 +67,18 @@ export async function backlogPage(
 const PAGE_FIXED_READS = 8;
 
 /**
- * The most rows a `listByTeam` page pinned by an end cursor can hold and still read inside `CONVEX_DOCUMENT_READS`.
- * Such a page reads its whole interval, ignoring `numItems` and `maximumRowsRead` (convex-backend
- * `crates/database/src/query/index_range.rs:168-170`), and `usePaginatedQuery` splits it only above 2 ×
+ * The most rows a `listByTeam` page pinned by an end cursor can hold and still read inside
+ * `TRANSACTION_LIMITS.documentsRead`. Such a page reads its whole interval, ignoring `numItems` and `maximumRowsRead`
+ * (convex-backend `crates/database/src/query/index_range.rs:168-170`), and `usePaginatedQuery` splits it only above 2 ×
  * `initialNumItems` rows, after a read that returned them, so it grows past 2 × LIST_LIMIT rows before a split; a test
  * in `issues.test.ts` holds this bound at 2 × LIST_LIMIT or more. It reads PAGE_FIXED_READS, at most
  * PAGE_READ_ROWS rows its filter drops, and for each row the row itself and its label links (at most
  * `MAX_LABELS_PER_ISSUE`, enforced when a label is added). A page of 2 × LIST_LIMIT rows then has
  * `PINNED_PAGE_MAX_ROWS - 2 * LIST_LIMIT` rows of headroom. Its index ranges, 1 + rows besides the fixed reads, stay
- * inside Convex's 4,096.
+ * inside `TRANSACTION_LIMITS.databaseQueries`.
  */
 export const PINNED_PAGE_MAX_ROWS = Math.floor(
-  (CONVEX_DOCUMENT_READS - PAGE_FIXED_READS - PAGE_READ_ROWS) / (MAX_LABELS_PER_ISSUE + 1)
+  (TRANSACTION_LIMITS.documentsRead - PAGE_FIXED_READS - PAGE_READ_ROWS) / (MAX_LABELS_PER_ISSUE + 1)
 );
 
 /**

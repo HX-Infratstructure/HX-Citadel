@@ -51,7 +51,8 @@ type Budget = { rows: number; bytes: number; queries: number };
 
 /**
  * What one admin run's cleanup may read of the rows its issues own. Convex fails a mutation whole, changing
- * nothing, past 4,096 queries, 16 MiB or 32,000 documents read, or 16,000 written; the rest is the caller's.
+ * nothing, past `TRANSACTION_LIMITS`' `databaseQueries`, `bytesRead`, `documentsRead` or `documentsWritten`; the rest
+ * is the caller's.
  * - `queries`: one per owned-table query. The caller makes about 110 more.
  * - `rows`: a run deletes at most `rows` owned rows and as many files, plus the caller's pages: under
  *   10,000 reads and writes.
