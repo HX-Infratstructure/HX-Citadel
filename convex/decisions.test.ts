@@ -3,7 +3,7 @@ import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { QueryCtx } from "./_generated/server";
 import { LIST_LIMIT } from "../lib/api-contract";
-import { answerDecision, askDecision, DECISION_PAGE_MAX, listIssueDecisions, pageIssueDecisions } from "./lib/decisions";
+import { answerDecision, askDecision, DECISION_PAGE_MAX, listIssueDecisions, pageIssueDecisions, SUMMARY_TEXT_MAX } from "./lib/decisions";
 import { AGENT, ORG, registerWorkspaceEnv, workspaceTest, writeHeaders, type WorkspaceTest } from "./workspace.fixture";
 
 const ADMIN = "user_admin";
@@ -190,6 +190,26 @@ describe("answering a decision", () => {
       asker: "cc1",
       answerer: ADMIN,
     });
+  });
+
+  test("an answer text of exactly SUMMARY_TEXT_MAX characters logs all of it in the decided row, with no ellipsis", async () => {
+    const { t, issue } = await setup();
+    const { decision } = await ask(t);
+    const text = "x".repeat(SUMMARY_TEXT_MAX);
+    await answer(t, decision._id, { text });
+    const after = await issueState(t, issue._id);
+    expect(after.activity.at(-1)).toMatchObject({ type: "decided", newValue: text });
+  });
+
+  test("one character more logs the first SUMMARY_TEXT_MAX and an ellipsis, and the decision keeps the whole text", async () => {
+    const { t, issue } = await setup();
+    const { decision } = await ask(t);
+    const text = "y".repeat(SUMMARY_TEXT_MAX) + "z";
+    await answer(t, decision._id, { text });
+    const after = await issueState(t, issue._id);
+    expect(after.activity.at(-1)).toMatchObject({ type: "decided", newValue: "y".repeat(SUMMARY_TEXT_MAX) + "…" });
+    const stored = await t.run(async (ctx) => await ctx.db.get(decision._id));
+    expect(stored).toMatchObject({ status: "answered", answer: { text } });
   });
 
   test("a second answer is refused, so a race has one winner", async () => {
