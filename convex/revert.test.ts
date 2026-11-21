@@ -8,7 +8,7 @@ import http from "./http";
 import { LIST_LIMIT } from "../lib/api-contract";
 import { parseIssuePath } from "./lib/httpApi";
 import schema from "./schema";
-import { feedOf, footprint, issueOf, refusalOf } from "./testing.fixture";
+import { feedOf, footprint, issueOf, refusalOf } from "./test-helpers.fixture";
 
 const modules = import.meta.glob("./**/*.*s");
 

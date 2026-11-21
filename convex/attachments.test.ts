@@ -6,7 +6,7 @@ import { api } from "./_generated/api";
 import { LIST_LIMIT, MAX_ATTACHMENT_BYTES } from "../lib/api-contract";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
-import { refusalOf } from "./testing.fixture";
+import { refusalOf } from "./test-helpers.fixture";
 
 const modules = import.meta.glob("./**/*.*s");
 

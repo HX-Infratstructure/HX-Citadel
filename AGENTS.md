@@ -84,12 +84,14 @@ Run the checks in the order the README's [Commands](README.md#commands) section 
 ### Where tests and their helpers live
 
 - A Convex test sits at `convex/` top level and is named after the module or the feature it tests. `convex/issues.test.ts` tests `convex/issues.ts`, and `convex/boardDrop.test.ts` tests board and backlog drops.
-- A test of a `convex/lib` helper can sit next to the helper, as `convex/lib/mirror.test.ts` does. Zone 1 of `import/no-restricted-paths` in `eslint.config.mjs` then limits the test's imports from top-level `convex/` to `_generated` and `schema.ts`. A helper test that imports `convex/workspace.fixture.ts` or a function module sits at `convex/` top level, as `convex/idempotency.test.ts` does.
-- Shared test helpers live in three fixtures:
-  - `convex/workspace.fixture.ts`, the workspace that every new agent-API test takes;
-  - `convex/testing.fixture.ts`, with `refusalOf`, `issueOf`, `feedOf` and `footprint`;
-  - `lib/seeded-random.fixture.ts`, with `seededRandom` and `pick`.
-- When a second test file needs a helper, move the helper into one of these fixtures. Don't copy it.
+- A test of a `convex/lib` helper can sit next to the helper, as `convex/lib/mirror.test.ts` does. Zone 1 of `import/no-restricted-paths` in `eslint.config.mjs` limits what a `convex/lib` file can import from top-level `convex/`. A helper test that imports a top-level file that zone 1 forbids, such as `convex/workspace.fixture.ts`, sits at `convex/` top level, as `convex/idempotency.test.ts` does.
+- These shared helper files hold test helpers for more than one test file:
+  - `convex/workspace.fixture.ts`, the HX workspace that every new agent-API test takes;
+  - `convex/test-helpers.fixture.ts`, the readers for refusals, issues and activity rows that top-level Convex tests share;
+  - `lib/seeded-random.fixture.ts`, the seeded random generator for property tests;
+  - `components/fake-local-store.ts`, a test double of Convex's `OptimisticLocalStore`.
+- A new helper that a second test file needs goes into a shared helper file that every test that uses it can import. Don't copy it.
+- Some setup code is still copied between Convex tests, such as the organization and member setup and the `asMember` identities. Moving it into a shared helper file is a known follow-up.
 
 ## Reference
 

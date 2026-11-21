@@ -91,7 +91,7 @@ pnpm exec tsc --noEmit
 pnpm exec tsc -p convex --noEmit
 ```
 
-`pnpm test` runs Vitest on every test file under `app/`, `cli/`, `components/`, `convex/`, `lib/`, and `scripts/`. `AGENTS.md` says [where tests and their helpers live](AGENTS.md#where-tests-and-their-helpers-live).
+`pnpm test` runs Vitest on every test file in the repository. `AGENTS.md` says [where tests and their helpers live](AGENTS.md#where-tests-and-their-helpers-live).
 
 `pnpm lint` fails on any warning as well as any error.
 

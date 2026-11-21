@@ -1,4 +1,4 @@
-// Readers shared by the top-level Convex tests; Convex never bundles this file.
+// Helpers shared by the top-level Convex tests; Convex never bundles this file.
 import type { TestConvex } from "convex-test";
 import { ConvexError } from "convex/values";
 import { Id } from "./_generated/dataModel";

@@ -6,7 +6,7 @@ import { Id, TableNames } from "./_generated/dataModel";
 import { deleteIssuesWithOwnedRows } from "./lib/issueCleanup";
 import { groupDigits, MAX_CHILDREN } from "./lib/orgRows";
 import schema from "./schema";
-import { refusalOf } from "./testing.fixture";
+import { refusalOf } from "./test-helpers.fixture";
 import { ORG, registerWorkspaceEnv } from "./workspace.fixture";
 
 const modules = import.meta.glob("./**/*.*s");

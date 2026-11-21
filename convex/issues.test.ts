@@ -7,7 +7,7 @@ import { PINNED_PAGE_MAX_ROWS } from "./lib/issues/queries";
 import { LIST_LIMIT } from "../lib/api-contract";
 import { PAGE_READ_ROWS } from "./lib/paging";
 import schema from "./schema";
-import { feedOf, footprint, issueOf, refusalOf } from "./testing.fixture";
+import { feedOf, footprint, issueOf, refusalOf } from "./test-helpers.fixture";
 import { writeHeaders } from "./workspace.fixture";
 
 const modules = import.meta.glob("./**/*.*s");
