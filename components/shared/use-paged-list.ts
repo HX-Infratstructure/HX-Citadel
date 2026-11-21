@@ -3,7 +3,7 @@ import { type PaginatedQueryArgs, type PaginatedQueryReference, usePaginatedQuer
 import { LIST_LIMIT } from "@/lib/api-contract";
 
 /** Rows per page of a team's issue list. */
-export const PAGE_SIZE = LIST_LIMIT;
+const PAGE_SIZE = LIST_LIMIT;
 
 /** A paginated list's paging state, as `LoadMoreButton` and the list views read it. */
 export type Paging = { status: PaginationStatus; moreToLoad: boolean; loadMore: () => void };
